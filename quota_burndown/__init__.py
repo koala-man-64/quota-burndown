@@ -1,3 +1,3 @@
-"""Quota burndown for Claude Code and Codex subscription rate limits."""
+"""Quota burndown and token usage ledger for Claude Code, Codex and Antigravity."""
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"

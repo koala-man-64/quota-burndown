@@ -41,6 +41,10 @@ class Paths:
         return self.home / "burndown.html"
 
     @property
+    def usage_db(self) -> Path:
+        return self.home / "usage.sqlite"
+
+    @property
     def log(self) -> Path:
         return self.home / "collect.log"
 
@@ -66,6 +70,12 @@ def claude_home() -> Path:
 
 def codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+
+
+def antigravity_home() -> Path:
+    """Antigravity keeps its conversation store under ~/.gemini/antigravity. The override
+    is this tool's own variable; Google does not define one."""
+    return Path(os.environ.get("QUOTA_BURNDOWN_ANTIGRAVITY_HOME") or (Path.home() / ".gemini" / "antigravity"))
 
 
 def project_root() -> Path:

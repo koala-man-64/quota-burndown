@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quota-burndown"
-version = "0.1.1"
-description = "Burndown of Claude Code and Codex subscription quotas: used vs linear pace per rate-limit window."
+version = "0.2.0"
+description = "Claude Code, Codex and Antigravity in one place: quota burndown per rate-limit window plus a per-request token usage ledger."
 requires-python = ">=3.10"
 dependencies = []
 license = { text = "MIT" }
@@ -14,7 +14,7 @@ license = { text = "MIT" }
 quota-burndown = "quota_burndown.cli:main"
 
 [tool.setuptools]
-packages = ["quota_burndown", "quota_burndown.providers"]
+packages = ["quota_burndown", "quota_burndown.providers", "quota_burndown.usage"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
