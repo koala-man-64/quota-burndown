@@ -204,9 +204,13 @@ def day_local(row: sqlite3.Row) -> str:
 
 # -- rollups --------------------------------------------------------------------------
 
+HUMAN_THREADS = ("main", "root", "")  # prompts on other threads are agent-to-agent instructions
+
+
 @dataclass
 class Totals:
-    prompts: int = 0
+    prompts: int = 0          # human prompts: main/root threads only
+    agent_prompts: int = 0    # instructions handed to subagents and workflow agents
     requests: int = 0
     input: int = 0
     cache_read: int = 0
@@ -219,7 +223,10 @@ class Totals:
 
     def add(self, row: sqlite3.Row) -> None:
         if row["kind"] == PROMPT:
-            self.prompts += 1
+            if row["thread"] in HUMAN_THREADS:
+                self.prompts += 1
+            else:
+                self.agent_prompts += 1
             return
         self.requests += 1
         if row["input_tokens_inferred"] is not None:
@@ -239,7 +246,7 @@ class Totals:
 
     def to_dict(self) -> dict:
         return {
-            "prompts": self.prompts, "requests": self.requests, "input": self.input, "cache_read": self.cache_read,
+            "prompts": self.prompts, "agent_prompts": self.agent_prompts, "requests": self.requests, "input": self.input, "cache_read": self.cache_read,
             "cache_write": self.cache_write, "output": self.output, "reasoning": self.reasoning, "total": self.total,
             "inferred_requests": self.inferred_requests, "inferred_input": self.inferred_input,
         }

@@ -16,7 +16,7 @@ Pace is linear: 0% at window start, 100% at reset. Window start is `resets_at` m
 
 ## Token usage ledger
 
-`collect` also parses each tool's own local files into `~/.quota-burndown/usage.sqlite`, one row per model call (`request`) and one per human turn (`prompt`). Files are re-read only when their size or mtime changes, and rows are keyed by the source's own identifiers, so re-scans are idempotent. The ledger outlives the sources: Claude Code deletes transcripts after `cleanupPeriodDays` (30 by default), the ledger does not.
+`collect` also parses each tool's own local files into `~/.quota-burndown/usage.sqlite`, one row per model call (`request`) and one per typed turn (`prompt`). Prompt counts in the tables are human prompts on the main thread; instructions handed to subagents are stored too but reported separately as `agent_prompts` in the JSON. Files are re-read only when their size or mtime changes, and rows are keyed by the source's own identifiers, so re-scans are idempotent. The ledger outlives the sources: Claude Code deletes transcripts after `cleanupPeriodDays` (30 by default), the ledger does not.
 
 | Provider | Source | What is exact | What is not |
 | --- | --- | --- | --- |

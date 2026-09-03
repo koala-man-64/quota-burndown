@@ -89,6 +89,7 @@ def test_rows_filters_and_rollup_keeps_inferred_apart(paths):
     conn = ledger.connect(paths.usage_db)
     events = [
         prompt("u1", 0),
+        prompt("u1-sub", 0, thread="subagent"),
         req("m1", 1, output=10),
         req("m2", 61, output=20, effort="high"),
         prompt("u2", 60, provider="codex", tool="codex-cli"),
@@ -104,15 +105,15 @@ def test_rows_filters_and_rollup_keeps_inferred_apart(paths):
     ]
     ledger.upsert(conn, events)
 
-    assert len(ledger.rows(conn)) == 7
+    assert len(ledger.rows(conn)) == 8
     assert len(ledger.rows(conn, since=T0 + timedelta(minutes=60))) == 5
-    assert len(ledger.rows(conn, until=T0 + timedelta(minutes=60))) == 2
+    assert len(ledger.rows(conn, until=T0 + timedelta(minutes=60))) == 3
     assert [r["event_key"] for r in ledger.rows(conn, provider="codex", kind=ledger.REQUEST)] == ["c1"]
     assert [r["event_key"] for r in ledger.recent_requests(conn, 2)] == ["g1", "c1"]
 
     by_provider = ledger.rollup(ledger.rows(conn), lambda r: r["provider"])
     claude = by_provider["claude"]
-    assert (claude.prompts, claude.requests, claude.input, claude.cache_read, claude.cache_write) == (1, 2, 10, 200, 40)
+    assert (claude.prompts, claude.agent_prompts, claude.requests, claude.input, claude.cache_read, claude.cache_write) == (1, 1, 2, 10, 200, 40)
     assert (claude.output, claude.reasoning, claude.total) == (30, 6, 280)
     codex = by_provider["codex"]
     assert (codex.prompts, codex.requests, codex.total) == (1, 1, 1040)
