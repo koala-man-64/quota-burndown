@@ -49,8 +49,12 @@ def save_long_lived_session(value: str, path: Path | None = None) -> tuple[Path,
     logged or echoed; callers must not print it either."""
     path = path or oauth_file()
     value = value.strip()
-    if not value or any(ch.isspace() for ch in value) or value.startswith("<"):
-        raise ValueError("expected the single value printed by `claude setup-token`, with no spaces")
+    if not value:
+        raise ValueError("nothing was entered; paste the value at the prompt, or pipe it in with `Get-Clipboard | quota-burndown claude-session`")
+    if value.startswith("<"):
+        raise ValueError("that is the placeholder text, not the value `claude setup-token` printed")
+    if any(ch.isspace() for ch in value):
+        raise ValueError("the value contains spaces or line breaks; copy only the single line `claude setup-token` printed")
     atomic_write_text(path, value)
     warning = None
     if os.name == "nt":
