@@ -5,17 +5,17 @@ printed, or stored.
 from __future__ import annotations
 
 import json
+import os
 import re
+import subprocess
 import urllib.error
 import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-import os
-
 from ..config import WINDOW_MINUTES, claude_home, default_home
 from ..store import Sample
-from ..util import from_epoch, now_utc, parse_iso
+from ..util import atomic_write_text, from_epoch, now_utc, parse_iso
 
 PROVIDER = "claude"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -41,6 +41,26 @@ def _slug(text: str) -> str:
 
 def oauth_file() -> Path:
     return default_home() / OAUTH_FILE_NAME
+
+
+def save_long_lived_session(value: str, path: Path | None = None) -> tuple[Path, str | None]:
+    """Write the value printed by `claude setup-token` to the long-lived session file and
+    restrict the file to the current user. Returns (path, warning). The value is never
+    logged or echoed; callers must not print it either."""
+    path = path or oauth_file()
+    value = value.strip()
+    if not value or any(ch.isspace() for ch in value) or value.startswith("<"):
+        raise ValueError("expected the single value printed by `claude setup-token`, with no spaces")
+    atomic_write_text(path, value)
+    warning = None
+    if os.name == "nt":
+        user = os.environ.get("USERNAME", "")
+        result = subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"], capture_output=True, text=True)
+        if result.returncode != 0:
+            warning = f"could not restrict the file to {user or 'the current user'}: {(result.stderr or result.stdout).strip()}"
+    else:
+        os.chmod(path, 0o600)
+    return path, warning
 
 
 def read_access_token(path: Path | None = None, oauth_path: Path | None = None, env: dict | None = None) -> tuple[str | None, str | None, str]:

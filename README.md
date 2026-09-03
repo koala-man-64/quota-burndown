@@ -88,14 +88,13 @@ The Claude Code CLI's OAuth session in `~/.claude/.credentials.json` expires a f
 claude setup-token
 ```
 
-Authorize in the browser, then save the printed value (nothing else) to `~/.quota-burndown/claude_oauth`, for example in PowerShell:
+Authorize in the browser, copy the value it prints, then store it with a hidden prompt (or pipe it on stdin):
 
 ```
-Set-Content -Path "$env:USERPROFILE\.quota-burndown\claude_oauth" -Value "<paste>" -NoNewline
-icacls "$env:USERPROFILE\.quota-burndown\claude_oauth" /inheritance:r /grant:r "$env:USERNAME:R"
+py quota-burndown.py claude-session
 ```
 
-Then `py quota-burndown.py collect` should report fresh Claude samples. Precedence is the `QUOTA_BURNDOWN_CLAUDE_OAUTH` environment variable, then that file, then the CLI credentials. The value is only ever sent as a bearer header to the usage endpoint; it is never logged. If the endpoint later rejects it, the log says so and `claude setup-token` again replaces it.
+That writes `~/.quota-burndown/claude_oauth` readable by your account only, calls the usage endpoint once to prove the value works, and records the samples. Precedence at collect time is the `QUOTA_BURNDOWN_CLAUDE_OAUTH` environment variable, then that file, then the CLI credentials. The value is only ever sent as a bearer header to the usage endpoint; it is never logged. If the endpoint later rejects it, the log says so and running `claude setup-token` plus `claude-session` again replaces it.
 
 ## Limitations
 

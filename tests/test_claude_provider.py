@@ -55,6 +55,33 @@ def test_oauth_file_lives_in_the_data_home(paths):
     assert claude.oauth_file() == paths.home / "claude_oauth"
 
 
+def test_save_long_lived_session_writes_and_restricts(tmp_path, monkeypatch):
+    import os
+    import subprocess
+
+    calls = []
+
+    class Result:
+        returncode = 0
+        stdout = stderr = ""
+
+    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or Result())
+    target = tmp_path / "home" / "claude_oauth"
+    path, warning = claude.save_long_lived_session("  long-lived-value\n", target)
+    assert path == target and target.read_text(encoding="utf-8") == "long-lived-value"
+    if os.name == "nt":
+        assert warning is None and calls and calls[0][0] == "icacls" and calls[0][-1].endswith(":F")
+    else:
+        assert warning is None and oct(target.stat().st_mode & 0o777) == "0o600"
+    for bad in ("", "   ", "two words", "<paste>"):
+        try:
+            claude.save_long_lived_session(bad, target)
+        except ValueError:
+            continue
+        raise AssertionError(f"accepted {bad!r}")
+    assert target.read_text(encoding="utf-8") == "long-lived-value"  # untouched by rejected input
+
+
 def test_collect_reports_warning_without_network(tmp_path, monkeypatch):
     monkeypatch.delenv("QUOTA_BURNDOWN_CLAUDE_OAUTH", raising=False)
     samples, warning = claude.collect(NOW, credentials_path=tmp_path / "missing.json", oauth_path=tmp_path / "no_oauth")
