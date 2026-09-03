@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "quota-burndown"
-version = "0.1.0"
+version = "0.1.1"
 description = "Burndown of Claude Code and Codex subscription quotas: used vs linear pace per rate-limit window."
 requires-python = ">=3.10"
 dependencies = []
