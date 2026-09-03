@@ -35,18 +35,36 @@ def test_normalize_statusline():
     assert claude.normalize_statusline({"five_hour": {}}, NOW) == []
 
 
-def test_read_access_token_states(tmp_path):
+def test_read_access_token_from_cli_credentials(tmp_path):
+    no_file = tmp_path / "no_oauth"
     missing = tmp_path / "none.json"
-    assert claude.read_access_token(missing)[0] is None
+    tok, warn, origin = claude.read_access_token(missing, no_file, env={})
+    assert tok is None and "setup-token" in warn and origin == ""
     creds = tmp_path / "c.json"
     creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "abc", "expiresAt": int((time.time() - 10) * 1000)}}), encoding="utf-8")
-    tok, warn = claude.read_access_token(creds)
-    assert tok is None and "expired" in warn
+    tok, warn, origin = claude.read_access_token(creds, no_file, env={})
+    assert tok is None and "expired" in warn and "setup-token" in warn
     creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "abc", "expiresAt": int((time.time() + 3600) * 1000)}}), encoding="utf-8")
-    tok, warn = claude.read_access_token(creds)
-    assert tok == "abc" and warn is None
+    tok, warn, origin = claude.read_access_token(creds, no_file, env={})
+    assert (tok, warn, origin) == ("abc", None, "credentials")
 
 
-def test_collect_reports_warning_without_network(tmp_path):
-    samples, warning = claude.collect(NOW, credentials_path=tmp_path / "missing.json")
+def test_read_access_token_prefers_env_then_long_lived_file(tmp_path):
+    creds = tmp_path / "c.json"
+    creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "cli", "expiresAt": int((time.time() + 3600) * 1000)}}), encoding="utf-8")
+    saved = tmp_path / "claude_oauth"
+    saved.write_text("  long-lived-value\n", encoding="utf-8")
+    assert claude.read_access_token(creds, saved, env={}) == ("long-lived-value", None, "file")
+    assert claude.read_access_token(creds, saved, env={"QUOTA_BURNDOWN_CLAUDE_OAUTH": "from-env"}) == ("from-env", None, "env")
+    saved.write_text("\n", encoding="utf-8")  # blank file falls through to the CLI credentials
+    assert claude.read_access_token(creds, saved, env={}) == ("cli", None, "credentials")
+
+
+def test_oauth_file_lives_in_the_data_home(paths):
+    assert claude.oauth_file() == paths.home / "claude_oauth"
+
+
+def test_collect_reports_warning_without_network(tmp_path, monkeypatch):
+    monkeypatch.delenv("QUOTA_BURNDOWN_CLAUDE_OAUTH", raising=False)
+    samples, warning = claude.collect(NOW, credentials_path=tmp_path / "missing.json", oauth_path=tmp_path / "no_oauth")
     assert samples == [] and "credentials" in warning

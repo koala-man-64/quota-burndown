@@ -15,12 +15,17 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-from ..config import WINDOW_MINUTES, claude_home
+import os
+
+from ..config import WINDOW_MINUTES, claude_home, default_home
 from ..store import Sample
 from ..util import from_epoch, now_utc, parse_iso
 
 PROVIDER = "claude"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
+ENV_OAUTH = "QUOTA_BURNDOWN_CLAUDE_OAUTH"
+OAUTH_FILE_NAME = "claude_oauth"
+SETUP_HINT = "for unattended sampling run `claude setup-token` once and save the result to {file}"
 _GROUP_MINUTES = {"session": WINDOW_MINUTES["5h"], "weekly": WINDOW_MINUTES["7d"]}
 _FALLBACK_FIELDS = {
     "five_hour": ("5h", WINDOW_MINUTES["5h"]),
@@ -38,24 +43,50 @@ def _slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-") or "scoped"
 
 
-def read_access_token(path: Path | None = None) -> tuple[str | None, str | None]:
-    """Return (access token, warning). The token must never be printed or logged."""
+def oauth_file() -> Path:
+    return default_home() / OAUTH_FILE_NAME
+
+
+def read_access_token(path: Path | None = None, oauth_path: Path | None = None, env: dict | None = None) -> tuple[str | None, str | None, str]:
+    """Return (access token, warning, origin). The token must never be printed or logged.
+
+    Precedence: the QUOTA_BURNDOWN_CLAUDE_OAUTH environment variable, then a long-lived
+    session saved from `claude setup-token` in ~/.quota-burndown/claude_oauth, then the
+    Claude Code CLI's own credentials file. The CLI session expires after a few hours and
+    only the CLI refreshes it (the desktop app keeps its own), so unattended sampling
+    needs one of the first two.
+    """
+    env = os.environ if env is None else env
+    direct = (env.get(ENV_OAUTH) or "").strip()
+    if direct:
+        return direct, None, "env"
+    oauth_path = oauth_path or oauth_file()
+    try:
+        saved = oauth_path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        saved = ""
+    except OSError as exc:
+        return None, f"claude: cannot read {oauth_path} ({exc.__class__.__name__})", ""
+    if saved:
+        return saved, None, "file"
+
     path = path or claude_home() / ".credentials.json"
+    hint = SETUP_HINT.format(file=oauth_path)
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
     except FileNotFoundError:
-        return None, f"claude: no credentials file at {path}; sign in with Claude Code first"
+        return None, f"claude: no credentials file at {path}; sign in with Claude Code first, or {hint}", ""
     except (OSError, ValueError) as exc:
-        return None, f"claude: cannot read credentials file ({exc.__class__.__name__})"
+        return None, f"claude: cannot read credentials file ({exc.__class__.__name__})", ""
     oauth = data.get("claudeAiOauth") if isinstance(data, dict) else None
     token = (oauth or {}).get("accessToken")
     if not token:
-        return None, "claude: credentials file has no OAuth session"
+        return None, f"claude: credentials file has no OAuth session; {hint}", ""
     expires = from_epoch((oauth or {}).get("expiresAt"))
     if expires is not None and expires <= now_utc():
-        return None, "claude: OAuth session expired; it refreshes the next time Claude Code runs"
-    return token, None
+        return None, f"claude: CLI OAuth session expired (refreshes when the Claude Code CLI next runs); {hint}", ""
+    return token, None, "credentials"
 
 
 def fetch_usage(token: str, timeout: float = 15.0) -> dict:
@@ -135,16 +166,19 @@ def normalize_statusline(rate_limits, now: datetime | None = None) -> list[Sampl
     return out
 
 
-def collect(now: datetime | None = None, credentials_path: Path | None = None, timeout: float = 15.0) -> tuple[list[Sample], str | None]:
+def collect(now: datetime | None = None, credentials_path: Path | None = None, timeout: float = 15.0, oauth_path: Path | None = None) -> tuple[list[Sample], str | None]:
     """Poll the usage endpoint. Returns (samples, warning)."""
     now = now or now_utc()
-    token, warning = read_access_token(credentials_path)
+    token, warning, origin = read_access_token(credentials_path, oauth_path)
     if not token:
         return [], warning
     try:
         payload = fetch_usage(token, timeout=timeout)
     except ClaudeAuthError as exc:
-        return [], f"claude: usage endpoint rejected the OAuth session ({exc}); it refreshes when Claude Code next runs"
+        if origin == "credentials":
+            return [], f"claude: usage endpoint rejected the CLI OAuth session ({exc}); {SETUP_HINT.format(file=oauth_path or oauth_file())}"
+        where = "QUOTA_BURNDOWN_CLAUDE_OAUTH" if origin == "env" else str(oauth_path or oauth_file())
+        return [], f"claude: usage endpoint rejected the long-lived session from {where} ({exc}); regenerate it with `claude setup-token`"
     except (RuntimeError, OSError, ValueError) as exc:
         return [], f"claude: usage fetch failed: {exc}"
     finally:

@@ -57,9 +57,26 @@ Status line format: `Claude 5h 44% p38 ▲6 · 7d 27% p45 ▼18 │ Codex 7d 99%
 py -m pytest
 ```
 
+## Unattended Claude sampling
+
+The Claude Code CLI's OAuth session in `~/.claude/.credentials.json` expires a few hours after the CLI last ran, and only the CLI refreshes it; the desktop app keeps its own session elsewhere. If you mostly use the desktop app, the collector will log `CLI OAuth session expired` and Claude samples stop. Fix it once with a long-lived session:
+
+```
+claude setup-token
+```
+
+Authorize in the browser, then save the printed value (nothing else) to `~/.quota-burndown/claude_oauth`, for example in PowerShell:
+
+```
+Set-Content -Path "$env:USERPROFILE\.quota-burndown\claude_oauth" -Value "<paste>" -NoNewline
+icacls "$env:USERPROFILE\.quota-burndown\claude_oauth" /inheritance:r /grant:r "$env:USERNAME:R"
+```
+
+Then `py quota-burndown.py collect` should report fresh Claude samples. Precedence is the `QUOTA_BURNDOWN_CLAUDE_OAUTH` environment variable, then that file, then the CLI credentials. The value is only ever sent as a bearer header to the usage endpoint; it is never logged. If the endpoint later rejects it, the log says so and `claude setup-token` again replaces it.
+
 ## Limitations
 
 - The Claude usage endpoint is the one Claude Code itself calls, but it is not publicly documented and may change. The `limits` list is parsed first with a fallback to the older `five_hour` / `seven_day` fields.
-- The Claude OAuth session expires after a few hours of Claude Code inactivity. The collector skips the call with a warning until Claude Code refreshes it; Codex sampling is unaffected.
+- Without a long-lived session (above), Claude samples only flow while the CLI's OAuth session is fresh; Codex sampling is unaffected either way.
 - Which Codex windows appear depends on the plan; only windows Codex reports are shown.
 - The Claude Code desktop app has no status line. There, use `/quota-burndown:burndown` to open the page in the Browser pane, or open `burndown.html` directly.
