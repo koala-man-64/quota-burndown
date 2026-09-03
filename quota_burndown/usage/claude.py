@@ -100,7 +100,7 @@ def _is_prompt(entry: dict) -> bool:
     return isinstance(message, dict) and isinstance(message.get("content"), str) and "toolUseResult" not in entry
 
 
-def parse_file(path: Path) -> list[Event]:
+def parse_file(path: Path, warnings: list[str] | None = None) -> list[Event]:
     """Every request (deduplicated by message id) and every human prompt in one transcript.
     Prompts take the model and effort of the first request that follows them."""
     thread = thread_kind(path)
