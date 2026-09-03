@@ -73,13 +73,16 @@ def test_save_long_lived_session_writes_and_restricts(tmp_path, monkeypatch):
         assert warning is None and calls and calls[0][0] == "icacls" and calls[0][-1].endswith(":F")
     else:
         assert warning is None and oct(target.stat().st_mode & 0o777) == "0o600"
-    for bad in ("", "   ", "two words", "<paste>"):
+    for bad in ("", "   ", "two words", "<paste>", "Your OAuth token:\nsk-ant-oat01-" + "a" * 40):
         try:
             claude.save_long_lived_session(bad, target)
         except ValueError:
             continue
         raise AssertionError(f"accepted {bad!r}")
     assert target.read_text(encoding="utf-8") == "long-lived-value"  # untouched by rejected input
+    wrapped = " sk-ant-oat01-" + "a" * 60 + " \n " + "b" * 40 + "\n"  # a terminal wrap in the copied line
+    claude.save_long_lived_session(wrapped, target)
+    assert target.read_text(encoding="utf-8") == "sk-ant-oat01-" + "a" * 60 + "b" * 40
 
 
 def test_collect_reports_warning_without_network(tmp_path, monkeypatch):

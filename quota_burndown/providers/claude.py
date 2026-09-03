@@ -53,8 +53,13 @@ def save_long_lived_session(value: str, path: Path | None = None) -> tuple[Path,
         raise ValueError("nothing was entered; paste the value at the prompt, or pipe it in with `Get-Clipboard | quota-burndown claude-session`")
     if value.startswith("<"):
         raise ValueError("that is the placeholder text, not the value `claude setup-token` printed")
+    # `claude setup-token` prints one long line that terminals wrap; a copy of it carries a space
+    # or line break at the wrap point. When the input is nothing but one such value, rejoin it.
+    compact = re.sub(r"\s+", "", value)
+    if re.fullmatch(r"sk-ant-[A-Za-z0-9_-]{20,}", compact):
+        value = compact
     if any(ch.isspace() for ch in value):
-        raise ValueError("the value contains spaces or line breaks; copy only the single line `claude setup-token` printed")
+        raise ValueError("the value contains other text; copy only the value `claude setup-token` printed")
     atomic_write_text(path, value)
     warning = None
     if os.name == "nt":
