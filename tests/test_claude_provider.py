@@ -30,11 +30,11 @@ def test_read_access_token_from_cli_credentials(tmp_path):
     no_file = tmp_path / "no_oauth"
     missing = tmp_path / "none.json"
     tok, warn, origin = claude.read_access_token(missing, no_file, env={})
-    assert tok is None and "setup-token" in warn and origin == ""
+    assert tok is None and "sign in with the Claude Code CLI" in warn and origin == ""
     creds = tmp_path / "c.json"
     creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "abc", "expiresAt": int((time.time() - 10) * 1000)}}), encoding="utf-8")
     tok, warn, origin = claude.read_access_token(creds, no_file, env={})
-    assert tok is None and "expired" in warn and "setup-token" in warn
+    assert tok is None and "expired" in warn and "refreshed its session" in warn
     creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "abc", "expiresAt": int((time.time() + 3600) * 1000)}}), encoding="utf-8")
     tok, warn, origin = claude.read_access_token(creds, no_file, env={})
     assert (tok, warn, origin) == ("abc", None, "credentials")
@@ -53,36 +53,6 @@ def test_read_access_token_prefers_env_then_long_lived_file(tmp_path):
 
 def test_oauth_file_lives_in_the_data_home(paths):
     assert claude.oauth_file() == paths.home / "claude_oauth"
-
-
-def test_save_long_lived_session_writes_and_restricts(tmp_path, monkeypatch):
-    import os
-    import subprocess
-
-    calls = []
-
-    class Result:
-        returncode = 0
-        stdout = stderr = ""
-
-    monkeypatch.setattr(subprocess, "run", lambda cmd, **kw: calls.append(cmd) or Result())
-    target = tmp_path / "home" / "claude_oauth"
-    path, warning = claude.save_long_lived_session("  long-lived-value\n", target)
-    assert path == target and target.read_text(encoding="utf-8") == "long-lived-value"
-    if os.name == "nt":
-        assert warning is None and calls and calls[0][0] == "icacls" and calls[0][-1].endswith(":F")
-    else:
-        assert warning is None and oct(target.stat().st_mode & 0o777) == "0o600"
-    for bad in ("", "   ", "two words", "<paste>", "Your OAuth token:\nsk-ant-oat01-" + "a" * 40):
-        try:
-            claude.save_long_lived_session(bad, target)
-        except ValueError:
-            continue
-        raise AssertionError(f"accepted {bad!r}")
-    assert target.read_text(encoding="utf-8") == "long-lived-value"  # untouched by rejected input
-    wrapped = " sk-ant-oat01-" + "a" * 60 + " \n " + "b" * 40 + "\n"  # a terminal wrap in the copied line
-    claude.save_long_lived_session(wrapped, target)
-    assert target.read_text(encoding="utf-8") == "sk-ant-oat01-" + "a" * 60 + "b" * 40
 
 
 def test_collect_reports_warning_without_network(tmp_path, monkeypatch):

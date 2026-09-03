@@ -6,7 +6,7 @@ One local page for three coding agents. A burndown of your Claude and Codex subs
 
 | Provider | Source | Trigger |
 | --- | --- | --- |
-| Claude | The OAuth usage endpoint Claude Code uses for `/usage` (5h session, 7-day all models, 7-day per-model windows). Authorized with the long-lived session in `~/.quota-burndown/claude_oauth` (see below) or the OAuth session in `~/.claude/.credentials.json`; the value is read only to make the call and is never logged or stored. | Scheduled task every 5 min, and every page load in `serve` mode. |
+| Claude | The OAuth usage endpoint Claude Code uses for `/usage` (5h session, 7-day all models, 7-day per-model windows). Authorized with the CLI's OAuth session in `~/.claude/.credentials.json` (see "When Claude limit samples stop"); the value is read only to make the call and is never logged or stored. | Scheduled task every 5 min, and every page load in `serve` mode. |
 | Codex | The `rate_limits` block Codex writes on every `token_count` event in its rollout files under `~/.codex/archived_sessions` and `~/.codex/sessions`. Scanned incrementally by byte offset. | Scheduled task and page loads. Full history import with `backfill`. |
 
 Samples land in `~/.quota-burndown/samples.jsonl` (one JSON line each). `latest.json` holds the newest reading per window so the status line stays fast. The page is `~/.quota-burndown/burndown.html`.
@@ -80,25 +80,15 @@ Status line format: `Claude 5h 44% p38 ▲6 · 7d 27% p45 ▼18 │ Codex 7d 99%
 py -m pytest
 ```
 
-## Unattended Claude sampling
+## When Claude limit samples stop
 
-The Claude Code CLI's OAuth session in `~/.claude/.credentials.json` expires a few hours after the CLI last ran, and only the CLI refreshes it; the desktop app keeps its own session elsewhere. If you mostly use the desktop app, the collector will log `CLI OAuth session expired` and Claude samples stop. Fix it once with a long-lived session:
+The usage endpoint accepts only a session that carries the profile scope. The Claude Code CLI keeps one in `~/.claude/.credentials.json` and refreshes it whenever it runs; it expires a few hours after the CLI last ran, and the desktop app keeps its own session elsewhere. So if you mostly use the desktop app, the collector logs `CLI OAuth session expired` (or `no OAuth session`) and the Claude limit cards go stale until the CLI runs again. Codex limits and all usage numbers are unaffected.
 
-```
-claude setup-token
-```
-
-Authorize in the browser, copy the value it prints, then store it with a hidden prompt (or pipe it on stdin):
-
-```
-py quota-burndown.py claude-session
-```
-
-That writes `~/.quota-burndown/claude_oauth` readable by your account only, calls the usage endpoint once to prove the value works, and records the samples. Precedence at collect time is the `QUOTA_BURNDOWN_CLAUDE_OAUTH` environment variable, then that file, then the CLI credentials. The value is only ever sent as a bearer header to the usage endpoint; it is never logged. If the endpoint later rejects it, the log says so and running `claude setup-token` plus `claude-session` again replaces it.
+The long-lived value from `claude setup-token` does **not** help: it is issued with the inference scope only, and the endpoint answers HTTP 403 (verified 2026-09-03). The `QUOTA_BURNDOWN_CLAUDE_OAUTH` variable and the `~/.quota-burndown/claude_oauth` file are still honoured ahead of the CLI credentials, but only for a session value that has the profile scope; a value that gets rejected blocks the CLI path, so delete it. Whatever the source, the value is only ever sent as a bearer header to the usage endpoint and is never logged.
 
 ## Limitations
 
 - The Claude usage endpoint is the one Claude Code itself calls, but it is not publicly documented and may change. The `limits` list is parsed first with a fallback to the older `five_hour` / `seven_day` fields.
-- Without a long-lived session (above), Claude samples only flow while the CLI's OAuth session is fresh; Codex sampling is unaffected either way.
+- Claude limit samples only flow while the CLI's OAuth session is fresh (above); Codex sampling and the usage ledger are unaffected either way.
 - Which Codex windows appear depends on the plan; only windows Codex reports are shown.
 - The Claude Code desktop app has no status line. There, use `/quota-burndown:burndown` to open the page in the Browser pane, or open `burndown.html` directly.

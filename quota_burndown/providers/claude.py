@@ -7,7 +7,6 @@ from __future__ import annotations
 import json
 import os
 import re
-import subprocess
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -15,13 +14,16 @@ from pathlib import Path
 
 from ..config import WINDOW_MINUTES, claude_home, default_home
 from ..store import Sample
-from ..util import atomic_write_text, from_epoch, now_utc, parse_iso
+from ..util import from_epoch, now_utc, parse_iso
 
 PROVIDER = "claude"
 USAGE_URL = "https://api.anthropic.com/api/oauth/usage"
 ENV_OAUTH = "QUOTA_BURNDOWN_CLAUDE_OAUTH"
 OAUTH_FILE_NAME = "claude_oauth"
-SETUP_HINT = "for unattended sampling run `claude setup-token` once and save the result to {file}"
+# Only a session with the profile scope can read the usage endpoint. The Claude Code CLI keeps
+# one in ~/.claude/.credentials.json and refreshes it whenever it runs; the long-lived value from
+# `claude setup-token` carries only the inference scope and is answered with HTTP 403.
+SETUP_HINT = "samples resume once the Claude Code CLI has run and refreshed its session in {file}"
 _GROUP_MINUTES = {"session": WINDOW_MINUTES["5h"], "weekly": WINDOW_MINUTES["7d"]}
 _FALLBACK_FIELDS = {
     "five_hour": ("5h", WINDOW_MINUTES["5h"]),
@@ -43,43 +45,13 @@ def oauth_file() -> Path:
     return default_home() / OAUTH_FILE_NAME
 
 
-def save_long_lived_session(value: str, path: Path | None = None) -> tuple[Path, str | None]:
-    """Write the value printed by `claude setup-token` to the long-lived session file and
-    restrict the file to the current user. Returns (path, warning). The value is never
-    logged or echoed; callers must not print it either."""
-    path = path or oauth_file()
-    value = value.strip()
-    if not value:
-        raise ValueError("nothing was entered; paste the value at the prompt, or pipe it in with `Get-Clipboard | quota-burndown claude-session`")
-    if value.startswith("<"):
-        raise ValueError("that is the placeholder text, not the value `claude setup-token` printed")
-    # `claude setup-token` prints one long line that terminals wrap; a copy of it carries a space
-    # or line break at the wrap point. When the input is nothing but one such value, rejoin it.
-    compact = re.sub(r"\s+", "", value)
-    if re.fullmatch(r"sk-ant-[A-Za-z0-9_-]{20,}", compact):
-        value = compact
-    if any(ch.isspace() for ch in value):
-        raise ValueError("the value contains other text; copy only the value `claude setup-token` printed")
-    atomic_write_text(path, value)
-    warning = None
-    if os.name == "nt":
-        user = os.environ.get("USERNAME", "")
-        result = subprocess.run(["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"], capture_output=True, text=True)
-        if result.returncode != 0:
-            warning = f"could not restrict the file to {user or 'the current user'}: {(result.stderr or result.stdout).strip()}"
-    else:
-        os.chmod(path, 0o600)
-    return path, warning
-
-
 def read_access_token(path: Path | None = None, oauth_path: Path | None = None, env: dict | None = None) -> tuple[str | None, str | None, str]:
     """Return (access token, warning, origin). The token must never be printed or logged.
 
-    Precedence: the QUOTA_BURNDOWN_CLAUDE_OAUTH environment variable, then a long-lived
-    session saved from `claude setup-token` in ~/.quota-burndown/claude_oauth, then the
-    Claude Code CLI's own credentials file. The CLI session expires after a few hours and
-    only the CLI refreshes it (the desktop app keeps its own), so unattended sampling
-    needs one of the first two.
+    Precedence: the QUOTA_BURNDOWN_CLAUDE_OAUTH environment variable, then a session value
+    saved in ~/.quota-burndown/claude_oauth, then the Claude Code CLI's own credentials
+    file. The first two exist for a session that carries the profile scope obtained some
+    other way; the value `claude setup-token` prints does not qualify.
     """
     env = os.environ if env is None else env
     direct = (env.get(ENV_OAUTH) or "").strip()
@@ -96,12 +68,12 @@ def read_access_token(path: Path | None = None, oauth_path: Path | None = None, 
         return saved, None, "file"
 
     path = path or claude_home() / ".credentials.json"
-    hint = SETUP_HINT.format(file=oauth_path)
+    hint = SETUP_HINT.format(file=path)
     try:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
     except FileNotFoundError:
-        return None, f"claude: no credentials file at {path}; sign in with Claude Code first, or {hint}", ""
+        return None, f"claude: no credentials file at {path}; sign in with the Claude Code CLI first", ""
     except (OSError, ValueError) as exc:
         return None, f"claude: cannot read credentials file ({exc.__class__.__name__})", ""
     oauth = data.get("claudeAiOauth") if isinstance(data, dict) else None
@@ -110,7 +82,7 @@ def read_access_token(path: Path | None = None, oauth_path: Path | None = None, 
         return None, f"claude: credentials file has no OAuth session; {hint}", ""
     expires = from_epoch((oauth or {}).get("expiresAt"))
     if expires is not None and expires <= now_utc():
-        return None, f"claude: CLI OAuth session expired (refreshes when the Claude Code CLI next runs); {hint}", ""
+        return None, f"claude: CLI OAuth session expired; {hint}", ""
     return token, None, "credentials"
 
 
@@ -187,9 +159,9 @@ def collect(now: datetime | None = None, credentials_path: Path | None = None, t
         payload = fetch_usage(token, timeout=timeout)
     except ClaudeAuthError as exc:
         if origin == "credentials":
-            return [], f"claude: usage endpoint rejected the CLI OAuth session ({exc}); {SETUP_HINT.format(file=oauth_path or oauth_file())}"
+            return [], f"claude: usage endpoint rejected the CLI OAuth session ({exc}); {SETUP_HINT.format(file=credentials_path or claude_home() / '.credentials.json')}"
         where = "QUOTA_BURNDOWN_CLAUDE_OAUTH" if origin == "env" else str(oauth_path or oauth_file())
-        return [], f"claude: usage endpoint rejected the long-lived session from {where} ({exc}); regenerate it with `claude setup-token`"
+        return [], f"claude: usage endpoint rejected the session from {where} ({exc}); remove it so the CLI session is used (a `claude setup-token` value lacks the scope this endpoint needs)"
     except (RuntimeError, OSError, ValueError) as exc:
         return [], f"claude: usage fetch failed: {exc}"
     finally:

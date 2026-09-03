@@ -121,29 +121,6 @@ def test_task_command_prefers_windowless_python():
     assert "quota-burndown.py" in cmd and cmd.endswith("collect --render --quiet")
 
 
-def test_cli_claude_session_from_stdin(paths, monkeypatch, capsys):
-    import io
-
-    from quota_burndown.providers import claude as claude_provider
-
-    monkeypatch.setattr("sys.stdin", io.StringIO("session-value\n"))
-    monkeypatch.setattr(claude_provider, "save_long_lived_session", lambda value, path: (path, None) if value.strip() == "session-value" else (_ for _ in ()).throw(ValueError("bad")))
-    monkeypatch.setattr(claude_provider, "collect", lambda **kw: ([Sample(NOW, "claude", "5h", 5.0, RESET, 300, "api")], None))
-    assert cli.main(["--home", str(paths.home), "claude-session"]) == 0
-    out = capsys.readouterr().out
-    assert "saved to" in out and "1 Claude window(s) sampled" in out and "session-value" not in out
-    assert Store(paths).latest()["claude:5h"].used == 5.0
-
-    monkeypatch.setattr("sys.stdin", io.StringIO("session-value\n"))
-    monkeypatch.setattr(claude_provider, "collect", lambda **kw: ([], "claude: usage endpoint rejected the long-lived session"))
-    assert cli.main(["--home", str(paths.home), "claude-session"]) == 1
-    assert "rejected" in capsys.readouterr().out
-
-    monkeypatch.setattr("sys.stdin", io.StringIO("<paste>\n"))
-    assert cli.main(["--home", str(paths.home), "claude-session"]) == 2
-    assert "nothing saved" in capsys.readouterr().err
-
-
 def test_render_usage_section(store, paths):
     from quota_burndown import ledger
     from quota_burndown.ledger import Event

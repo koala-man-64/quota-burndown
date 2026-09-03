@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import sqlite3
 import sys
@@ -218,28 +217,6 @@ def cmd_usage(args) -> int:
     return 0
 
 
-def cmd_claude_session(args) -> int:
-    """Store the long-lived Claude session for unattended sampling, then prove it works."""
-    paths = get_paths(args.home)
-    if sys.stdin.isatty():
-        value = getpass.getpass("Paste the value printed by `claude setup-token` (input is hidden): ")
-    else:
-        value = sys.stdin.read()
-    try:
-        path, warning = claude.save_long_lived_session(value, paths.home / claude.OAUTH_FILE_NAME)
-    except ValueError as exc:
-        print(f"nothing saved: {exc}", file=sys.stderr)
-        return 2
-    print(f"saved to {path}" + (f" ({warning})" if warning else " (readable by this account only)"))
-    samples, failure = claude.collect(oauth_path=path)
-    if failure:
-        print(failure)
-        return 1
-    Store(paths).append(samples)
-    print(f"usage endpoint accepted it: {len(samples)} Claude window(s) sampled and recorded")
-    return 0
-
-
 def cmd_statusline(args) -> int:
     paths = get_paths(args.home)
     try:
@@ -406,9 +383,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--csv", metavar="PATH", help="also write one row per event")
     p.add_argument("--json", metavar="PATH", help="also write one row per event")
     p.set_defaults(func=cmd_usage)
-
-    p = sub.add_parser("claude-session", help="save the value from `claude setup-token` for unattended Claude sampling (hidden prompt, or piped on stdin)")
-    p.set_defaults(func=cmd_claude_session)
 
     p = sub.add_parser("statusline", help="Claude Code statusLine entry point (reads JSON on stdin)")
     p.add_argument("--no-color", action="store_true")
