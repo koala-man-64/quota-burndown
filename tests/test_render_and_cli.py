@@ -117,3 +117,53 @@ def test_install_codex_skill_substitutes_launcher(tmp_path):
 def test_task_command_prefers_windowless_python():
     cmd = install.task_command()
     assert "quota-burndown.py" in cmd and cmd.endswith("collect --render --quiet")
+
+
+def test_render_usage_section(store, paths):
+    from quota_burndown import ledger
+    from quota_burndown.ledger import Event
+
+    seed(store)
+    conn = ledger.connect(paths.usage_db)
+    ledger.upsert(conn, [
+        Event("claude", "claude-code", ledger.PROMPT, "p1", NOW - timedelta(minutes=3), model="claude-fable-5-1", effort="xhigh"),
+        Event(
+            "claude", "claude-code", ledger.REQUEST, "r1", NOW - timedelta(minutes=2), model="claude-fable-5-1", effort="xhigh",
+            input_tokens=10, cache_read_tokens=1000, cache_write_tokens=200, output_tokens=50, reasoning_tokens=1, total_tokens=1260,
+        ),
+        Event(
+            "antigravity", "antigravity", ledger.REQUEST, "a1", NOW - timedelta(minutes=1), model="gemini-3.8-flash", effort="high",
+            input_tokens_inferred=28806, context_window_inferred=256000,
+        ),
+    ])
+    conn.close()
+    html = render.render_html(store, now=NOW, usage_db=paths.usage_db)
+    assert "Token usage" in html and html.count('class="card usage-card') == 3
+    assert "claude-fable-5-1 @ xhigh" in html and "~29K" in html and "no usage in 30 days" in html
+    assert "Recent requests" in html and "unlabeled context counter" in html and "tokens inferred" in html
+    assert "<script" not in html
+    assert "Token usage" not in render.render_html(store, now=NOW)
+
+
+def test_cli_usage_round_trip(paths, monkeypatch, tmp_path, capsys):
+    from test_usage_antigravity import make_home
+
+    home, db = make_home(tmp_path)
+    monkeypatch.setenv("QUOTA_BURNDOWN_ANTIGRAVITY_HOME", str(home))
+    assert cli.main(["--home", str(paths.home), "collect", "--provider", "antigravity", "--quiet"]) == 0
+    args = ["--home", str(paths.home), "usage", "--days", "3650", "--by", "provider,model_effort", "--json", str(tmp_path / "u.json"), "--csv", str(tmp_path / "u.csv")]
+    assert cli.main(args) == 0
+    out = capsys.readouterr().out
+    assert "antigravity gemini-3.8-flash @ high" in out and "wrote 4 rows" in out
+    data = json.loads((tmp_path / "u.json").read_text(encoding="utf-8"))
+    assert len(data["rows"]) == 4 and (tmp_path / "u.csv").exists()
+    assert cli.main(["--home", str(paths.home), "status"]) == 0 and "page:" in capsys.readouterr().out
+    assert cli.main(["--home", str(paths.home), "where"]) == 0 and "usage db:" in capsys.readouterr().out
+    assert cli.main(["--home", str(paths.home), "backfill", "--usage", "--provider", "antigravity", "--rescan"]) == 0
+    out = capsys.readouterr().out
+    assert "forgot 1 scan records" in out and '"files_parsed": 1' in out and paths.html.exists()
+    assert cli.main(["--home", str(paths.home), "collect", "--provider", "antigravity", "--no-usage", "--quiet"]) == 0
+    import pytest
+
+    with pytest.raises(SystemExit):
+        cli.main(["--home", str(paths.home), "usage", "--by", "bogus"])

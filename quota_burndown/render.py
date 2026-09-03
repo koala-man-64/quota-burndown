@@ -2,10 +2,12 @@
 from __future__ import annotations
 
 import html
+import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import __version__
+from . import __version__, ledger, usage_report
+from .ledger import Totals
 from .model import Burndown, current, group_instances
 from .store import Sample, Store
 from .util import atomic_write_text, fmt_local, fmt_minutes, now_utc, to_local
@@ -207,6 +209,97 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, days: int) -> 
     )
 
 
+# -- usage section -------------------------------------------------------------------
+
+USAGE_ROWS = (("prompts", "prompts"), ("requests", "requests"), ("input", "input"), ("cache_read", "cache read"), ("cache_write", "cache write"), ("output", "output"), ("total", "total"))
+USAGE_PERIOD_TITLES = {"today": "today", "7d": "7 days", "30d": "30 days"}
+ANTIGRAVITY_NOTE = (
+    "Antigravity writes no token counts. ~input is an unlabeled context counter read from its conversation "
+    "database and is kept out of every total; output tokens are unknown; Google exposes no local limit signal."
+)
+USAGE_FOOTNOTE = "Today is the local calendar day; 7 and 30 days are rolling windows. Tokens are what each tool recorded locally, not a bill."
+
+
+def _n(value: int) -> str:
+    return usage_report.fmt_n(value)
+
+
+def usage_card_html(provider: str, periods: dict[str, Totals], top: list[tuple[str, Totals]]) -> str:
+    title = ledger.PROVIDER_TITLES.get(provider, provider)
+    if not any(t.prompts or t.requests for t in periods.values()):
+        return (
+            f'<article class="card usage-card muted"><header><h3>{esc(title)}</h3><span class="badge">no usage in 30 days</span></header>'
+            '<div class="note">Nothing recorded yet. Run <code>quota-burndown collect</code>, or <code>backfill --usage</code> for history.</div></article>'
+        )
+    exact = any(t.has_exact for t in periods.values())
+    inferred = any(t.inferred_requests for t in periods.values())
+    head = "".join(f"<th>{esc(USAGE_PERIOD_TITLES[p])}</th>" for p in usage_report.PERIODS)
+    body: list[str] = []
+    for attr, label in USAGE_ROWS:
+        if not exact and attr not in ("prompts", "requests"):
+            continue
+        cells = "".join(f"<td>{_n(getattr(periods[p], attr))}</td>" for p in usage_report.PERIODS)
+        body.append(f"<tr><td>{esc(label)}</td>{cells}</tr>")
+    if inferred:
+        cells = "".join(f"<td>~{_n(periods[p].inferred_input)}</td>" for p in usage_report.PERIODS)
+        body.append(f'<tr class="inferred"><td>~input (inferred)</td>{cells}</tr>')
+    table = f'<table class="usage"><thead><tr><th></th>{head}</tr></thead><tbody>{"".join(body)}</tbody></table>'
+    top_rows: list[str] = []
+    for key, t in top[:5]:
+        if t.has_exact:
+            top_rows.append(f"<tr><td>{esc(key)}</td><td>{t.requests}</td><td>{_n(t.total)}</td></tr>")
+        else:
+            top_rows.append(f'<tr class="inferred"><td>{esc(key)}</td><td>{t.requests}</td><td>~{_n(t.inferred_input)}</td></tr>')
+    top_html = (
+        '<h4>Top model × effort, 7 days</h4><table class="usage"><thead><tr><th>model @ effort</th><th>reqs</th><th>tokens</th></tr></thead>'
+        f'<tbody>{"".join(top_rows)}</tbody></table>'
+    ) if top_rows else ""
+    note = f'<div class="note">{esc(ANTIGRAVITY_NOTE)}</div>' if provider == "antigravity" else ""
+    badge = "tokens inferred" if not exact else "exact counts"
+    return f'<article class="card usage-card"><header><h3>{esc(title)}</h3><span class="badge">{esc(badge)}</span></header>{table}{top_html}{note}</article>'
+
+
+def recent_table_html(rows: list[sqlite3.Row]) -> str:
+    if not rows:
+        return ""
+    body: list[str] = []
+    for row in rows:
+        inferred = row["input_tokens_inferred"] is not None
+        cells = [fmt_local(ledger.row_ts(row), "%a %d %H:%M"), ledger.PROVIDER_TITLES.get(row["provider"], row["provider"]), f"{row['model'] or '?'} @ {row['effort'] or '?'}"]
+        if inferred:
+            cells += [f"~{_n(int(row['input_tokens_inferred']))}", "", "", "?", "?"]
+        else:
+            cells += [_n(int(row[c] or 0)) for c in ("input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens", "total_tokens")]
+        css = ' class="inferred"' if inferred else ""
+        body.append(f"<tr{css}>" + "".join(f"<td>{esc(c)}</td>" for c in cells) + "</tr>")
+    return (
+        '<div class="recent"><h3>Recent requests</h3><table class="usage"><thead><tr><th>time</th><th>provider</th><th>model @ effort</th>'
+        f'<th>input</th><th>cache r</th><th>cache w</th><th>output</th><th>total</th></tr></thead><tbody>{"".join(body)}</tbody></table></div>'
+    )
+
+
+def usage_section_html(usage_db: Path, now: datetime) -> str:
+    try:
+        conn = ledger.connect(usage_db)
+    except sqlite3.Error as exc:
+        return f'<section class="usage"><h2>Token usage</h2><div class="banner">usage ledger unavailable: {esc(exc.__class__.__name__)}</div></section>'
+    try:
+        summary = usage_report.summary(conn, now)
+        week = ledger.rows(conn, since=now - timedelta(days=7), kind=ledger.REQUEST)
+        recent = ledger.recent_requests(conn, 25)
+    finally:
+        conn.close()
+    cards = []
+    for provider in ledger.PROVIDERS:
+        mine = [r for r in week if r["provider"] == provider]
+        top = usage_report.sorted_totals(ledger.rollup(mine, lambda r: f"{r['model'] or '?'} @ {r['effort'] or '?'}"), "model_effort")
+        cards.append(usage_card_html(provider, summary[provider], top))
+    return (
+        f'<section class="usage"><h2>Token usage</h2><div class="cards">{"".join(cards)}</div>'
+        f'{recent_table_html(recent)}<div class="note">{esc(USAGE_FOOTNOTE)}</div></section>'
+    )
+
+
 CSS = """
 :root{--bg:#f6f7f9;--card:#ffffff;--fg:#1c1e21;--muted:#6b7280;--line:#e5e7eb;--grid:#eef0f3;--ideal:#9ca3af;--actual:#2563eb;--over:#dc2626;--under:#16a34a;--warn:#d97706;--now:#111827}
 @media (prefers-color-scheme: dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e6e8eb;--muted:#9aa3ad;--line:#2a2f3a;--grid:#232834;--ideal:#6b7280;--actual:#60a5fa;--over:#f87171;--under:#4ade80;--warn:#fbbf24;--now:#e6e8eb}}
@@ -256,10 +349,21 @@ svg.chart{width:100%;height:auto;display:block}
 .legend i.r{border-top:2px dashed var(--warn)}
 .empty{color:var(--muted);padding:32px 0;text-align:center}
 footer{color:var(--muted);font-size:11px;padding:8px 24px 24px;max-width:1400px;margin:0 auto}
+section.usage>h2{font-size:15px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+table.usage{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+table.usage th,table.usage td{padding:3px 6px;text-align:right;border-bottom:1px solid var(--grid);white-space:nowrap}
+table.usage th{color:var(--muted);font-weight:500}
+table.usage th:first-child,table.usage td:first-child{text-align:left}
+table.usage tr.inferred td{color:var(--muted);font-style:italic}
+.card.usage-card{border-top-color:var(--actual)}
+.card.usage-card.muted{border-top-color:var(--ideal);opacity:.8}
+.recent{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-top:16px;overflow-x:auto}
+.recent h3{margin:0 0 8px;font-size:15px}
+.note{font-size:11px;color:var(--muted);margin-top:8px}
 """
 
 
-def render_html(store: Store, now: datetime | None = None, days: int = 7, warnings: list[str] | None = None, refresh_s: int = 120) -> str:
+def render_html(store: Store, now: datetime | None = None, days: int = 7, warnings: list[str] | None = None, refresh_s: int = 120, usage_db: Path | None = None) -> str:
     now = now or now_utc()
     samples = store.load(since=now - timedelta(days=max(days, 8)))
     latest = store.latest()
@@ -292,6 +396,7 @@ def render_html(store: Store, now: datetime | None = None, days: int = 7, warnin
         f"{banner}"
         '<div class="legend"><span><i></i>linear pace (ideal burn)</span><span><i class="a"></i>remaining budget</span><span><i class="p"></i>projection at current rate</span><span><i class="r"></i>window reset</span></div>'
         + "".join(sections)
+        + (usage_section_html(usage_db, now) if usage_db is not None else "")
         + "</main>"
         f"<footer>Above the dashed line = under pace (budget to spare). Below it = over pace. quota-burndown {esc(__version__)}</footer>"
         "</body></html>\n"

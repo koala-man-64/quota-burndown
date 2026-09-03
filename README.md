@@ -1,6 +1,6 @@
 # quota-burndown
 
-A burndown of your Claude and Codex subscription quotas: how much of each rate-limit window you have used versus a straight-line pace, how long is left, and when you would hit 100% at the current rate. Works as a Claude Code plugin, a Claude Code status line, a Codex skill, and a self-refreshing local HTML page. Standard library only, Python 3.10+.
+One local page for three coding agents. A burndown of your Claude and Codex subscription quotas: how much of each rate-limit window you have used versus a straight-line pace, how long is left, and when you would hit 100% at the current rate. Underneath it, a per-request token usage ledger for Claude Code, Codex and Antigravity: prompts, requests, model, reasoning effort, input / cache read / cache write / output tokens, with timestamps. Works as a Claude Code plugin, a Claude Code status line, a Codex skill, and a self-refreshing local HTML page. Standard library only, Python 3.10+. Nothing leaves the machine.
 
 ## How it works
 
@@ -13,6 +13,27 @@ A burndown of your Claude and Codex subscription quotas: how much of each rate-l
 Samples land in `~/.quota-burndown/samples.jsonl` (one JSON line each). `latest.json` holds the newest reading per window so the status line stays fast. The page is `~/.quota-burndown/burndown.html`.
 
 Pace is linear: 0% at window start, 100% at reset. Window start is `resets_at` minus the window length. "Over pace" means you are spending faster than that line; the projection extends your average rate since window start to show either the time you would hit 100% or your projected use at reset.
+
+## Token usage ledger
+
+`collect` also parses each tool's own local files into `~/.quota-burndown/usage.sqlite`, one row per model call (`request`) and one per human turn (`prompt`). Files are re-read only when their size or mtime changes, and rows are keyed by the source's own identifiers, so re-scans are idempotent. The ledger outlives the sources: Claude Code deletes transcripts after `cleanupPeriodDays` (30 by default), the ledger does not.
+
+| Provider | Source | What is exact | What is not |
+| --- | --- | --- | --- |
+| Claude Code | `~/.claude/projects/**/*.jsonl` transcripts (main sessions, subagents, workflow agents). One API response spans several lines with the same `message.id`; they are collapsed to one request. | model, effort, input, cache read, cache write, output, thinking, prompts | — |
+| Codex | `~/.codex/sessions/**/rollout-*.jsonl` (and `archived_sessions`). Each `token_count` event is a cumulative snapshot; the ledger stores the per-call delta. | model, effort, input, cached input, cache write, output, reasoning, prompts | Prompts injected by Codex Desktop as role=user text (`<hook_prompt>`, `<recommended_plugins>`, …) are excluded by prefix. |
+| Antigravity | `~/.gemini/antigravity/brain/<conversation>/.system_generated/logs/transcript.jsonl` for prompts and timestamps; `conversations/<conversation>.db` (`gen_metadata` protobuf blobs) for one row per model call. | prompts, model, effort, timestamps, request count | **Token counts.** Antigravity writes none. An unlabeled protobuf field grows with every call beside a constant 256000, which is how a prompt token count and a context window behave, so it is stored as `input_tokens_inferred` and shown as `~input`. It is never added into any total. Output tokens are unknown. Google exposes no local limit signal. |
+
+```
+py quota-burndown.py usage                                  # last 7 days by provider, model x effort, day
+py quota-burndown.py usage --since 2026-09-01 --until 2026-09-03 --by model_effort,session --raw
+py quota-burndown.py usage --days 30 --csv usage.csv --json usage.json
+py quota-burndown.py backfill --usage                       # import all history (reads the Codex archive, several GB)
+py quota-burndown.py backfill --usage --provider claude --rescan   # re-parse everything after a parser change
+py quota-burndown.py collect --no-usage                     # quota samples only
+```
+
+`--since/--until` are UTC calendar dates so they line up with the standalone audit scripts; the page's "today" is the local calendar day, its 7- and 30-day figures are rolling windows. `collect --provider claude` (what the plugin's Stop hook runs) parses only changed Claude transcripts within a 10 s budget; `collect` from the scheduled task covers all three tools with a 60 s budget and defers anything it did not reach to the next run. `serve` also answers `/usage.json`.
 
 ## Install
 
@@ -39,8 +60,9 @@ py quota-burndown.py backfill
 ## Use
 
 ```
-py quota-burndown.py status              # text summary per window
-py quota-burndown.py collect --render    # sample both providers and rewrite the page
+py quota-burndown.py status              # text summary per window, plus today's usage per tool
+py quota-burndown.py usage               # token usage tables from the ledger
+py quota-burndown.py collect --render    # sample quotas, ingest new usage, rewrite the page
 py quota-burndown.py serve               # http://127.0.0.1:8787/ re-collects on load
 py quota-burndown.py where               # data paths and scheduled task state
 py quota-burndown.py prune --keep-days 90
