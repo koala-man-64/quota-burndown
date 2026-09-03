@@ -1,0 +1,17 @@
+{
+  "description": "Sample the Claude subscription quota when a turn ends (debounced to once per 2 minutes) and refresh the burndown page, so the picture stays current during desktop-app sessions where no status line exists.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "py \"${CLAUDE_PLUGIN_ROOT}/quota-burndown.py\" collect --provider claude --render --quiet --debounce 120",
+            "timeout": 20,
+            "statusMessage": "Sampling quota burndown"
+          }
+        ]
+      }
+    ]
+  }
+}

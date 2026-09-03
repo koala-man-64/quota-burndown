@@ -1,0 +1,16 @@
+{
+  "name": "rudy-local",
+  "description": "Rudy's local plugins",
+  "owner": {
+    "name": "Rudy Prokes"
+  },
+  "plugins": [
+    {
+      "name": "quota-burndown",
+      "description": "Burndown of Claude and Codex subscription quotas: used vs linear pace per rate-limit window, a /burndown skill, a status line, and a local HTML page.",
+      "version": "0.1.0",
+      "source": "./",
+      "category": "productivity"
+    }
+  ]
+}

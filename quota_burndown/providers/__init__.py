@@ -1,0 +1,1 @@
+"""Quota sample providers."""

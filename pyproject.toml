@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "quota-burndown"
+version = "0.1.0"
+description = "Burndown of Claude Code and Codex subscription quotas: used vs linear pace per rate-limit window."
+requires-python = ">=3.10"
+dependencies = []
+license = { text = "MIT" }
+
+[project.scripts]
+quota-burndown = "quota_burndown.cli:main"
+
+[tool.setuptools]
+packages = ["quota_burndown", "quota_burndown.providers"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
