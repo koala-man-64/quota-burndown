@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import time
+from dataclasses import replace
 from pathlib import Path
 
 from ..config import claude_home
@@ -71,7 +72,8 @@ def _request(entry: dict, ts, thread: str, source: str) -> Event | None:
     if not isinstance(usage, dict) or not usage:
         return None
     key = str(message.get("id") or entry.get("requestId") or entry.get("uuid") or "")
-    if not key:
+    model = str(message.get("model") or "")
+    if not key or model.startswith("<"):  # "<synthetic>" records are Claude Code's own inserts, not API calls
         return None
     details = usage.get("output_tokens_details")
     thinking = _int(details.get("thinking_tokens")) if isinstance(details, dict) else 0
@@ -83,7 +85,7 @@ def _request(entry: dict, ts, thread: str, source: str) -> Event | None:
         PROVIDER, TOOL, REQUEST, key, ts,
         session_id=str(entry.get("sessionId") or ""),
         thread=thread,
-        model=str(message.get("model") or ""),
+        model=model,
         effort=str(entry.get("effort") or ""),
         input_tokens=input_tokens,
         cache_read_tokens=cache_read,
@@ -134,8 +136,12 @@ def parse_file(path: Path, warnings: list[str] | None = None) -> list[Event]:
             if event is None:
                 continue
             previous = requests.get(event.event_key)
-            if previous is None or (event.output_tokens or 0) >= (previous.output_tokens or 0):
+            if previous is None:
                 requests[event.event_key] = event
+            elif (event.output_tokens or 0) >= (previous.output_tokens or 0):
+                # fullest usage wins, but the request is stamped with its earliest line so a
+                # response that streams across midnight stays on the day it started
+                requests[event.event_key] = replace(event, ts=min(event.ts, previous.ts))
             for index in pending:
                 prompts[index] = prompts[index].with_model(event.model, event.effort)
             pending.clear()

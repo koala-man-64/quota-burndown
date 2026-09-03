@@ -10,19 +10,27 @@ standalone codex_token_usage_audit.py script and its tests.
 Model and effort come from the `turn_context` record that precedes each turn. Human prompts
 are `event_msg` user_message records when the client writes them (codex exec), otherwise
 `response_item` user messages minus the wrappers Codex Desktop injects as role=user text.
+
+A subagent rollout opens with a copy of its parent's history: the parent's prompts,
+`task_started` markers and `token_count` snapshots, verbatim. Requests are therefore keyed
+by turn id (from `task_started` / `turn_context`) plus the cumulative counter, and prompts
+by timestamp plus a hash of their text, so a copy lands on the same ledger row as the
+original instead of counting twice. Rollouts without turn ids fall back to (thread, ordinal).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
+import sqlite3
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
 from ..config import codex_home
 from ..ledger import PROMPT, REQUEST, Event
-from ..util import parse_iso
+from ..util import iso, parse_iso
 
 PROVIDER = "codex"
 TOKEN_FIELDS = (
@@ -141,6 +149,58 @@ def is_wrapper(text: str) -> bool:
     return stripped.startswith(WRAPPER_PREFIXES) or bool(_TAG_START.match(stripped))
 
 
+def prompt_key(ts, text: str) -> str:
+    digest = hashlib.sha1(text.strip().encode("utf-8", "replace")).hexdigest()[:12]
+    return f"{iso(ts)}:{digest}"
+
+
+def request_key(thread_id: str, turn_id: str, ordinal_key: str, cumulative: Usage) -> str:
+    if turn_id:
+        return f"{turn_id}:{cumulative.total_tokens}:{cumulative.output_tokens}"
+    return f"{thread_id}:{ordinal_key}"
+
+
+def home_of(path: Path) -> Path:
+    """The Codex data root a rollout belongs to (its sessions/ or archived_sessions/ parent)."""
+    for parent in path.parents:
+        if parent.name in ("sessions", "archived_sessions"):
+            return parent.parent
+    return codex_home()
+
+
+_state_cache: dict[tuple[str, float], dict[str, tuple[str, str]]] = {}
+
+
+def state_models(home: Path) -> dict[str, tuple[str, str]]:
+    """thread id -> (model, reasoning_effort) from Codex's own state database, read-only.
+    Used only for rollouts that never record a turn_context. Empty when unavailable."""
+    db = home / "state_5.sqlite"
+    try:
+        stamp = db.stat().st_mtime
+    except OSError:
+        return {}
+    key = (str(db), stamp)
+    if key in _state_cache:
+        return _state_cache[key]
+    out: dict[str, tuple[str, str]] = {}
+    try:
+        conn = sqlite3.connect(db.resolve().as_uri() + "?mode=ro", uri=True, timeout=2.0)
+        try:
+            conn.execute("PRAGMA query_only = ON")
+            tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+            if "threads" in tables:
+                for thread_id, model, effort in conn.execute("SELECT id, model, reasoning_effort FROM threads"):
+                    if thread_id:
+                        out[str(thread_id)] = (str(model or ""), str(effort or ""))
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+    _state_cache.clear()
+    _state_cache[key] = out
+    return out
+
+
 def discover(home: Path | None = None, since_days: float | None = 30) -> list[tuple[Path, int, float]]:
     """(path, size, mtime) for rollouts modified within since_days (None = all)."""
     home = home or codex_home()
@@ -166,8 +226,12 @@ def parse_file(path: Path, warnings: list[str] | None = None) -> list[Event]:
     tool = "codex-cli"
     thread = "root"
     model = effort = ""
+    first_model = first_effort = ""
+    turn_id = ""
+    own_turns: set[str] = set()  # turns this rollout has a turn_context for, i.e. its own work
     previous: Usage | None = None
     requests: list[Event] = []
+    request_turns: list[str] = []
     prompt_events: list[Event] = []  # event_msg user_message (codex exec)
     prompt_items: list[Event] = []   # response_item role=user (Codex Desktop)
     pending: list[tuple[list[Event], int]] = []
@@ -179,9 +243,11 @@ def parse_file(path: Path, warnings: list[str] | None = None) -> list[Event]:
             bucket[index] = bucket[index].with_model(model, effort)
         pending.clear()
 
-    def prompt(bucket: list[Event], key: str, ts) -> None:
-        bucket.append(Event(PROVIDER, tool, PROMPT, key, ts, session_id=thread_id, thread=thread, model=model, effort=effort, source_file=source))
-        if not model and not effort:
+    def prompt(bucket: list[Event], text: str, ts) -> None:
+        bucket.append(Event(PROVIDER, tool, PROMPT, prompt_key(ts, text), ts, session_id=thread_id, thread=thread, model=model, effort=effort, source_file=source))
+        # In a subagent rollout a prompt seen before any turn_context is usually the parent's,
+        # copied in; leave it blank so the parent's own rollout fills it.
+        if not model and not effort and thread != "subagent":
             pending.append((bucket, len(bucket) - 1))
 
     with open(path, encoding="utf-8", errors="replace") as fh:
@@ -198,7 +264,7 @@ def parse_file(path: Path, warnings: list[str] | None = None) -> list[Event]:
             entry_type = entry.get("type")
             ts = parse_iso(entry.get("timestamp"))
             ordinal = entry.get("ordinal")
-            key = f"{thread_id}:{ordinal if isinstance(ordinal, int) and not isinstance(ordinal, bool) else 'L%d' % lineno}"
+            ordinal_key = str(ordinal) if isinstance(ordinal, int) and not isinstance(ordinal, bool) else f"L{lineno}"
 
             if entry_type == "session_meta":
                 thread_id = str(payload.get("id") or payload.get("session_id") or thread_id)
@@ -210,20 +276,28 @@ def parse_file(path: Path, warnings: list[str] | None = None) -> list[Event]:
             if entry_type == "turn_context":
                 model = str(payload.get("model") or model)
                 effort = str(payload.get("effort") or effort)
+                first_model, first_effort = first_model or model, first_effort or effort
+                turn_id = str(payload.get("turn_id") or turn_id)
+                if turn_id:
+                    own_turns.add(turn_id)
                 fill_pending()
                 continue
             if entry_type == "response_item":
                 if payload.get("type") == "message" and payload.get("role") == "user" and ts is not None:
                     text = input_text(payload.get("content"))
                     if text is not None and text.strip() and not is_wrapper(text):
-                        prompt(prompt_items, key, ts)
+                        prompt(prompt_items, text, ts)
                 continue
             if entry_type != "event_msg":
                 continue
             event_type = payload.get("type")
+            if event_type == "task_started":
+                turn_id = str(payload.get("turn_id") or turn_id)
+                continue
             if event_type == "user_message":
-                if ts is not None:
-                    prompt(prompt_events, key, ts)
+                text = str(payload.get("message") or "")
+                if ts is not None and text.strip():
+                    prompt(prompt_events, text, ts)
                 continue
             if event_type != "token_count":
                 continue
@@ -237,8 +311,9 @@ def parse_file(path: Path, warnings: list[str] | None = None) -> list[Event]:
             previous = current
             if not increment.total_tokens or ts is None:
                 continue
+            request_turns.append(turn_id)
             requests.append(Event(
-                PROVIDER, tool, REQUEST, key, ts,
+                PROVIDER, tool, REQUEST, request_key(thread_id, turn_id, ordinal_key, current), ts,
                 session_id=thread_id, thread=thread, model=model, effort=effort,
                 input_tokens=increment.input_tokens,
                 cache_read_tokens=increment.cached_input_tokens,
@@ -250,4 +325,21 @@ def parse_file(path: Path, warnings: list[str] | None = None) -> list[Event]:
             ))
             fill_pending()
     prompts = prompt_events if prompt_events else prompt_items
+    if any(not e.model or not e.effort for e in requests + prompts):
+        # A thread runs on one model, so its first turn_context (or Codex's own thread record)
+        # fills calls logged before it. In a subagent rollout only the child's own turns are
+        # filled; the copied parent history stays blank for the parent's rollout to attribute.
+        fill_model, fill_effort = first_model, first_effort
+        if not fill_model or not fill_effort:
+            state_model, state_effort = state_models(home_of(path)).get(thread_id, ("", ""))
+            fill_model, fill_effort = fill_model or state_model, fill_effort or state_effort
+
+        def fill(event: Event) -> Event:
+            return replace(event, model=event.model or fill_model, effort=event.effort or fill_effort)
+
+        if thread == "subagent":
+            requests = [fill(e) if (not tid or tid in own_turns) else e for e, tid in zip(requests, request_turns)]
+        else:
+            requests = [fill(e) for e in requests]
+            prompts = [fill(p) for p in prompts]
     return requests + prompts

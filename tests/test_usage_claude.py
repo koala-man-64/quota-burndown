@@ -43,11 +43,12 @@ def make_home(tmp_path):
     write(main, [
         user("u1", "2026-09-03T14:00:00.000Z", "fix the bug"),
         assistant("m1", "2026-09-03T14:00:05.000Z", 100, block="thinking"),
-        assistant("m1", "2026-09-03T14:00:05.000Z", 300, block="text"),
+        assistant("m1", "2026-09-03T14:00:08.000Z", 300, block="text"),
         json.dumps({"type": "system", "subtype": "stop_hook_summary", "timestamp": "2026-09-03T14:00:06Z"}),
         tool_result("u2", "2026-09-03T14:00:07.000Z"),
         "{not json",
         assistant("m2", "2026-09-03T14:00:09.000Z", 50, block="tool_use", effort="high"),
+        assistant("m-syn", "2026-09-03T14:00:10.000Z", 0, model="<synthetic>", effort=""),
         user("u3", "2026-09-03T14:05:00.000Z", "thanks"),
     ])
     sub = home / "projects" / "C--proj" / "s1" / "subagents" / "agent-abc.jsonl"
@@ -66,6 +67,8 @@ def test_parse_file_dedupes_requests_and_counts_prompts(tmp_path):
     m1 = requests["m1"]
     assert (m1.output_tokens, m1.input_tokens, m1.cache_read_tokens, m1.cache_write_tokens, m1.reasoning_tokens) == (300, 2, 39565, 34187, 5)
     assert m1.total_tokens == 2 + 39565 + 34187 + 300
+    assert m1.ts.isoformat() == "2026-09-03T14:00:05+00:00"  # earliest line of the response, fullest usage
+    assert "m-syn" not in requests
     assert (m1.model, m1.effort, m1.thread, m1.session_id, m1.tool, m1.provider) == ("claude-fable-5-1", "xhigh", "main", "s1", "claude-code", "claude")
     assert [p.event_key for p in prompts] == ["u1", "u3"]
     assert (prompts[0].model, prompts[0].effort) == ("claude-fable-5-1", "xhigh")

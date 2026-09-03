@@ -95,9 +95,18 @@ _UPSERT = (
     f"INSERT INTO events ({', '.join(COLUMNS)}) VALUES ({', '.join('?' for _ in COLUMNS)}) "
     f"ON CONFLICT({', '.join(_KEY)}) DO UPDATE SET "
     + ", ".join(f"{c} = excluded.{c}" for c in COLUMNS if c not in _KEY)
-    # Claude writes one line per content block with the same message id; output_tokens only
-    # ever grows across them, so a rescan may not replace a fuller record with a thinner one.
-    + " WHERE coalesce(excluded.output_tokens, 0) >= coalesce(events.output_tokens, 0)"
+    # A fuller record (more output) always wins: Claude writes one line per content block with
+    # the same message id and output only grows across them. On equal output the row is the
+    # same call seen again (a rescan, or Codex history copied into a subagent rollout), so it
+    # only changes when the numbers changed, when it fills a missing model or effort, or when a
+    # root-thread attribution replaces a subagent copy.
+    + " WHERE coalesce(excluded.output_tokens, 0) > coalesce(events.output_tokens, 0)"
+    + " OR (coalesce(excluded.output_tokens, 0) = coalesce(events.output_tokens, 0) AND ("
+    + "excluded.total_tokens IS NOT events.total_tokens"
+    + " OR excluded.input_tokens_inferred IS NOT events.input_tokens_inferred"
+    + " OR (events.model = '' AND excluded.model <> '')"
+    + " OR (events.effort = '' AND excluded.effort <> '')"
+    + " OR (events.thread = 'subagent' AND excluded.thread = 'root')))"
 )
 
 

@@ -48,6 +48,21 @@ def test_upsert_is_idempotent_and_keeps_fuller_record(paths):
     conn.close()
 
 
+def test_equal_output_rows_only_change_when_they_carry_news(paths):
+    conn = ledger.connect(paths.usage_db)
+    ledger.upsert(conn, [req("k", provider="codex", tool="codex-desktop", session_id="child", thread="subagent", model="", effort="")])
+    ledger.upsert(conn, [req("k", provider="codex", tool="codex-desktop", session_id="parent", thread="root", model="gpt-5.6-luna", effort="low")])
+    row = conn.execute("SELECT session_id, thread, model FROM events WHERE event_key = 'k'").fetchone()
+    assert tuple(row) == ("parent", "root", "gpt-5.6-luna")  # blank copy filled by the attributed row
+    ledger.upsert(conn, [req("k", provider="codex", tool="codex-desktop", session_id="child", thread="subagent", model="gpt-5.6-terra", effort="medium")])
+    row = conn.execute("SELECT session_id, thread, model FROM events WHERE event_key = 'k'").fetchone()
+    assert tuple(row) == ("parent", "root", "gpt-5.6-luna")  # same numbers, already attributed: untouched
+    ledger.upsert(conn, [req("k", provider="codex", tool="codex-desktop", session_id="parent", thread="root", model="gpt-5.6-luna", effort="low", input_tokens=6, total_tokens=136)])
+    row = conn.execute("SELECT input_tokens, total_tokens FROM events WHERE event_key = 'k'").fetchone()
+    assert tuple(row) == (6, 136)  # same output but corrected numbers (a parser fix): updated
+    conn.close()
+
+
 def test_same_key_in_different_providers_or_kinds_does_not_collide(paths):
     conn = ledger.connect(paths.usage_db)
     ledger.upsert(conn, [req("k"), req("k", provider="codex", tool="codex-desktop"), prompt("k")])
