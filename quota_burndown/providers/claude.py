@@ -1,10 +1,6 @@
-"""Claude subscription quota.
-
-Two sources feed the same sample shape:
-  * the OAuth usage endpoint Claude Code itself uses for /usage (polled), and
-  * the rate_limits block Claude Code pipes to a statusLine command (pushed).
-The OAuth session is read from Claude Code's credentials file only to authorize the
-usage call. It is never logged, printed, or stored.
+"""Claude subscription quota, polled from the OAuth usage endpoint Claude Code itself uses
+for /usage. The session value is read only to authorize that call and is never logged,
+printed, or stored.
 """
 from __future__ import annotations
 
@@ -149,20 +145,6 @@ def normalize_usage(payload: dict, now: datetime | None = None) -> list[Sample]:
         if not isinstance(block, dict) or block.get("utilization") is None:
             continue
         out.append(Sample(now, PROVIDER, label, float(block["utilization"]), parse_iso(block.get("resets_at")), minutes, "api"))
-    return out
-
-
-def normalize_statusline(rate_limits, now: datetime | None = None) -> list[Sample]:
-    """Samples from the `rate_limits` object Claude Code sends to a statusLine command."""
-    now = now or now_utc()
-    out: list[Sample] = []
-    if not isinstance(rate_limits, dict):
-        return out
-    for field, label in (("five_hour", "5h"), ("seven_day", "7d")):
-        block = rate_limits.get(field)
-        if not isinstance(block, dict) or block.get("used_percentage") is None:
-            continue
-        out.append(Sample(now, PROVIDER, label, float(block["used_percentage"]), from_epoch(block.get("resets_at")), WINDOW_MINUTES[label], "statusline"))
     return out
 
 

@@ -46,11 +46,13 @@ def test_write_html(store, paths):
     assert out.exists() and out.read_text(encoding="utf-8").startswith("<!doctype html>")
 
 
-def test_statusline_records_and_prints(store):
+def test_statusline_displays_latest_and_never_writes(store):
+    seed(store)
+    before = (store.latest(), len(store.load()))
     payload = {"rate_limits": {"five_hour": {"used_percentage": 30, "resets_at": int((NOW + timedelta(hours=1)).timestamp())}, "seven_day": {"used_percentage": 10, "resets_at": int((NOW + timedelta(days=2)).timestamp())}}}
     line = statusline.run(json.dumps(payload), store, now=NOW, color=False)
-    assert line.startswith("Claude 5h 30% p80 ▼50 · 7d 10% p71 ▼61")
-    assert store.latest()["claude:5h"].source == "statusline"
+    assert line.startswith("Claude 5h 60% p60 =0 · 7d 27% p81 ▼54") and "Codex" in line
+    assert (store.latest(), len(store.load())) == before  # the payload on stdin is display input only
     assert "\x1b[" in statusline.run("", store, now=NOW, color=True)
     assert statusline.run("{not json", store, now=NOW, color=False).startswith("Claude")
 

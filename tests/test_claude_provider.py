@@ -26,15 +26,6 @@ def test_normalize_usage_falls_back_to_legacy_fields():
     assert samples[1].resets_at is None
 
 
-def test_normalize_statusline():
-    rl = {"five_hour": {"used_percentage": 44, "resets_at": 1788743999}, "seven_day": {"used_percentage": 27.5, "resets_at": 1788850799}, "spend_limit": {"used_percentage": 0}}
-    samples = claude.normalize_statusline(rl, NOW)
-    assert [(s.window, s.used, s.source) for s in samples] == [("5h", 44.0, "statusline"), ("7d", 27.5, "statusline")]
-    assert samples[0].resets_at == datetime.fromtimestamp(1788743999, tz=timezone.utc)
-    assert claude.normalize_statusline(None, NOW) == []
-    assert claude.normalize_statusline({"five_hour": {}}, NOW) == []
-
-
 def test_read_access_token_from_cli_credentials(tmp_path):
     no_file = tmp_path / "no_oauth"
     missing = tmp_path / "none.json"

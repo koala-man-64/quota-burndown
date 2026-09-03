@@ -1,16 +1,14 @@
 """Claude Code statusLine entry point.
 
-Reads the JSON Claude Code pipes on stdin, records the `rate_limits` reading it carries,
-and prints one compact line. Only latest.json is read, so this stays fast enough to run on
-every status refresh.
+Prints one compact line from latest.json, the newest reading per window that the collector
+wrote. It is display only: the JSON Claude Code pipes on stdin is ignored, nothing is sampled
+and nothing is written, so the status bar never becomes a scheduled process of its own.
 """
 from __future__ import annotations
 
-import json
 from datetime import datetime
 
 from .model import PROVIDER_ORDER, Burndown, from_latest
-from .providers import claude
 from .store import Store
 from .util import fmt_minutes, now_utc
 
@@ -52,16 +50,7 @@ def format_line(burndowns: list[Burndown], color: bool = True) -> str:
 
 
 def run(stdin_text: str, store: Store, now: datetime | None = None, color: bool = True) -> str:
-    now = now or now_utc()
-    try:
-        payload = json.loads(stdin_text) if stdin_text and stdin_text.strip() else {}
-    except ValueError:
-        payload = {}
-    if isinstance(payload, dict):
-        samples = claude.normalize_statusline(payload.get("rate_limits"), now)
-        if samples:
-            try:
-                store.append(samples)
-            except OSError:
-                pass
-    return format_line(from_latest(store.latest(), now), color=color)
+    """The status line for whatever latest.json holds. `stdin_text` is accepted so Claude Code's
+    payload can be drained, and otherwise ignored."""
+    del stdin_text
+    return format_line(from_latest(store.latest(), now or now_utc()), color=color)

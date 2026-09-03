@@ -19,7 +19,7 @@ from .util import fmt_local, fmt_minutes, iso, now_utc
 
 LOG_MAX_BYTES = 512_000
 PROVIDER_CHOICES = ("all", "claude", "codex", "antigravity")
-USAGE_BUDGET_S = {"claude": 10.0}  # the Claude Code Stop hook allows 20 s for the whole collect
+USAGE_BUDGET_S = {"claude": 10.0}  # a Claude-only collect is what the on-demand skill runs; keep it quick
 DEFAULT_USAGE_BUDGET_S = 60.0
 
 

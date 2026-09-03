@@ -6,11 +6,12 @@ One local page for three coding agents. A burndown of your Claude and Codex subs
 
 | Provider | Source | Trigger |
 | --- | --- | --- |
-| Claude | The OAuth usage endpoint Claude Code uses for `/usage` (5h session, 7-day all models, 7-day per-model windows). Authorized with the OAuth session in `~/.claude/.credentials.json`; the token is read only to make the call and is never logged or stored. | Scheduled task every 5 min, the plugin's `Stop` hook after each turn (debounced), and every page load in `serve` mode. |
-| Claude | The `rate_limits` object Claude Code pipes to the status line command. | Every status line refresh in the CLI. No network call. |
+| Claude | The OAuth usage endpoint Claude Code uses for `/usage` (5h session, 7-day all models, 7-day per-model windows). Authorized with the long-lived session in `~/.quota-burndown/claude_oauth` (see below) or the OAuth session in `~/.claude/.credentials.json`; the value is read only to make the call and is never logged or stored. | Scheduled task every 5 min, and every page load in `serve` mode. |
 | Codex | The `rate_limits` block Codex writes on every `token_count` event in its rollout files under `~/.codex/archived_sessions` and `~/.codex/sessions`. Scanned incrementally by byte offset. | Scheduled task and page loads. Full history import with `backfill`. |
 
 Samples land in `~/.quota-burndown/samples.jsonl` (one JSON line each). `latest.json` holds the newest reading per window so the status line stays fast. The page is `~/.quota-burndown/burndown.html`.
+
+One process generates everything: the Windows scheduled task `QuotaBurndownCollect` runs `collect --render --quiet` every 5 minutes, which samples both quotas, ingests new usage, and rewrites the page (the page reloads itself every 2 minutes). Nothing inside Claude Code runs on a schedule: the plugin ships only the on-demand `/quota-burndown:burndown` skill, and the status line just displays `latest.json`.
 
 Pace is linear: 0% at window start, 100% at reset. Window start is `resets_at` minus the window length. "Over pace" means you are spending faster than that line; the projection extends your average rate since window start to show either the time you would hit 100% or your projected use at reset.
 
@@ -33,7 +34,7 @@ py quota-burndown.py backfill --usage --provider claude --rescan   # re-parse ev
 py quota-burndown.py collect --no-usage                     # quota samples only
 ```
 
-`--since/--until` are UTC calendar dates so they line up with the standalone audit scripts; the page's "today" is the local calendar day, its 7- and 30-day figures are rolling windows. `collect --provider claude` (what the plugin's Stop hook runs) parses only changed Claude transcripts within a 10 s budget; `collect` from the scheduled task covers all three tools with a 60 s budget and defers anything it did not reach to the next run. `serve` also answers `/usage.json`.
+`--since/--until` are UTC calendar dates so they line up with the standalone audit scripts; the page's "today" is the local calendar day, its 7- and 30-day figures are rolling windows. `collect` from the scheduled task covers all three tools with a 60 s budget and defers anything it did not reach to the next run; `collect --provider claude` parses only changed Claude transcripts within 10 s. `serve` also answers `/usage.json`.
 
 ## Install
 
@@ -49,7 +50,7 @@ Then, in Claude Code (desktop app or CLI):
 /plugin install quota-burndown@rudy-local
 ```
 
-The plugin adds `/quota-burndown:burndown` and a `Stop` hook that samples the Claude quota after each turn. For a one-off session use `claude --plugin-dir C:\Users\rdpro\Projects\quota-burndown`.
+The plugin adds `/quota-burndown:burndown`, which runs only when you invoke it. For a one-off session use `claude --plugin-dir C:\Users\rdpro\Projects\quota-burndown`.
 
 Optional one-time history import of every Codex rollout ever written (reads several GB, takes a few minutes):
 
@@ -71,7 +72,7 @@ py quota-burndown.py uninstall --apply
 
 In Claude Code: `/quota-burndown:burndown`. In Codex: ask for the quota burndown; the installed skill runs the same CLI.
 
-Status line format: `Claude 5h 44% p38 ▲6 · 7d 27% p45 ▼18 │ Codex 7d 99% p52 ▲47`. `p` is pace, the arrow is points over (▲, red) or under (▼, green) pace.
+Status line format: `Claude 5h 44% p38 ▲6 · 7d 27% p45 ▼18 │ Codex 7d 99% p52 ▲47`. `p` is pace, the arrow is points over (▲, red) or under (▼, green) pace. The status line reads `latest.json` and writes nothing; its numbers are as fresh as the last scheduled run.
 
 ## Development
 

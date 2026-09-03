@@ -133,7 +133,7 @@ def install_codex_skill(home: Path | None = None, apply: bool = False) -> str:
 def plugin_instructions() -> str:
     root = project_root()
     return (
-        "Claude Code plugin (adds /quota-burndown:burndown and a Stop hook that samples after each turn):\n"
+        "Claude Code plugin (adds the on-demand /quota-burndown:burndown skill; no hooks, nothing scheduled):\n"
         f"  /plugin marketplace add {root}\n"
         "  /plugin install quota-burndown@rudy-local\n"
         f"  or for one session: claude --plugin-dir \"{root}\""
