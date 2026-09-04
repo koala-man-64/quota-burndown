@@ -12,7 +12,7 @@ One local page for three coding agents. A burndown of your Claude and Codex subs
 
 Samples land in `~/.quota-burndown/samples.jsonl` (one JSON line each). `latest.json` holds the newest reading per window so the status line stays fast. The page is `~/.quota-burndown/burndown.html`.
 
-One process generates everything: the Windows scheduled task `QuotaBurndownCollect` runs `collect --render --quiet` every 5 minutes, which samples both quotas, ingests new usage, and rewrites the page (the page reloads itself every 2 minutes). Nothing inside Claude Code runs on a schedule: the plugin ships only the on-demand `/quota-burndown:burndown` skill, and the status line just displays `latest.json`.
+One process generates everything: the Windows scheduled task `QuotaBurndownCollect` runs `collect --render --quiet` every 5 minutes, which samples both quotas, ingests new usage, and rewrites the page (the page reloads itself every 2 minutes). `install --task --apply` registers it to run on battery as well as mains, to catch up one missed run after the laptop wakes, and to give up after 10 minutes; `where` reports missed runs, so a stale page has a visible cause. It runs only while you are logged in. Nothing inside Claude Code runs on a schedule: the plugin ships only the on-demand `/quota-burndown:burndown` skill, and the status line just displays `latest.json`.
 
 Pace is linear: 0% at window start, 100% at reset. Window start is `resets_at` minus the window length. "Over pace" means you are spending faster than that line; the projection extends your average rate since window start to show either the time you would hit 100% or your projected use at reset.
 

@@ -121,6 +121,17 @@ def test_task_command_prefers_windowless_python():
     assert "quota-burndown.py" in cmd and cmd.endswith("collect --render --quiet")
 
 
+def test_task_settings_allow_battery_and_catch_up():
+    cmd = install.task_settings_command()
+    script = cmd[-1]
+    assert cmd[0] == "powershell" and "-NonInteractive" in cmd
+    for switch in ("-AllowStartIfOnBatteries", "-DontStopIfGoingOnBatteries", "-StartWhenAvailable", "-MultipleInstances IgnoreNew", "New-TimeSpan -Minutes 10"):
+        assert switch in script
+    assert f"-TaskName '{install.TASK_NAME}'" in script
+    dry = install.install_task(apply=False)
+    assert dry.startswith("would run") and "Set-ScheduledTask" in dry
+
+
 def test_render_usage_section(store, paths):
     from quota_burndown import ledger
     from quota_burndown.ledger import Event

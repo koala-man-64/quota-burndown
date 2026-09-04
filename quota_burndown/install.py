@@ -80,16 +80,31 @@ def uninstall_statusline(settings_path: Path | None = None, apply: bool = False)
     return f"statusLine removed from {settings_path} (backup: {backup})"
 
 
+def task_settings_command() -> list[str]:
+    """schtasks creates tasks that refuse to start on battery and stop when unplugged, which on
+    a laptop silently halts collection for hours. This applies laptop-friendly settings: run on
+    battery, catch up one missed run after sleep, never overlap, give up after 10 minutes."""
+    script = (
+        "$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries "
+        "-StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 10); "
+        f"Set-ScheduledTask -TaskName '{TASK_NAME}' -Settings $s | Out-Null"
+    )
+    return ["powershell", "-NoProfile", "-NonInteractive", "-Command", script]
+
+
 def install_task(apply: bool = False, every_min: int = 5) -> str:
     if os.name != "nt":
         return f"skip: scheduled task is Windows-only; add a cron entry such as: */{every_min} * * * * {task_command()}"
     cmd = ["schtasks", "/Create", "/F", "/SC", "MINUTE", "/MO", str(every_min), "/TN", TASK_NAME, "/TR", task_command()]
     if not apply:
-        return "would run: " + subprocess.list2cmdline(cmd)
+        return "would run: " + subprocess.list2cmdline(cmd) + "\nthen apply settings: " + subprocess.list2cmdline(task_settings_command())
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         return f"schtasks failed ({result.returncode}): {(result.stderr or result.stdout).strip()}"
-    return f"scheduled task {TASK_NAME} runs every {every_min} min: {task_command()}"
+    settings = subprocess.run(task_settings_command(), capture_output=True, text=True)
+    if settings.returncode != 0:
+        return f"scheduled task {TASK_NAME} created, but its settings could not be applied ({settings.returncode}): {(settings.stderr or settings.stdout).strip()}"
+    return f"scheduled task {TASK_NAME} runs every {every_min} min, on battery too: {task_command()}"
 
 
 def uninstall_task(apply: bool = False) -> str:
@@ -111,7 +126,16 @@ def task_status() -> str:
     if result.returncode != 0:
         return "not installed"
     lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    return "; ".join(line for line in lines if line.split(":")[0] in ("Status", "Next Run Time", "Last Run Time"))
+    status = "; ".join(line for line in lines if line.split(":")[0] in ("Status", "Next Run Time", "Last Run Time"))
+    info = subprocess.run(
+        ["powershell", "-NoProfile", "-NonInteractive", "-Command",
+         f"$i = Get-ScheduledTaskInfo -TaskName '{TASK_NAME}'; $s = (Get-ScheduledTask -TaskName '{TASK_NAME}').Settings; "
+         "\"missed runs: $($i.NumberOfMissedRuns); last result: $($i.LastTaskResult); runs on battery: $(-not $s.DisallowStartIfOnBatteries)\""],
+        capture_output=True, text=True,
+    )
+    if info.returncode == 0 and info.stdout.strip():
+        status += "; " + info.stdout.strip()
+    return status
 
 
 def install_codex_skill(home: Path | None = None, apply: bool = False) -> str:
