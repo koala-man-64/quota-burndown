@@ -46,7 +46,7 @@ def _tick_plan(total_min: int) -> tuple[int, str]:
     return 1440, "%a"
 
 
-def burndown_svg(bd: Burndown, width: int = 640, height: int = 230) -> str:
+def burndown_svg(bd: Burndown, width: int = 640, height: int = 320) -> str:
     if bd.start is None or bd.resets_at is None:
         return ""
     pl, pr, pt, pb = 44, 14, 12, 26
@@ -101,7 +101,7 @@ def burndown_svg(bd: Burndown, width: int = 640, height: int = 230) -> str:
     )
 
 
-def history_svg(samples: list[Sample], now: datetime, days: int = 7, width: int = 640, height: int = 150) -> str:
+def history_svg(samples: list[Sample], now: datetime, days: int = 7, width: int = 640, height: int = 220) -> str:
     if not samples:
         return ""
     pl, pr, pt, pb = 44, 14, 10, 24
@@ -308,9 +308,9 @@ body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,"Seg
 header.top{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:18px 24px 6px;flex-wrap:wrap}
 header.top h1{margin:0;font-size:20px}
 .meta{color:var(--muted);font-size:12px}
-main{padding:8px 24px 24px;max-width:1400px;margin:0 auto}
+main{padding:8px 24px 24px;max-width:1900px;margin:0 auto}
 section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
-.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(420px,1fr));gap:16px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(620px,1fr));gap:20px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;border-top:4px solid var(--ideal)}
 .card.status-over{border-top-color:var(--over)}
 .card.status-under{border-top-color:var(--under)}
@@ -319,7 +319,7 @@ section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-tra
 .card.stale{opacity:.7}
 .card header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
 .card h3{margin:0;font-size:15px}
-.card h4{margin:10px 0 2px;font-size:12px;color:var(--muted);font-weight:500}
+.card h4{margin:14px 0 4px;font-size:12px;color:var(--muted);font-weight:500}
 .badge{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
 .status-over .badge{color:var(--over);border-color:var(--over)}
 .status-under .badge{color:var(--under);border-color:var(--under)}
@@ -348,7 +348,7 @@ svg.chart{width:100%;height:auto;display:block}
 .legend i.p{border-top:2px dotted var(--now)}
 .legend i.r{border-top:2px dashed var(--warn)}
 .empty{color:var(--muted);padding:32px 0;text-align:center}
-footer{color:var(--muted);font-size:11px;padding:8px 24px 24px;max-width:1400px;margin:0 auto}
+footer{color:var(--muted);font-size:11px;padding:8px 24px 24px;max-width:1900px;margin:0 auto}
 section.usage>h2{font-size:15px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 table.usage{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
 table.usage th,table.usage td{padding:3px 6px;text-align:right;border-bottom:1px solid var(--grid);white-space:nowrap}
