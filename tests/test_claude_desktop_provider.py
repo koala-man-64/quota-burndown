@@ -57,6 +57,34 @@ def test_seven_day_reset_prefers_known_then_last_drop():
     assert by_window(claude_desktop.to_samples(items))["7d"][0].resets_at is None  # nothing known, no drop yet
 
 
+def test_history_path_prefers_newest_existing_copy(tmp_path, monkeypatch):
+    import os
+    import time
+
+    import pytest
+
+    from quota_burndown import config
+
+    if os.name != "nt":
+        pytest.skip("Windows AppData layout")
+    monkeypatch.delenv("QUOTA_BURNDOWN_CLAUDE_DESKTOP_HISTORY", raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "Roaming"))
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "Local"))
+    plain = tmp_path / "Roaming" / "Claude" / "plan-usage-history.json"
+    packaged = tmp_path / "Local" / "Packages" / "Claude_abc123" / "LocalCache" / "Roaming" / "Claude" / "plan-usage-history.json"
+    assert config.claude_desktop_history() == plain  # nothing exists yet: the plain location
+    write_history(packaged, [reading(0, 0, 1)])
+    assert config.claude_desktop_history() == packaged  # only the package copy exists
+    write_history(plain, [reading(0, 0, 1)])
+    old = time.time() - 3600
+    os.utime(plain, (old, old))
+    assert config.claude_desktop_history() == packaged  # both exist: the newer one wins
+    os.utime(plain, None)
+    assert config.claude_desktop_history() == plain
+    monkeypatch.setenv("QUOTA_BURNDOWN_CLAUDE_DESKTOP_HISTORY", str(tmp_path / "x.json"))
+    assert config.claude_desktop_history() == tmp_path / "x.json"
+
+
 def test_collect_is_incremental(tmp_path):
     path = tmp_path / "Claude" / "plan-usage-history.json"
     state = tmp_path / "state.json"

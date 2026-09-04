@@ -76,18 +76,41 @@ def codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
 
 
-def claude_desktop_history() -> Path:
-    """The plan-usage history the Claude desktop app writes for its own usage display."""
+HISTORY_NAME = "plan-usage-history.json"
+
+
+def claude_desktop_history_candidates() -> list[Path]:
+    """Where the Claude desktop app's plan-usage history may live.
+
+    On Windows the app is an MSIX package with AppData virtualization: the file it writes to
+    `%APPDATA%\\Claude` really lands under the package's LocalCache, and only processes that
+    carry the package identity (the app and its children) see it at the plain path. A
+    scheduled task or a terminal started elsewhere must read the LocalCache copy."""
     override = os.environ.get("QUOTA_BURNDOWN_CLAUDE_DESKTOP_HISTORY")
     if override:
-        return Path(override).expanduser()
+        return [Path(override).expanduser()]
     if os.name == "nt":
-        base = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
-    elif os.uname().sysname == "Darwin":  # pragma: no cover - not exercised on Windows
-        base = Path.home() / "Library" / "Application Support"
-    else:  # pragma: no cover
-        base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
-    return base / "Claude" / "plan-usage-history.json"
+        roaming = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
+        local = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
+        packaged = sorted((local / "Packages").glob("Claude_*/LocalCache/Roaming/Claude/" + HISTORY_NAME))
+        return [roaming / "Claude" / HISTORY_NAME, *packaged]
+    if os.uname().sysname == "Darwin":  # pragma: no cover - not exercised on Windows
+        return [Path.home() / "Library" / "Application Support" / "Claude" / HISTORY_NAME]
+    return [Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "Claude" / HISTORY_NAME]  # pragma: no cover
+
+
+def claude_desktop_history() -> Path:
+    """The newest existing candidate, or the first candidate when none exists yet."""
+    candidates = claude_desktop_history_candidates()
+    existing = []
+    for path in candidates:
+        try:
+            existing.append((path.stat().st_mtime, path))
+        except OSError:
+            continue
+    if existing:
+        return max(existing, key=lambda item: item[0])[1]
+    return candidates[0]
 
 
 def antigravity_home() -> Path:
