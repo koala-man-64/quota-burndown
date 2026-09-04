@@ -73,7 +73,8 @@ def test_collect_is_incremental(tmp_path):
     assert [(s.window, s.used) for s in samples] == [("5h", 5.0), ("7d", 41.0)]
     assert samples[0].resets_at == T0 + timedelta(minutes=15, hours=5)  # start remembered from the walk over older readings
 
-    assert claude_desktop.collect(state, None, tmp_path / "nope.json") == ([], [], {"present": False})
+    samples, warnings, stats = claude_desktop.collect(state, None, tmp_path / "nope.json")
+    assert samples == [] and warnings == [] and stats["present"] is False and stats["path"].endswith("nope.json")
     write_history(path, [])
     samples, warnings, stats = claude_desktop.collect(tmp_path / "s2.json", None, path)
     assert samples == [] and "no readings" in warnings[0]

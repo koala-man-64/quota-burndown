@@ -15,6 +15,7 @@ The per-model 7-day window is not in the file and stays with the endpoint sample
 from __future__ import annotations
 
 import json
+import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -93,7 +94,9 @@ def collect(state_path: Path, known_7d_reset: datetime | None = None, path: Path
     """New readings since the last run. Returns (samples, warnings, stats)."""
     path = path or claude_desktop_history()
     if not path.is_file():
-        return [], [], {"present": False}
+        # Say where we looked: a scheduled task can run with a different environment (or a
+        # virtualized AppData) than the shell the tool was set up from.
+        return [], [], {"present": False, "path": str(path), "appdata_env": os.environ.get("APPDATA")}
     state = read_json(state_path, {})
     after_t = int(state.get("last_t") or 0) if isinstance(state, dict) else 0
     try:
