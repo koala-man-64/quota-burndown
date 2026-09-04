@@ -6,7 +6,8 @@ One local page for three coding agents. A burndown of your Claude and Codex subs
 
 | Provider | Source | Trigger |
 | --- | --- | --- |
-| Claude | The OAuth usage endpoint Claude Code uses for `/usage` (5h session, 7-day all models, 7-day per-model windows). Authorized with the CLI's OAuth session in `~/.claude/.credentials.json` (see "When Claude limit samples stop"); the value is read only to make the call and is never logged or stored. | Scheduled task every 5 min, and every page load in `serve` mode. |
+| Claude | The desktop app's own usage history, `%APPDATA%\Claude\plan-usage-history.json`, which the app appends to every 5 to 15 minutes while it runs (5h and 7-day percentages). No credential, no network call. The file has no reset times, so the 5h reset is inferred from the first non-zero reading after a zero plus five hours, and the 7-day reset from the last endpoint reading or the last drop to zero plus seven days. | Scheduled task every 5 min, and every page load in `serve` mode. |
+| Claude | The OAuth usage endpoint Claude Code uses for `/usage` (adds the 7-day per-model window and exact reset times). Authorized with the CLI's OAuth session in `~/.claude/.credentials.json` (see "When Claude limit samples stop"); the value is read only to make the call and is never logged or stored. | Same schedule; only succeeds while the CLI session is fresh. |
 | Codex | The `rate_limits` block Codex writes on every `token_count` event in its rollout files under `~/.codex/archived_sessions` and `~/.codex/sessions`. Scanned incrementally by byte offset. | Scheduled task and page loads. Full history import with `backfill`. |
 
 Samples land in `~/.quota-burndown/samples.jsonl` (one JSON line each). `latest.json` holds the newest reading per window so the status line stays fast. The page is `~/.quota-burndown/burndown.html`.
@@ -82,7 +83,7 @@ py -m pytest
 
 ## When Claude limit samples stop
 
-The usage endpoint accepts only a session that carries the profile scope. The Claude Code CLI keeps one in `~/.claude/.credentials.json` and refreshes it whenever it runs; it expires a few hours after the CLI last ran, and the desktop app keeps its own session elsewhere. So if you mostly use the desktop app, the collector logs `CLI OAuth session expired` (or `no OAuth session`) and the Claude limit cards go stale until the CLI runs again. Codex limits and all usage numbers are unaffected.
+The 5h and 7-day Claude cards stay fresh as long as the desktop app is running, because they read its usage history. The per-model 7-day card and exact reset times come from the usage endpoint, which accepts only a session that carries the profile scope. The Claude Code CLI keeps one in `~/.claude/.credentials.json` and refreshes it whenever it runs; it expires a few hours after the CLI last ran, and the desktop app keeps its own session encrypted elsewhere. So when the CLI has been idle, the collector logs `CLI OAuth session expired` (or `no OAuth session`) and only the per-model card goes stale. Codex limits and all usage numbers are unaffected.
 
 The long-lived value from `claude setup-token` does **not** help: it is issued with the inference scope only, and the endpoint answers HTTP 403 (verified 2026-09-03). The `QUOTA_BURNDOWN_CLAUDE_OAUTH` variable and the `~/.quota-burndown/claude_oauth` file are still honoured ahead of the CLI credentials, but only for a session value that has the profile scope; a value that gets rejected blocks the CLI path, so delete it. Whatever the source, the value is only ever sent as a bearer header to the usage endpoint and is never logged.
 

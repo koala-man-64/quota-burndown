@@ -37,6 +37,10 @@ class Paths:
         return self.home / "codex_scan_state.json"
 
     @property
+    def claude_desktop_state(self) -> Path:
+        return self.home / "claude_desktop_state.json"
+
+    @property
     def html(self) -> Path:
         return self.home / "burndown.html"
 
@@ -70,6 +74,20 @@ def claude_home() -> Path:
 
 def codex_home() -> Path:
     return Path(os.environ.get("CODEX_HOME") or (Path.home() / ".codex"))
+
+
+def claude_desktop_history() -> Path:
+    """The plan-usage history the Claude desktop app writes for its own usage display."""
+    override = os.environ.get("QUOTA_BURNDOWN_CLAUDE_DESKTOP_HISTORY")
+    if override:
+        return Path(override).expanduser()
+    if os.name == "nt":
+        base = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
+    elif os.uname().sysname == "Darwin":  # pragma: no cover - not exercised on Windows
+        base = Path.home() / "Library" / "Application Support"
+    else:  # pragma: no cover
+        base = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+    return base / "Claude" / "plan-usage-history.json"
 
 
 def antigravity_home() -> Path:

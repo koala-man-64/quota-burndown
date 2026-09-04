@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import __version__, install, ledger, render, statusline, usage, usage_report
 from .config import DEFAULT_PORT, get_paths
 from .model import Burndown, current
-from .providers import claude, codex
+from .providers import claude, claude_desktop, codex
 from .store import Store
 from .util import fmt_local, fmt_minutes, iso, now_utc
 
@@ -64,6 +64,14 @@ def run_collect(
             if warning:
                 warnings.append(warning)
             appended["claude"] = store.append(samples)
+        known = max(
+            (s.resets_at for s in store.load(since=now - timedelta(days=8)) if s.provider == "claude" and s.window == "7d" and s.source == "api" and s.resets_at),
+            default=None,
+        )
+        samples, desktop_warnings, stats = claude_desktop.collect(paths.claude_desktop_state, known)
+        warnings.extend(desktop_warnings)
+        appended["claude_desktop"] = store.append(samples)
+        appended["claude_desktop_file"] = stats
     if provider in ("all", "codex"):
         samples, codex_warnings, stats = codex.collect(paths.codex_state, since_days=since_days, full=full)
         warnings.extend(codex_warnings)
@@ -414,7 +422,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("prune", help="drop samples older than N days and/or from one source; rebuilds latest.json")
     p.add_argument("--keep-days", type=int, default=90, help="0 keeps everything regardless of age")
-    p.add_argument("--drop-source", choices=["api", "statusline", "rollout"], help="remove every sample from this source")
+    p.add_argument("--drop-source", choices=["api", "desktop", "statusline", "rollout"], help="remove every sample from this source")
     p.set_defaults(func=cmd_prune)
     return parser
 
