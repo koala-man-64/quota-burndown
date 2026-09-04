@@ -23,7 +23,7 @@ OAUTH_FILE_NAME = "claude_oauth"
 # Only a session with the profile scope can read the usage endpoint. The Claude Code CLI keeps
 # one in ~/.claude/.credentials.json and refreshes it whenever it runs; the long-lived value from
 # `claude setup-token` carries only the inference scope and is answered with HTTP 403.
-SETUP_HINT = "samples resume once the Claude Code CLI has run and refreshed its session in {file}"
+SETUP_HINT = "the per-model Claude window comes only from this endpoint, so it refreshes only after the Claude Code CLI has signed in and run ({file})"
 _GROUP_MINUTES = {"session": WINDOW_MINUTES["5h"], "weekly": WINDOW_MINUTES["7d"]}
 _FALLBACK_FIELDS = {
     "five_hour": ("5h", WINDOW_MINUTES["5h"]),

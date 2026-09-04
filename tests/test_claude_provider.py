@@ -34,7 +34,7 @@ def test_read_access_token_from_cli_credentials(tmp_path):
     creds = tmp_path / "c.json"
     creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "abc", "expiresAt": int((time.time() - 10) * 1000)}}), encoding="utf-8")
     tok, warn, origin = claude.read_access_token(creds, no_file, env={})
-    assert tok is None and "expired" in warn and "refreshed its session" in warn
+    assert tok is None and "expired" in warn and "Claude Code CLI" in warn
     creds.write_text(json.dumps({"claudeAiOauth": {"accessToken": "abc", "expiresAt": int((time.time() + 3600) * 1000)}}), encoding="utf-8")
     tok, warn, origin = claude.read_access_token(creds, no_file, env={})
     assert (tok, warn, origin) == ("abc", None, "credentials")

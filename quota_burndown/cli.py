@@ -102,6 +102,10 @@ def status_lines(burndowns: list[Burndown]) -> list[str]:
         if bd.status == "idle":
             lines.append(f"{title}: {bd.used:.0f}% used, no active window")
             continue
+        if bd.status == "expired":
+            ended = fmt_local(bd.resets_at) if bd.resets_at else "?"
+            lines.append(f"{title}: previous window ended {ended} at {bd.used:.0f}%; no reading for the new window yet")
+            continue
         resets = fmt_local(bd.resets_at) if bd.resets_at else "?"
         detail = f"{title}: {bd.used:.0f}% used vs {bd.pace:.0f}% pace ({render.badge_text(bd)}); {fmt_minutes(bd.remaining_min)} left, resets {resets}"
         value, label = render.projection_text(bd)

@@ -72,6 +72,22 @@ def test_cli_quota_backfill_respects_since_days_and_rescan(paths, monkeypatch, t
     assert set(Store(paths).latest()) == {"codex:7d:gpt-5.6", "codex:7d:spark"}
 
 
+def test_expired_window_is_labelled_as_awaiting_a_sample(store):
+    from quota_burndown.model import current
+
+    ended = NOW - timedelta(hours=8)
+    store.append([
+        Sample(ended - timedelta(days=6), "claude", "7d:fable", 20.0, ended, 10080, "api"),
+        Sample(ended - timedelta(hours=30), "claude", "7d:fable", 74.0, ended, 10080, "api"),
+    ])
+    html = render.render_html(store, now=NOW)
+    assert "7-day (Fable)" in html and "no reading for the new window yet" in html and "final use of that window" in html
+    assert "window ended · awaiting a fresh sample" in html and "74%" in html
+    assert html.count('class="pace"') == 0  # nothing to pace against until a reading for the new window arrives
+    lines = cli.status_lines(current(store.load(), store.latest(), NOW))
+    assert lines == [f"Claude 7-day (Fable): previous window ended {render.fmt_local(ended)} at 74%; no reading for the new window yet"]
+
+
 def test_window_titles():
     assert render.window_title("5h") == "5-hour session"
     assert render.window_title("7d:fable") == "7-day (Fable)"

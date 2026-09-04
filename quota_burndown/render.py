@@ -26,7 +26,7 @@ STATUS_TEXT = {
     "on-pace": "on pace",
     "early": "too early to call",
     "exhausted": "budget exhausted",
-    "expired": "window ended",
+    "expired": "window ended · awaiting a fresh sample",
     "idle": "no active window",
 }
 CHART_W, CHART_H = 800, 320
@@ -203,6 +203,16 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str)
             f'<div><b>—</b><span>pace</span></div>'
             f'<div><b>—</b><span>time left</span></div>'
             f'<div><b>{esc(proj_value)}</b><span>{esc(proj_label)}</span></div>'
+        )
+    elif bd.status == "expired":
+        # The window has reset but no reading for the new one has arrived: say so rather than
+        # showing the old window's final figure as if it were current.
+        ended = fmt_local(bd.resets_at) if bd.resets_at else "?"
+        stats = (
+            f'<div><b>—</b><span>no reading for the new window yet</span></div>'
+            f'<div><b>—</b><span>pace</span></div>'
+            f'<div><b>{esc(ended)}</b><span>previous window ended</span></div>'
+            f'<div><b>{bd.used:.0f}%</b><span>final use of that window</span></div>'
         )
     else:
         resets = fmt_local(bd.resets_at) if bd.resets_at else "?"
