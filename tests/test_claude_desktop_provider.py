@@ -46,15 +46,13 @@ def test_five_hour_window_start_is_first_nonzero_after_zero():
     assert all(s.source == "desktop" and s.provider == "claude" and s.window_min == 300 for s in five)
 
 
-def test_seven_day_reset_prefers_known_then_last_drop():
+def test_seven_day_reset_is_inferred_from_the_last_drop_to_zero():
     readings = [reading(0, 0, 70), reading(15, 0, 71), reading(30, 0, 0), reading(45, 0, 1), reading(60, 0, 2)]
     items = [{"t": r["t"], "ts": datetime.fromtimestamp(r["t"] / 1000, tz=UTC), "org": r["org"], "values": {"7d": float(r["u"]["sd"])}} for r in readings]
-    known = T0 + timedelta(minutes=20)
-    week = by_window(claude_desktop.to_samples(items, known_7d_reset=known))["7d"]
-    assert week[0].resets_at == known and week[1].resets_at == known
-    assert week[2].resets_at == T0 + timedelta(minutes=30) + timedelta(days=7)  # known reset is now behind us, use the drop
+    week = by_window(claude_desktop.to_samples(items))["7d"]
+    assert week[0].resets_at is None and week[1].resets_at is None  # no drop seen yet: no reset to pace against
+    assert week[2].resets_at == T0 + timedelta(minutes=30) + timedelta(days=7)
     assert week[4].resets_at == T0 + timedelta(minutes=30) + timedelta(days=7)
-    assert by_window(claude_desktop.to_samples(items))["7d"][0].resets_at is None  # nothing known, no drop yet
 
 
 def test_history_path_prefers_newest_existing_copy(tmp_path, monkeypatch):
@@ -89,20 +87,20 @@ def test_collect_is_incremental(tmp_path):
     path = tmp_path / "Claude" / "plan-usage-history.json"
     state = tmp_path / "state.json"
     write_history(path, [reading(0, 0, 40), reading(15, 3, 40)])
-    samples, warnings, stats = claude_desktop.collect(state, None, path)
+    samples, warnings, stats = claude_desktop.collect(state, path)
     assert warnings == [] and stats == {"present": True, "readings": 2, "new": 4}
     assert sorted((s.window, s.used) for s in samples) == [("5h", 0.0), ("5h", 3.0), ("7d", 40.0), ("7d", 40.0)]
 
-    samples, _, stats = claude_desktop.collect(state, None, path)
+    samples, _, stats = claude_desktop.collect(state, path)
     assert samples == [] and stats["new"] == 0
 
     write_history(path, [reading(0, 0, 40), reading(15, 3, 40), reading(30, 5, 41)])
-    samples, _, stats = claude_desktop.collect(state, None, path)
+    samples, _, stats = claude_desktop.collect(state, path)
     assert [(s.window, s.used) for s in samples] == [("5h", 5.0), ("7d", 41.0)]
     assert samples[0].resets_at == T0 + timedelta(minutes=15, hours=5)  # start remembered from the walk over older readings
 
-    samples, warnings, stats = claude_desktop.collect(state, None, tmp_path / "nope.json")
+    samples, warnings, stats = claude_desktop.collect(state, tmp_path / "nope.json")
     assert samples == [] and warnings == [] and stats["present"] is False and stats["path"].endswith("nope.json")
     write_history(path, [])
-    samples, warnings, stats = claude_desktop.collect(tmp_path / "s2.json", None, path)
+    samples, warnings, stats = claude_desktop.collect(tmp_path / "s2.json", path)
     assert samples == [] and "no readings" in warnings[0]

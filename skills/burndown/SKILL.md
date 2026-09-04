@@ -35,4 +35,4 @@ The tool lives at the plugin root. Its launcher is `${CLAUDE_PLUGIN_ROOT}/quota-
 
    Only run it if the user asks to install or wire up the tool.
 
-If `status` reports a stale sample or a warning about the Claude OAuth session, say so plainly: the session token refreshes the next time Claude Code makes a request, and the scheduled task will pick it up on its next run.
+If `status` reports a stale sample, say so plainly: Claude readings come from the desktop app's own history file and only advance while the app runs; Codex readings come from its rollout files and only advance while Codex is used. The tool never signs in or calls a network endpoint.

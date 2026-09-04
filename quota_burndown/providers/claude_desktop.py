@@ -3,14 +3,15 @@
 The Claude desktop app polls the plan usage for its display and appends each reading to
 plan-usage-history.json: `{"t": epoch ms, "org": id, "u": {"fh": five-hour %, "sd": seven-day %}}`,
 one every 5 to 15 minutes while the app runs. That gives the 5h and 7d windows with no
-credential and no network call. Two things the file lacks are inferred:
+credential and no network call, and it is the only Claude limit source. Two things the
+file lacks are inferred:
 
   * the 5-hour window's reset: `fh` drops to 0 when a window ends, so a window starts at the
     first non-zero reading after a zero and resets five hours later;
-  * the 7-day window's reset: the last reset the usage endpoint reported is used while it is
-    still ahead; otherwise the last time `sd` dropped to 0 plus seven days.
+  * the 7-day window's reset: the last time `sd` dropped to 0 plus seven days; until the
+    first drop has been seen the window has no reset and shows as idle.
 
-The per-model 7-day window is not in the file and stays with the endpoint sampler.
+The file has no per-model figure, so per-model windows are not tracked.
 """
 from __future__ import annotations
 
@@ -53,7 +54,7 @@ def read_history(path: Path) -> list[dict]:
     return out
 
 
-def to_samples(history: list[dict], known_7d_reset: datetime | None = None, after_t: int = 0) -> list[Sample]:
+def to_samples(history: list[dict], after_t: int = 0) -> list[Sample]:
     """Samples for readings newer than after_t. The whole history is walked so window starts
     are known even for the first new reading."""
     samples: list[Sample] = []
@@ -79,18 +80,13 @@ def to_samples(history: list[dict], known_7d_reset: datetime | None = None, afte
             if previous_7d is not None and used < previous_7d and used <= 1.0:
                 last_7d_drop = ts
             previous_7d = used
-            if known_7d_reset is not None and known_7d_reset > ts:
-                resets = known_7d_reset
-            elif last_7d_drop is not None and ts < last_7d_drop + SEVEN_DAYS:
-                resets = last_7d_drop + SEVEN_DAYS
-            else:
-                resets = None
+            resets = last_7d_drop + SEVEN_DAYS if last_7d_drop is not None and ts < last_7d_drop + SEVEN_DAYS else None
             if item["t"] > after_t:
                 samples.append(Sample(ts, PROVIDER, "7d", used, resets, WINDOW_MINUTES["7d"], SOURCE))
     return samples
 
 
-def collect(state_path: Path, known_7d_reset: datetime | None = None, path: Path | None = None) -> tuple[list[Sample], list[str], dict]:
+def collect(state_path: Path, path: Path | None = None) -> tuple[list[Sample], list[str], dict]:
     """New readings since the last run. Returns (samples, warnings, stats)."""
     path = path or claude_desktop_history()
     if not path.is_file():
@@ -105,7 +101,7 @@ def collect(state_path: Path, known_7d_reset: datetime | None = None, path: Path
         return [], [f"claude desktop: cannot read {path.name}: {exc.__class__.__name__}"], {"present": True}
     if not history:
         return [], [f"claude desktop: no readings in {path.name}"], {"present": True, "readings": 0}
-    samples = to_samples(history, known_7d_reset, after_t)
+    samples = to_samples(history, after_t)
     newest = history[-1]["t"]
     if newest != after_t:
         atomic_write_text(state_path, json.dumps({"last_t": newest}))

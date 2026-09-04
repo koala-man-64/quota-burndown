@@ -8,7 +8,7 @@
     {
       "name": "quota-burndown",
       "description": "Claude Code, Codex and Antigravity in one local page: quota burndown per rate-limit window plus a per-request token usage ledger. Ships the on-demand /burndown skill only; no hooks.",
-      "version": "0.2.0",
+      "version": "0.2.1",
       "source": "./",
       "category": "productivity"
     }

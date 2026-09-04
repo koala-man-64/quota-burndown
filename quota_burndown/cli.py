@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import __version__, install, ledger, render, statusline, usage, usage_report
 from .config import DEFAULT_PORT, get_paths
 from .model import Burndown, current
-from .providers import claude, claude_desktop, codex
+from .providers import claude_desktop, codex
 from .store import Store
 from .util import fmt_local, fmt_minutes, iso, now_utc
 
@@ -41,7 +41,6 @@ def usage_providers(provider: str) -> list[str]:
 def run_collect(
     paths,
     provider: str = "all",
-    debounce_s: float = 0.0,
     since_days: float | None = 14,
     full: bool = False,
     do_render: bool = False,
@@ -50,28 +49,17 @@ def run_collect(
     usage_budget_s: float | None = None,
     progress=None,
 ) -> dict:
+    """Read every local source once: quota readings from the files each tool writes, then
+    usage. Nothing here authenticates or talks to a network."""
     store = Store(paths)
     now = now_utc()
     warnings: list[str] = []
     appended: dict = {}
     if provider in ("all", "claude"):
-        latest = store.latest()
-        fresh = [s for s in latest.values() if s.provider == "claude" and s.source == "api" and (now - s.ts).total_seconds() < debounce_s]
-        if debounce_s and fresh:
-            appended["claude"] = "debounced"
-        else:
-            samples, warning = claude.collect(now)
-            if warning:
-                warnings.append(warning)
-            appended["claude"] = store.append(samples)
-        known = max(
-            (s.resets_at for s in store.load(since=now - timedelta(days=8)) if s.provider == "claude" and s.window == "7d" and s.source == "api" and s.resets_at),
-            default=None,
-        )
-        samples, desktop_warnings, stats = claude_desktop.collect(paths.claude_desktop_state, known)
+        samples, desktop_warnings, stats = claude_desktop.collect(paths.claude_desktop_state)
         warnings.extend(desktop_warnings)
-        appended["claude_desktop"] = store.append(samples)
-        appended["claude_desktop_file"] = stats
+        appended["claude"] = store.append(samples)
+        appended["claude_file"] = stats
     if provider in ("all", "codex"):
         samples, codex_warnings, stats = codex.collect(paths.codex_state, since_days=since_days, full=full)
         warnings.extend(codex_warnings)
@@ -131,7 +119,7 @@ def usage_status_lines(paths) -> list[str]:
 def cmd_collect(args) -> int:
     paths = get_paths(args.home)
     result = run_collect(
-        paths, args.provider, args.debounce, args.since_days, args.full, args.render,
+        paths, args.provider, since_days=args.since_days, full=args.full, do_render=args.render,
         usage_on=not args.no_usage, usage_since_days=args.usage_since_days, usage_budget_s=args.usage_budget_s,
     )
     if not args.quiet:
@@ -145,7 +133,7 @@ def cmd_backfill(args) -> int:
         if args.rescan:
             paths.codex_state.unlink(missing_ok=True)
             print("forgot the Codex quota scan state; every rollout in range will be re-read from the start")
-        result = run_collect(paths, "codex", 0, args.since_days, args.since_days is None, True, usage_on=False)
+        result = run_collect(paths, "codex", since_days=args.since_days, full=args.since_days is None, do_render=True, usage_on=False)
         print(json.dumps(result, indent=1))
         return 0
     if args.rescan:
@@ -256,7 +244,7 @@ def cmd_serve(args) -> int:
         with lock:
             if time.monotonic() - state["last_collect"] < args.min_interval:
                 return
-            result = run_collect(paths, "all", debounce_s=args.min_interval)
+            result = run_collect(paths, "all")
             state["warnings"] = result["warnings"]
             state["last_collect"] = time.monotonic()
 
@@ -360,9 +348,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--home", help="data directory (default: ~/.quota-burndown or $QUOTA_BURNDOWN_HOME)")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("collect", help="sample quotas, ingest new usage, and append to the store")
+    p = sub.add_parser("collect", help="read each tool's local files: quota readings and new usage, appended to the store")
     p.add_argument("--provider", choices=PROVIDER_CHOICES, default="all")
-    p.add_argument("--debounce", type=float, default=0.0, help="skip the Claude API call if a sample newer than this many seconds exists")
     p.add_argument("--since-days", type=float, default=14, help="only scan Codex rollouts modified within N days for quota samples")
     p.add_argument("--full", action="store_true", help="rescan every Codex rollout for quota samples from the beginning")
     p.add_argument("--no-usage", action="store_true", help="skip the per-request usage ledger")
@@ -429,7 +416,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("prune", help="drop samples older than N days and/or from one source; rebuilds latest.json")
     p.add_argument("--keep-days", type=int, default=90, help="0 keeps everything regardless of age")
-    p.add_argument("--drop-source", choices=["api", "desktop", "statusline", "rollout"], help="remove every sample from this source")
+    p.add_argument("--drop-source", choices=["api", "desktop", "rollout"], help="remove every sample from this source (api: readings from the retired endpoint sampler)")
     p.set_defaults(func=cmd_prune)
     return parser
 
