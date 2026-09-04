@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timedelta, timezone
 
 from quota_burndown import cli, install, render, statusline
@@ -30,9 +31,53 @@ def test_render_html_contains_cards_and_charts(store):
     assert html.count("<article") == 4
     assert "status-over" in html and "5-hour session" in html and "7-day (all models)" in html
     assert "claude: test warning" in html
-    assert 'class="proj"' in html and 'class="ideal"' in html
+    assert html.count('<svg class="chart"') == 4
+    assert html.count('class="pace"') == 3 and html.count('class="proj"') >= 1  # the idle codex:5h card draws its 0% reading but no pace
+    assert 'class="ideal"' not in html and 'class="reset"' not in html
+    assert html.count('class="used"') == 4 and html.count("<details") == 4
     assert "no active window" in html
-    assert "<script" not in html
+    payloads = re.findall(r'<script type="application/json" class="chart-data" data-for="c\d+">(.*?)</script>', html)
+    assert len(payloads) == 4
+    first = json.loads(payloads[0])
+    assert first["points"] and {"x", "y", "t", "v"} <= set(first["points"][0]) and first["points"][-1]["v"] == "60%"
+    assert first["reset"].startswith("resets ")
+    assert html.count("<script>") == 1 and "src=" not in html and 'id="chart-tooltip"' in html
+    assert "window reset" in html and "linear pace" in html
+
+
+def test_cli_quota_backfill_respects_since_days_and_rescan(paths, monkeypatch, tmp_path, capsys):
+    import os
+    import time
+
+    from test_codex_provider import event, turn, write_rollout
+
+    home = tmp_path / "codex"
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    recent = home / "sessions" / "2026" / "09" / "02" / "rollout-2026-09-02T10-00-00-a.jsonl"
+    old = home / "archived_sessions" / "rollout-old.jsonl"
+    write_rollout(recent, [turn("2026-09-02T09:59:00Z", "gpt-5.6-sol"), event("2026-09-02T10:00:00Z", 10)])
+    write_rollout(old, [turn("2026-06-08T09:59:00Z", "gpt-5.3-codex-spark"), event("2026-06-08T10:00:00Z", 50)])
+    stamp = time.time() - 40 * 86400
+    os.utime(old, (stamp, stamp))
+
+    assert cli.main(["--home", str(paths.home), "backfill", "--since-days", "30"]) == 0
+    assert '"files_scanned": 1' in capsys.readouterr().out
+    assert set(Store(paths).latest()) == {"codex:7d:gpt-5.6"}
+    assert cli.main(["--home", str(paths.home), "backfill", "--since-days", "30"]) == 0
+    assert '"files_scanned": 0' in capsys.readouterr().out  # state says the file is already read
+    assert cli.main(["--home", str(paths.home), "backfill", "--since-days", "30", "--rescan"]) == 0
+    text = capsys.readouterr().out
+    assert "forgot the Codex quota scan state" in text and '"files_scanned": 1' in text
+    assert cli.main(["--home", str(paths.home), "backfill"]) == 0  # no range: everything, archive included
+    assert set(Store(paths).latest()) == {"codex:7d:gpt-5.6", "codex:7d:spark"}
+
+
+def test_window_titles():
+    assert render.window_title("5h") == "5-hour session"
+    assert render.window_title("7d:fable") == "7-day (Fable)"
+    assert render.window_title("7d:gpt-5.6") == "7-day (GPT-5.6)"
+    assert render.window_title("5h:spark") == "5-hour session (Spark)"
+    assert render.window_title("1d") == "1d"
 
 
 def test_render_empty_store(store):
@@ -154,7 +199,7 @@ def test_render_usage_section(store, paths):
     assert "Token usage" in html and html.count('class="card usage-card') == 3
     assert "claude-fable-5-1 @ xhigh" in html and "~29K" in html and "no usage in 30 days" in html
     assert "Recent requests" in html and "unlabeled context counter" in html and "tokens inferred" in html
-    assert "<script" not in html
+    assert "src=" not in html
     assert "Token usage" not in render.render_html(store, now=NOW)
 
 

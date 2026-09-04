@@ -1,20 +1,25 @@
-"""Self-contained HTML page with inline SVG burndown charts. No JavaScript, no CDN."""
+"""Self-contained HTML page: quota cards with one inline-SVG usage chart each, plus the token
+usage section. Everything is in the one file. A small inline script adds a crosshair and
+tooltip to the charts; nothing is fetched from anywhere."""
 from __future__ import annotations
 
 import html
+import json
 import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import __version__, ledger, usage_report
+from . import __version__, charts, ledger, usage_report
+from .charts import ChartData
 from .ledger import Totals
-from .model import Burndown, current, group_instances
+from .model import Burndown, current
 from .store import Sample, Store
 from .util import atomic_write_text, fmt_local, fmt_minutes, now_utc, to_local
 
 STALE_MIN = 20
 PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex"}
 WINDOW_TITLES = {"5h": "5-hour session", "7d": "7-day (all models)"}
+FAMILY_TITLES = {"gpt": "GPT", "spark": "Spark", "fable": "Fable", "opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku"}
 STATUS_TEXT = {
     "over": "over pace",
     "under": "under pace",
@@ -24,136 +29,148 @@ STATUS_TEXT = {
     "expired": "window ended",
     "idle": "no active window",
 }
+CHART_W, CHART_H = 800, 320
+PAD_L, PAD_R, PAD_T, PAD_B = 48, 16, 30, 30
 
 
 def esc(value) -> str:
     return html.escape(str(value), quote=True)
 
 
+def family_title(scope: str) -> str:
+    head, _, rest = scope.partition("-")
+    head = FAMILY_TITLES.get(head.lower(), head.capitalize())
+    return f"{head}-{rest}" if rest else head
+
+
 def window_title(window: str) -> str:
     if window in WINDOW_TITLES:
         return WINDOW_TITLES[window]
-    if window.startswith("7d:"):
-        return f"7-day ({window[3:].replace('-', ' ').title()})"
+    base, _, scope = window.partition(":")
+    if scope:
+        stem = {"5h": "5-hour session", "7d": "7-day"}.get(base, base)
+        return f"{stem} ({family_title(scope)})"
     return window
 
 
-def _tick_plan(total_min: int) -> tuple[int, str]:
-    if total_min <= 360:
-        return 60, "%H:%M"
-    if total_min <= 1440:
-        return 240, "%H:%M"
-    return 1440, "%a"
+# -- usage chart -----------------------------------------------------------------------
+
+def _x_of(data: ChartData, ts: datetime) -> float:
+    total = (data.span_end - data.span_start).total_seconds() or 1.0
+    frac = (ts - data.span_start).total_seconds() / total
+    return PAD_L + (CHART_W - PAD_L - PAD_R) * min(max(frac, 0.0), 1.0)
 
 
-def burndown_svg(bd: Burndown, width: int = 640, height: int = 320) -> str:
-    if bd.start is None or bd.resets_at is None:
-        return ""
-    pl, pr, pt, pb = 44, 14, 12, 26
-    iw, ih = width - pl - pr, height - pt - pb
-    total = float(bd.window_min)
+def _y_of(used: float) -> float:
+    return PAD_T + (CHART_H - PAD_T - PAD_B) * (1 - min(max(used, 0.0), 100.0) / 100)
 
-    def x_of(minutes: float) -> float:
-        return pl + iw * min(max(minutes, 0.0), total) / total
 
-    def y_of(remaining: float) -> float:
-        return pt + ih * (1 - min(max(remaining, 0.0), 100.0) / 100)
+def _clip(data: ChartData, line: charts.Line) -> tuple[float, float, float, float] | None:
+    """Pixel endpoints of a line clipped to the plotted time span."""
+    (t0, v0), (t1, v1) = line.start, line.end
+    if t1 <= t0:
+        return None
+    lo, hi = max(t0, data.span_start), min(t1, data.span_end)
+    if hi <= lo:
+        return None
+    slope = (v1 - v0) / (t1 - t0).total_seconds()
+    y_lo = v0 + slope * (lo - t0).total_seconds()
+    y_hi = v0 + slope * (hi - t0).total_seconds()
+    return _x_of(data, lo), _y_of(y_lo), _x_of(data, hi), _y_of(y_hi)
 
+
+def chart_points(data: ChartData) -> list[dict]:
+    """The plotted points with pixel positions and display strings, for the hover layer and
+    the table twin."""
+    out = []
+    for segment in data.segments:
+        for point in segment.points:
+            out.append({"x": round(_x_of(data, point.ts), 1), "y": round(_y_of(point.used), 1), "t": charts.local_label(point.ts), "v": f"{point.used:.0f}%"})
+    return out
+
+
+def chart_svg(data: ChartData, chart_id: str, title: str) -> str:
+    plot_bottom = _y_of(0)
     parts: list[str] = []
-    for value in (0, 25, 50, 75, 100):
-        y = y_of(value)
-        parts.append(f'<line class="grid" x1="{pl}" y1="{y:.1f}" x2="{pl + iw}" y2="{y:.1f}"/>')
-        parts.append(f'<text class="lbl" x="{pl - 6}" y="{y + 4:.1f}" text-anchor="end">{value}%</text>')
-    step, fmt = _tick_plan(bd.window_min)
-    minute = 0.0
-    while minute <= total + 1e-9:
-        x = x_of(minute)
-        stamp = bd.start + timedelta(minutes=minute)
-        parts.append(f'<line class="grid" x1="{x:.1f}" y1="{pt}" x2="{x:.1f}" y2="{pt + ih}"/>')
-        parts.append(f'<text class="lbl" x="{x:.1f}" y="{height - 8}" text-anchor="middle">{esc(fmt_local(stamp, fmt))}</text>')
-        minute += step
+    for value in data.y_ticks:
+        y = _y_of(value)
+        parts.append(f'<line class="grid" x1="{PAD_L}" y1="{y:.1f}" x2="{CHART_W - PAD_R}" y2="{y:.1f}"/>')
+        parts.append(f'<text class="lbl" x="{PAD_L - 8}" y="{y + 4:.1f}" text-anchor="end">{value}%</text>')
+    if data.active and data.now < data.span_end:
+        x_now, x_end = _x_of(data, data.now), _x_of(data, data.span_end)
+        parts.append(f'<rect class="future" x="{x_now:.1f}" y="{PAD_T}" width="{x_end - x_now:.1f}" height="{plot_bottom - PAD_T:.1f}"/>')
+    for tick in data.x_ticks:
+        x = _x_of(data, tick.ts)
+        parts.append(f'<line class="axis" x1="{x:.1f}" y1="{plot_bottom:.1f}" x2="{x:.1f}" y2="{plot_bottom + 5:.1f}"/>')
+        parts.append(f'<text class="lbl" x="{x:.1f}" y="{CHART_H - 8}" text-anchor="middle">{esc(tick.label)}</text>')
+    parts.append(f'<line class="axis" x1="{PAD_L}" y1="{plot_bottom:.1f}" x2="{CHART_W - PAD_R}" y2="{plot_bottom:.1f}"/>')
 
-    parts.append(f'<line class="ideal" x1="{x_of(0):.1f}" y1="{y_of(100):.1f}" x2="{x_of(total):.1f}" y2="{y_of(0):.1f}"/>')
+    for segment in data.segments:
+        coords = [(_x_of(data, p.ts), _y_of(p.used)) for p in segment.points]
+        if len(coords) == 1:
+            coords.append(coords[0])
+        line = " L ".join(f"{x:.1f} {y:.1f}" for x, y in coords)
+        parts.append(f'<path class="area" d="M {coords[0][0]:.1f} {plot_bottom:.1f} L {line} L {coords[-1][0]:.1f} {plot_bottom:.1f} Z"/>')
+        parts.append(f'<path class="used" d="M {line}"/>')
 
-    points = [(x_of(0), y_of(100))]
-    for sample in bd.samples:
-        elapsed = (sample.ts - bd.start).total_seconds() / 60
-        points.append((x_of(elapsed), y_of(100 - sample.used)))
-    if bd.status != "expired":
-        points.append((x_of(bd.elapsed_min), y_of(bd.remaining_pct)))
-    parts.append('<polyline class="actual" points="' + " ".join(f"{x:.1f},{y:.1f}" for x, y in points) + '"/>')
+    if data.pace is not None:
+        clipped = _clip(data, data.pace)
+        if clipped:
+            parts.append('<line class="pace" x1="{:.1f}" y1="{:.1f}" x2="{:.1f}" y2="{:.1f}"/>'.format(*clipped))
+    if data.projection is not None:
+        clipped = _clip(data, data.projection)
+        if clipped:
+            parts.append('<line class="proj" x1="{:.1f}" y1="{:.1f}" x2="{:.1f}" y2="{:.1f}"/>'.format(*clipped))
+    if data.active:
+        x_now = _x_of(data, data.now)
+        parts.append(f'<line class="now" x1="{x_now:.1f}" y1="{PAD_T}" x2="{x_now:.1f}" y2="{plot_bottom:.1f}"/>')
 
-    if bd.status in ("over", "under", "on-pace") and bd.rate_per_hour > 0:
-        x0, y0 = x_of(bd.elapsed_min), y_of(bd.remaining_pct)
-        if bd.exhausts_before_reset and bd.exhaust_at is not None:
-            x1, y1 = x_of((bd.exhaust_at - bd.start).total_seconds() / 60), y_of(0)
-        else:
-            x1, y1 = x_of(total), y_of(100 - bd.projected_end)
-        parts.append(f'<line class="proj" x1="{x0:.1f}" y1="{y0:.1f}" x2="{x1:.1f}" y2="{y1:.1f}"/>')
+    for mark in data.resets:
+        x = _x_of(data, mark.ts)
+        parts.append(f'<line class="reset-tick" x1="{x:.1f}" y1="{PAD_T - 10}" x2="{x:.1f}" y2="{PAD_T}"/>')
+        if mark.current:
+            anchor = "end" if x > CHART_W * 0.7 else "start"
+            dx = -6 if anchor == "end" else 6
+            parts.append(f'<text class="reset-lbl" x="{x + dx:.1f}" y="{PAD_T - 14}" text-anchor="{anchor}">resets {esc(fmt_local(mark.ts))}</text>')
 
-    xn = x_of(bd.elapsed_min)
-    parts.append(f'<line class="now" x1="{xn:.1f}" y1="{pt}" x2="{xn:.1f}" y2="{pt + ih}"/>')
-    parts.append(f'<circle class="dot" cx="{xn:.1f}" cy="{y_of(bd.remaining_pct):.1f}" r="3.5"/>')
+    end = data.end_point
+    if end is not None:
+        x, y = _x_of(data, end.ts), _y_of(end.used)
+        parts.append(f'<circle class="end-ring" cx="{x:.1f}" cy="{y:.1f}" r="6"/>')
+        parts.append(f'<circle class="end-dot" cx="{x:.1f}" cy="{y:.1f}" r="4"/>')
+        anchor = "end" if x > CHART_W * 0.85 else "start"
+        dx = -10 if anchor == "end" else 10
+        parts.append(f'<text class="end-lbl" x="{x + dx:.1f}" y="{y - 8:.1f}" text-anchor="{anchor}">{end.used:.0f}%</text>')
+
+    parts.append(f'<line class="crosshair" x1="{PAD_L}" y1="{PAD_T}" x2="{PAD_L}" y2="{plot_bottom:.1f}"/>')
+    parts.append(f'<circle class="hover-dot" cx="{PAD_L}" cy="{plot_bottom:.1f}" r="5"/>')
+    label = f"Percent of the {esc(title)} window used, {esc(data.span_label)}"
     return (
-        f'<svg class="chart" viewBox="0 0 {width} {height}" role="img" aria-label="Remaining budget versus a linear burn">'
-        + "".join(parts)
-        + "</svg>"
+        f'<svg class="chart" viewBox="0 0 {CHART_W} {CHART_H}" role="img" tabindex="0" aria-label="{label}" '
+        f'data-chart="{esc(chart_id)}" data-w="{CHART_W}" data-h="{CHART_H}">' + "".join(parts) + "</svg>"
     )
 
 
-def history_svg(samples: list[Sample], now: datetime, days: int = 7, width: int = 640, height: int = 220) -> str:
-    if not samples:
-        return ""
-    pl, pr, pt, pb = 44, 14, 10, 24
-    iw, ih = width - pl - pr, height - pt - pb
-    t0 = now - timedelta(days=days)
-    span = (now - t0).total_seconds()
-
-    def x_of(stamp: datetime) -> float:
-        return pl + iw * min(max((stamp - t0).total_seconds(), 0.0), span) / span
-
-    def y_of(remaining: float) -> float:
-        return pt + ih * (1 - min(max(remaining, 0.0), 100.0) / 100)
-
-    parts: list[str] = []
-    for value in (0, 50, 100):
-        y = y_of(value)
-        parts.append(f'<line class="grid" x1="{pl}" y1="{y:.1f}" x2="{pl + iw}" y2="{y:.1f}"/>')
-        parts.append(f'<text class="lbl" x="{pl - 6}" y="{y + 4:.1f}" text-anchor="end">{value}%</text>')
-    local_now = to_local(now)
-    midnight = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
-    while midnight > to_local(t0):
-        x = x_of(midnight)
-        parts.append(f'<line class="grid" x1="{x:.1f}" y1="{pt}" x2="{x:.1f}" y2="{pt + ih}"/>')
-        parts.append(f'<text class="lbl" x="{x:.1f}" y="{height - 8}" text-anchor="middle">{esc(midnight.strftime("%a %d"))}</text>')
-        midnight -= timedelta(days=1)
-
-    instances = []
-    for group in group_instances(samples).values():
-        instances.extend(group)
-    instances.sort(key=lambda inst: inst.resets_at)
-    for inst in instances:
-        items = [s for s in inst.samples if s.ts >= t0]
-        earlier = [s for s in inst.samples if s.ts < t0]
-        if earlier:
-            items.insert(0, earlier[-1])
-        if not items:
-            continue
-        window_end = min(inst.resets_at, now)
-        if inst.start >= t0 and inst.resets_at <= now:
-            parts.append(f'<line class="ideal faint" x1="{x_of(inst.start):.1f}" y1="{y_of(100):.1f}" x2="{x_of(inst.resets_at):.1f}" y2="{y_of(0):.1f}"/>')
-        if t0 <= inst.resets_at <= now:
-            parts.append(f'<line class="reset" x1="{x_of(inst.resets_at):.1f}" y1="{pt}" x2="{x_of(inst.resets_at):.1f}" y2="{pt + ih}"/>')
-        pts = [f"{x_of(s.ts):.1f},{y_of(100 - s.used):.1f}" for s in items]
-        if items[-1].ts < window_end:  # hold the last reading flat until the window ends or now
-            pts.append(f"{x_of(window_end):.1f},{y_of(100 - items[-1].used):.1f}")
-        parts.append(f'<polyline class="actual" points="{" ".join(pts)}"/>')
+def chart_table_html(points: list[dict]) -> str:
+    rows = "".join(f"<tr><td>{esc(p['t'])}</td><td>{esc(p['v'])}</td></tr>" for p in points)
     return (
-        f'<svg class="chart small" viewBox="0 0 {width} {height}" role="img" aria-label="Remaining budget over the last {days} days">'
-        + "".join(parts)
-        + "</svg>"
+        f'<details class="chart-table"><summary>{len(points)} plotted readings</summary>'
+        f'<table class="usage"><thead><tr><th>time</th><th>% used</th></tr></thead><tbody>{rows}</tbody></table></details>'
     )
 
+
+def chart_figure_html(data: ChartData, chart_id: str, title: str) -> str:
+    points = chart_points(data)
+    reset = next((f"resets {fmt_local(m.ts)}" for m in data.resets if m.current), None)
+    payload = json.dumps({"points": points, "reset": reset}, separators=(",", ":")).replace("</", "<\\/")
+    return (
+        f'<figure class="chart-figure"><h4>% used, {esc(data.span_label)}</h4>{chart_svg(data, chart_id, title)}'
+        f'<script type="application/json" class="chart-data" data-for="{esc(chart_id)}">{payload}</script>'
+        f"{chart_table_html(points)}</figure>"
+    )
+
+
+# -- quota cards -----------------------------------------------------------------------
 
 def badge_text(bd: Burndown) -> str:
     if bd.status in ("over", "under"):
@@ -175,10 +192,11 @@ def projection_text(bd: Burndown) -> tuple[str, str]:
     return f"{min(bd.projected_end, 999):.0f}%", "projected use at reset, at this rate"
 
 
-def card_html(bd: Burndown, history: list[Sample], now: datetime, days: int) -> str:
+def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str) -> str:
     stale = bd.age_min is not None and bd.age_min > STALE_MIN
     classes = f"card status-{bd.status}" + (" stale" if stale else "")
     proj_value, proj_label = projection_text(bd)
+    title = window_title(bd.window)
     if bd.status == "idle":
         stats = (
             f'<div><b>{bd.used:.0f}%</b><span>used</span></div>'
@@ -194,16 +212,17 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, days: int) -> 
             f'<div><b>{esc(fmt_minutes(bd.remaining_min))}</b><span>left · resets {esc(resets)}</span></div>'
             f'<div><b>{esc(proj_value)}</b><span>{esc(proj_label)}</span></div>'
         )
+    data = charts.build(bd, history, now)
+    figure = chart_figure_html(data, chart_id, title) if data else '<div class="note">No readings in the charted span yet.</div>'
     age = f"{bd.age_min:.0f} min ago" if bd.age_min is not None else "never"
     foot = f"last sample {esc(age)} via {esc(bd.source or '?')} · {len(bd.samples)} samples this window"
     if stale:
         foot += " · <b>stale</b>: collector has not run recently"
     return (
         f'<article class="{classes}">'
-        f'<header><h3>{esc(window_title(bd.window))}</h3><span class="badge">{esc(badge_text(bd))}</span></header>'
+        f'<header><h3>{esc(title)}</h3><span class="badge">{esc(badge_text(bd))}</span></header>'
         f'<div class="stats">{stats}</div>'
-        f"{burndown_svg(bd)}"
-        f'<h4>Last {days} days</h4>{history_svg(history, now, days)}'
+        f"{figure}"
         f'<div class="foot">{foot}</div>'
         "</article>"
     )
@@ -300,9 +319,13 @@ def usage_section_html(usage_db: Path, now: datetime) -> str:
     )
 
 
+# -- page ------------------------------------------------------------------------------
+
 CSS = """
-:root{--bg:#f6f7f9;--card:#ffffff;--fg:#1c1e21;--muted:#6b7280;--line:#e5e7eb;--grid:#eef0f3;--ideal:#9ca3af;--actual:#2563eb;--over:#dc2626;--under:#16a34a;--warn:#d97706;--now:#111827}
-@media (prefers-color-scheme: dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e6e8eb;--muted:#9aa3ad;--line:#2a2f3a;--grid:#232834;--ideal:#6b7280;--actual:#60a5fa;--over:#f87171;--under:#4ade80;--warn:#fbbf24;--now:#e6e8eb}}
+:root{--bg:#f6f7f9;--card:#ffffff;--fg:#1c1e21;--muted:#6b7280;--line:#e5e7eb;--grid:#eef0f3;--ideal:#9ca3af;--actual:#2563eb;--over:#dc2626;--under:#16a34a;--warn:#d97706;--now:#111827;
+--chart-series:#2a78d6;--chart-grid:#e1e0d9;--chart-axis:#c3c2b7;--chart-muted:#898781;--chart-ink:#0b0b0b}
+@media (prefers-color-scheme: dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e6e8eb;--muted:#9aa3ad;--line:#2a2f3a;--grid:#232834;--ideal:#6b7280;--actual:#60a5fa;--over:#f87171;--under:#4ade80;--warn:#fbbf24;--now:#e6e8eb;
+--chart-series:#3987e5;--chart-grid:#2c2c2a;--chart-axis:#383835;--chart-muted:#898781;--chart-ink:#ffffff}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,"Segoe UI",Roboto,sans-serif}
 header.top{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:18px 24px 6px;flex-wrap:wrap}
@@ -329,24 +352,37 @@ section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-tra
 .stats b{font-size:22px;font-weight:600;line-height:1.1}
 .stats span{font-size:11px;color:var(--muted)}
 .foot{font-size:11px;color:var(--muted);margin-top:8px}
-svg.chart{width:100%;height:auto;display:block}
-.grid{stroke:var(--grid);stroke-width:1}
-.lbl{fill:var(--muted);font-size:10px}
-.ideal{stroke:var(--ideal);stroke-width:1.5;stroke-dasharray:5 4}
-.ideal.faint{opacity:.5;stroke-width:1}
-.actual{fill:none;stroke:var(--actual);stroke-width:2.2;stroke-linejoin:round}
-.status-over .actual{stroke:var(--over)}
-.status-under .actual{stroke:var(--under)}
-.proj{stroke:var(--now);stroke-width:1.5;stroke-dasharray:2 4;opacity:.8}
-.now{stroke:var(--now);stroke-width:1;opacity:.5}
-.reset{stroke:var(--warn);stroke-width:1;stroke-dasharray:2 3}
-.dot{fill:var(--now)}
+figure.chart-figure{margin:0}
+svg.chart{width:100%;height:auto;display:block;outline:none;touch-action:none}
+svg.chart:focus-visible{outline:2px solid var(--chart-series);outline-offset:2px;border-radius:6px}
+.grid{stroke:var(--chart-grid);stroke-width:1}
+.axis{stroke:var(--chart-axis);stroke-width:1}
+.lbl{fill:var(--chart-muted);font-size:12px;font-variant-numeric:tabular-nums}
+.future{fill:var(--chart-grid);opacity:.35}
+.area{fill:var(--chart-series);opacity:.1}
+.used{fill:none;stroke:var(--chart-series);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.pace{stroke:var(--chart-axis);stroke-width:1.5;stroke-dasharray:6 5;stroke-linecap:round}
+.proj{stroke:var(--chart-ink);stroke-width:1.5;stroke-dasharray:1.5 4;stroke-linecap:round;opacity:.75}
+.now{stroke:var(--chart-axis);stroke-width:1}
+.reset-tick{stroke:var(--chart-axis);stroke-width:1.5}
+.reset-lbl{fill:var(--chart-muted);font-size:11px}
+.end-ring{fill:var(--card)}
+.end-dot{fill:var(--chart-series)}
+.end-lbl{fill:var(--chart-ink);font-size:13px;font-weight:600}
+.crosshair{stroke:var(--chart-ink);stroke-width:1;opacity:0;pointer-events:none}
+.hover-dot{fill:var(--chart-series);stroke:var(--card);stroke-width:2;opacity:0;pointer-events:none}
+#chart-tooltip{position:absolute;z-index:5;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);pointer-events:none;white-space:nowrap}
+#chart-tooltip b{font-size:14px;margin-right:6px}
+details.chart-table{margin-top:6px;font-size:12px;color:var(--muted)}
+details.chart-table summary{cursor:pointer}
+details.chart-table table{margin-top:4px;max-height:220px;display:block;overflow:auto}
 .banner{background:var(--card);border:1px solid var(--warn);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:13px}
 .legend{display:flex;gap:18px;font-size:12px;color:var(--muted);margin:4px 0 0;flex-wrap:wrap}
-.legend i{display:inline-block;width:22px;border-top:2px dashed var(--ideal);vertical-align:middle;margin-right:6px}
-.legend i.a{border-top:2px solid var(--actual)}
-.legend i.p{border-top:2px dotted var(--now)}
-.legend i.r{border-top:2px dashed var(--warn)}
+.legend i{display:inline-block;width:22px;vertical-align:middle;margin-right:6px;border-top:2px solid var(--chart-series)}
+.legend i.k-pace{border-top:2px dashed var(--chart-axis)}
+.legend i.k-proj{border-top:2px dotted var(--chart-ink)}
+.legend i.k-reset{width:2px;height:10px;border-top:0;border-left:2px solid var(--chart-axis)}
+.legend i.k-now{width:1px;height:10px;border-top:0;border-left:1px solid var(--chart-axis)}
 .empty{color:var(--muted);padding:32px 0;text-align:center}
 footer{color:var(--muted);font-size:11px;padding:8px 24px 24px;max-width:1900px;margin:0 auto}
 section.usage>h2{font-size:15px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
@@ -362,8 +398,69 @@ table.usage tr.inferred td{color:var(--muted);font-style:italic}
 .note{font-size:11px;color:var(--muted);margin-top:8px}
 """
 
+HOVER_SCRIPT = """
+(function(){
+  var tip = document.getElementById('chart-tooltip');
+  if (!tip) return;
+  Array.prototype.forEach.call(document.querySelectorAll('svg.chart[data-chart]'), function(svg){
+    var dataEl = document.querySelector('script.chart-data[data-for="' + svg.getAttribute('data-chart') + '"]');
+    if (!dataEl) return;
+    var data;
+    try { data = JSON.parse(dataEl.textContent); } catch (e) { return; }
+    var pts = data.points || [];
+    if (!pts.length) return;
+    var cross = svg.querySelector('.crosshair'), dot = svg.querySelector('.hover-dot');
+    var vw = Number(svg.getAttribute('data-w')) || 800, vh = Number(svg.getAttribute('data-h')) || 320;
+    var idx = -1;
+    function viewX(evt){
+      var r = svg.getBoundingClientRect();
+      return (evt.clientX - r.left) / r.width * vw;
+    }
+    function nearest(x){
+      var best = 0, dist = Infinity;
+      for (var i = 0; i < pts.length; i++){ var d = Math.abs(pts[i].x - x); if (d < dist){ dist = d; best = i; } }
+      return best;
+    }
+    function show(i){
+      idx = i;
+      var p = pts[i];
+      cross.setAttribute('x1', p.x); cross.setAttribute('x2', p.x); cross.style.opacity = 1;
+      dot.setAttribute('cx', p.x); dot.setAttribute('cy', p.y); dot.style.opacity = 1;
+      while (tip.firstChild) tip.removeChild(tip.firstChild);
+      var v = document.createElement('b'); v.textContent = p.v; tip.appendChild(v);
+      tip.appendChild(document.createTextNode('used ' + p.t + (data.reset ? ' \\u00b7 ' + data.reset : '')));
+      tip.hidden = false;
+      var r = svg.getBoundingClientRect();
+      var sx = r.left + window.scrollX + p.x / vw * r.width, sy = r.top + window.scrollY + p.y / vh * r.height;
+      var w = tip.offsetWidth || 160;
+      tip.style.left = Math.max(4, Math.min(sx + 14, window.scrollX + document.documentElement.clientWidth - w - 8)) + 'px';
+      tip.style.top = (sy - 36) + 'px';
+    }
+    function hide(){ cross.style.opacity = 0; dot.style.opacity = 0; tip.hidden = true; idx = -1; }
+    svg.addEventListener('pointermove', function(e){ show(nearest(viewX(e))); });
+    svg.addEventListener('pointerleave', hide);
+    svg.addEventListener('blur', hide);
+    svg.addEventListener('keydown', function(e){
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight'){
+        e.preventDefault();
+        var n = idx < 0 ? pts.length - 1 : idx + (e.key === 'ArrowRight' ? 1 : -1);
+        show(Math.max(0, Math.min(pts.length - 1, n)));
+      } else if (e.key === 'Escape'){ hide(); }
+    });
+  });
+})();
+"""
+
+LEGEND_HTML = (
+    '<div class="legend"><span><i class="k-used"></i>% used</span><span><i class="k-pace"></i>linear pace</span>'
+    '<span><i class="k-proj"></i>projection at current rate</span><span><i class="k-reset"></i>window reset</span>'
+    '<span><i class="k-now"></i>now</span></div>'
+)
+
 
 def render_html(store: Store, now: datetime | None = None, days: int = 7, warnings: list[str] | None = None, refresh_s: int = 120, usage_db: Path | None = None) -> str:
+    """The whole page. `days` sizes how much sample history is loaded (at least 8 days); each
+    chart chooses its own span from its window length."""
     now = now or now_utc()
     samples = store.load(since=now - timedelta(days=max(days, 8)))
     latest = store.latest()
@@ -376,9 +473,13 @@ def render_html(store: Store, now: datetime | None = None, days: int = 7, warnin
     providers: dict[str, list[Burndown]] = {}
     for bd in burndowns:
         providers.setdefault(bd.provider, []).append(bd)
+    chart_count = 0
     for provider, items in providers.items():
-        cards = "".join(card_html(bd, by_key.get(bd.key, []), now, days) for bd in items)
-        sections.append(f'<section class="provider"><h2>{esc(PROVIDER_TITLES.get(provider, provider))}</h2><div class="cards">{cards}</div></section>')
+        cards = []
+        for bd in items:
+            chart_count += 1
+            cards.append(card_html(bd, by_key.get(bd.key, []), now, f"c{chart_count}"))
+        sections.append(f'<section class="provider"><h2>{esc(PROVIDER_TITLES.get(provider, provider))}</h2><div class="cards">{"".join(cards)}</div></section>')
     if not sections:
         sections.append('<p class="empty">No samples yet. Run <code>quota-burndown collect</code>.</p>')
 
@@ -386,6 +487,7 @@ def render_html(store: Store, now: datetime | None = None, days: int = 7, warnin
     if warnings:
         banner = '<div class="banner">' + "<br>".join(esc(w) for w in warnings) + "</div>"
     updated = to_local(now).strftime("%a %Y-%m-%d %H:%M")
+    hover = f'<div id="chart-tooltip" role="status" aria-live="polite" hidden></div><script>{HOVER_SCRIPT}</script>' if chart_count else ""
     return (
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
@@ -394,11 +496,12 @@ def render_html(store: Store, now: datetime | None = None, days: int = 7, warnin
         f'<header class="top"><h1>Quota burndown</h1><div class="meta">updated {esc(updated)} · page reloads every {int(refresh_s) // 60} min · {len(samples)} samples in view</div></header>'
         "<main>"
         f"{banner}"
-        '<div class="legend"><span><i></i>linear pace (ideal burn)</span><span><i class="a"></i>remaining budget</span><span><i class="p"></i>projection at current rate</span><span><i class="r"></i>window reset</span></div>'
+        f"{LEGEND_HTML}"
         + "".join(sections)
         + (usage_section_html(usage_db, now) if usage_db is not None else "")
         + "</main>"
-        f"<footer>Above the dashed line = under pace (budget to spare). Below it = over pace. quota-burndown {esc(__version__)}</footer>"
+        f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>"
+        f"{hover}"
         "</body></html>\n"
     )
 

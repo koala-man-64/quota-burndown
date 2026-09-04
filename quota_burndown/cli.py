@@ -138,7 +138,10 @@ def cmd_collect(args) -> int:
 def cmd_backfill(args) -> int:
     paths = get_paths(args.home)
     if not args.usage:
-        result = run_collect(paths, "codex", 0, None, True, True, usage_on=False)
+        if args.rescan:
+            paths.codex_state.unlink(missing_ok=True)
+            print("forgot the Codex quota scan state; every rollout in range will be re-read from the start")
+        result = run_collect(paths, "codex", 0, args.since_days, args.since_days is None, True, usage_on=False)
         print(json.dumps(result, indent=1))
         return 0
     if args.rescan:
@@ -368,8 +371,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("backfill", help="one-off history import: Codex quota samples by default, or the usage ledger with --usage")
     p.add_argument("--usage", action="store_true", help="import usage history instead of quota samples")
     p.add_argument("--provider", choices=PROVIDER_CHOICES, default="all", help="usage providers to import (with --usage)")
-    p.add_argument("--since-days", type=float, help="with --usage: only sources modified within N days (default: everything, including Codex archives)")
-    p.add_argument("--rescan", action="store_true", help="with --usage: forget scan state first so every file is re-parsed")
+    p.add_argument("--since-days", type=float, help="only sources modified within N days (default: everything, including Codex archives)")
+    p.add_argument("--rescan", action="store_true", help="forget scan state first so every file in range is re-read (after `prune --drop-source rollout`, this is required or nothing is rebuilt)")
     p.set_defaults(func=cmd_backfill)
 
     p = sub.add_parser("render", help="write the HTML page")

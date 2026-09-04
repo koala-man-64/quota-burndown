@@ -94,6 +94,20 @@ def test_current_hides_windows_that_ended_long_ago_but_keeps_recent_ones():
     assert current([], long_ago, now) == []
 
 
+def test_two_codex_weekly_pools_stay_separate():
+    now = START + timedelta(minutes=60)
+    latest = {
+        "codex:7d:gpt-5.6": sample(now, 100.0, RESET + timedelta(days=3), "7d:gpt-5.6", 10080, "codex", "rollout"),
+        "codex:7d:spark": sample(now, 50.0, RESET + timedelta(days=4), "7d:spark", 10080, "codex", "rollout"),
+        "codex:5h:spark": sample(now, 8.0, RESET, "5h:spark", 300, "codex", "rollout"),
+    }
+    out = current([], latest, now)
+    assert [bd.key for bd in out] == ["codex:5h:spark", "codex:7d:gpt-5.6", "codex:7d:spark"]
+    assert [bd.used for bd in out] == [8.0, 100.0, 50.0]
+    grouped = group_instances(list(latest.values()))
+    assert set(grouped) == set(latest) and all(len(v) == 1 for v in grouped.values())
+
+
 def test_current_without_history_still_computes():
     now = START + timedelta(minutes=60)
     out = current([], {"claude:5h": sample(now, 20.0)}, now)
