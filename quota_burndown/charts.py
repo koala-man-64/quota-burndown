@@ -16,8 +16,14 @@ from .store import Sample
 from .util import fmt_local, to_local
 
 TARGET_POINTS = 300
-SHORT_SPAN = timedelta(hours=24)
-LONG_SPAN = timedelta(days=7)
+SPANS = {
+    "24h": timedelta(hours=24),
+    "3d": timedelta(days=3),
+    "7d": timedelta(days=7),
+    "14d": timedelta(days=14),
+    "30d": timedelta(days=30),
+}
+SPAN_LABELS = {"24h": "last 24 hours", "3d": "last 3 days", "7d": "last 7 days", "14d": "last 14 days", "30d": "last 30 days"}
 SHORT_SPAN_MAX_MIN = 1440
 ACTIVE_STATUSES = ("over", "under", "on-pace", "early", "exhausted")
 PROJECTED_STATUSES = ("over", "under", "on-pace")
@@ -67,6 +73,7 @@ class ChartData:
     projection: Line | None = None
     x_ticks: list[Tick] = field(default_factory=list)
     y_ticks: tuple[int, ...] = (0, 25, 50, 75, 100)
+    span_key: str = ""
     span_label: str = ""
 
     @property
@@ -81,12 +88,12 @@ class ChartData:
         return None
 
 
+def default_span_key(window_min: int) -> str:
+    return "24h" if window_min <= SHORT_SPAN_MAX_MIN else "7d"
+
+
 def span_for(window_min: int) -> timedelta:
-    return SHORT_SPAN if window_min <= SHORT_SPAN_MAX_MIN else LONG_SPAN
-
-
-def span_label_for(window_min: int) -> str:
-    return "last 24 hours" if window_min <= SHORT_SPAN_MAX_MIN else "last 7 days"
+    return SPANS[default_span_key(window_min)]
 
 
 def bucket(points: list[Point], width: timedelta) -> list[Point]:
@@ -112,22 +119,25 @@ def bucket(points: list[Point], width: timedelta) -> list[Point]:
     return out
 
 
-def x_ticks(span_start: datetime, span_end: datetime, window_min: int) -> list[Tick]:
-    """Clock-aligned local ticks: every 6 hours for the short span, every local midnight for
-    the long one."""
+def x_ticks(span_start: datetime, span_end: datetime, span: timedelta) -> list[Tick]:
+    """Clock-aligned local ticks whose spacing follows the plotted span: 6 hours up to a day
+    and a half, 12 hours up to 4 days, then 1, 2 or 5 whole days."""
     local_start = to_local(span_start)
-    if window_min <= SHORT_SPAN_MAX_MIN:
-        step = timedelta(hours=6)
-        first = local_start.replace(minute=0, second=0, microsecond=0)
-        while first.hour % 6 or first < local_start:
-            first += timedelta(hours=1)
-        fmt = "%H:%M"
+    if span <= timedelta(hours=36):
+        step, fmt, hours = timedelta(hours=6), "%H:%M", 6
+    elif span <= timedelta(days=4):
+        step, fmt, hours = timedelta(hours=12), "%a %H:%M", 12
+    elif span <= timedelta(days=8):
+        step, fmt, hours = timedelta(days=1), "%a %d", 24
+    elif span <= timedelta(days=16):
+        step, fmt, hours = timedelta(days=2), "%d %b", 48
     else:
-        step = timedelta(days=1)
-        first = local_start.replace(hour=0, minute=0, second=0, microsecond=0)
-        if first < local_start:
-            first += timedelta(days=1)
-        fmt = "%a %d"
+        step, fmt, hours = timedelta(days=5), "%d %b", 120
+    first = local_start.replace(minute=0, second=0, microsecond=0)
+    if hours >= 24:
+        first = first.replace(hour=0)
+    while first < local_start or (hours < 24 and first.hour % hours):
+        first += timedelta(hours=1) if hours < 24 else timedelta(days=1)
     ticks: list[Tick] = []
     stamp = first
     while stamp <= to_local(span_end):
@@ -148,11 +158,12 @@ def _dedupe(samples: list[Sample]) -> list[Sample]:
     return out
 
 
-def build(bd: Burndown, samples: list[Sample], now: datetime) -> ChartData | None:
+def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | None = None) -> ChartData | None:
     """Chart data for one window from its burndown and its sample history (the burndown's
-    own samples are merged in, so the latest reading is always present). None when there
-    is nothing to draw."""
-    span = span_for(bd.window_min)
+    own samples are merged in, so the latest reading is always present). `span_key` picks
+    one of SPANS; the default follows the window length. None when there is nothing to draw."""
+    span_key = span_key or default_span_key(bd.window_min)
+    span = SPANS[span_key]
     span_start = now - span
     active = bd.status in ACTIVE_STATUSES and bd.start is not None and bd.resets_at is not None
     span_end = max(now, bd.resets_at) if active else now
@@ -205,8 +216,8 @@ def build(bd: Burndown, samples: list[Sample], now: datetime) -> ChartData | Non
         key=bd.key, provider=bd.provider, window=bd.window,
         span_start=span_start, span_end=span_end, now=now,
         segments=segments, resets=resets, pace=pace, projection=projection,
-        x_ticks=x_ticks(span_start, span_end, bd.window_min),
-        span_label=span_label_for(bd.window_min),
+        x_ticks=x_ticks(span_start, span_end, span),
+        span_key=span_key, span_label=SPAN_LABELS[span_key],
     )
 
 

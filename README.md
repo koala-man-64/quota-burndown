@@ -15,7 +15,7 @@ One process generates everything: the Windows scheduled task `QuotaBurndownColle
 
 Pace is linear: 0% at window start, 100% at reset. Window start is `resets_at` minus the window length. "Over pace" means you are spending faster than that line; the projection extends your average rate since window start to show either the time you would hit 100% or your projected use at reset.
 
-Each card has one chart: % used over the last 24 hours (5-hour windows) or the last 7 days (weekly windows), extended to the current reset so the dashed pace line and dotted projection fit. Every window is its own segment with a tick at its reset; hover or focus a chart and use the arrow keys to read exact readings, or open the table under it. The page is still one local file; its only script is the hover layer.
+Each card has one chart: % used over the last 24 hours (5-hour windows) or the last 7 days (weekly windows), extended to the current reset so the dashed pace line and dotted projection fit. The Range control above the cards switches every chart to 24 hours, 3, 7, 14 or 30 days (Auto restores each card's default); the choice is remembered by the browser. Every window is its own segment with a tick at its reset; hover or focus a chart and use the arrow keys to read exact readings, or open the table under it. The page is still one local file; its only script is the hover layer.
 
 ## Token usage ledger
 

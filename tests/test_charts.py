@@ -95,15 +95,33 @@ def test_projection_geometry_by_status():
     assert data.pace is not None and data.projection is None
 
 
-def test_ticks_are_clock_aligned():
-    short = charts.x_ticks(NOW - timedelta(hours=24), NOW + timedelta(hours=2), 300)
+def test_ticks_are_clock_aligned_and_follow_the_span():
+    short = charts.x_ticks(NOW - timedelta(hours=24), NOW + timedelta(hours=2), timedelta(hours=24))
     assert 4 <= len(short) <= 5
     assert all(to_local(t.ts).minute == 0 and to_local(t.ts).hour % 6 == 0 for t in short)
     assert all(len(t.label) == 5 for t in short)
-    long = charts.x_ticks(NOW - timedelta(days=7), NOW + timedelta(days=3), 10080)
-    assert 10 <= len(long) <= 11
-    assert all(to_local(t.ts).hour == 0 and to_local(t.ts).minute == 0 for t in long)
+    three = charts.x_ticks(NOW - timedelta(days=3), NOW, timedelta(days=3))
+    assert 6 <= len(three) <= 7 and all(to_local(t.ts).hour % 12 == 0 for t in three)
+    week = charts.x_ticks(NOW - timedelta(days=7), NOW + timedelta(days=3), timedelta(days=7))
+    assert 10 <= len(week) <= 11
+    assert all(to_local(t.ts).hour == 0 and to_local(t.ts).minute == 0 for t in week)
+    fortnight = charts.x_ticks(NOW - timedelta(days=14), NOW, timedelta(days=14))
+    assert 7 <= len(fortnight) <= 8 and all(to_local(t.ts).hour == 0 for t in fortnight)
+    month = charts.x_ticks(NOW - timedelta(days=30), NOW, timedelta(days=30))
+    assert 6 <= len(month) <= 7 and all(to_local(t.ts).hour == 0 for t in month)
     assert charts.span_for(300) == timedelta(hours=24) and charts.span_for(10080) == timedelta(days=7)
+    assert charts.default_span_key(300) == "24h" and charts.default_span_key(10080) == "7d"
+
+
+def test_build_honours_a_chosen_span():
+    history, (reset_a, reset_b, reset_c) = five_hour_history()
+    bd = burndown_for(history)
+    for key, span in charts.SPANS.items():
+        data = charts.build(bd, history, NOW, key)
+        assert data.span_key == key and data.span_label == charts.SPAN_LABELS[key]
+        assert data.span_start == NOW - span and data.span_end == reset_c
+        assert [seg.current for seg in data.segments][-1] is True
+    assert charts.build(bd, history, NOW).span_key == "24h"
 
 
 def test_weekly_span_and_no_samples():
@@ -111,7 +129,7 @@ def test_weekly_span_and_no_samples():
     history = [sample(NOW - timedelta(days=d), 10.0 * (6 - d), reset, "7d", 10080) for d in range(6, 0, -1)]
     bd = burndown_for(history, "claude:7d")
     data = charts.build(bd, history, NOW)
-    assert data.span_label == "last 7 days" and data.span_end == reset and len(data.segments) == 1
+    assert data.span_key == "7d" and data.span_label == "last 7 days" and data.span_end == reset and len(data.segments) == 1
     assert charts.build(bd, [], NOW) is not None  # the burndown's own samples still draw
     bare = current([], {"claude:7d": sample(NOW, 5.0, None, "7d", 10080)}, NOW)[0]
     data = charts.build(bare, [], NOW)
