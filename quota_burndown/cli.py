@@ -38,7 +38,7 @@ def usage_providers(provider: str) -> list[str]:
     return list(usage.PROVIDERS) if provider == "all" else [provider]
 
 
-def run_collect(
+def _run_collect(
     paths,
     provider: str = "all",
     since_days: float | None = 14,
@@ -68,20 +68,35 @@ def run_collect(
     if usage_on:
         budget = usage_budget_s if usage_budget_s is not None else USAGE_BUDGET_S.get(provider, DEFAULT_USAGE_BUDGET_S)
         try:
-            conn = ledger.connect(paths.usage_db)
-            try:
-                stats, usage_warnings = usage.collect(conn, usage_providers(provider), since_days=usage_since_days, budget_s=budget, progress=progress)
-            finally:
-                conn.close()
+            from .service import WriterLease
+            with WriterLease(paths.home, ".usage-writer.lock"):
+                conn = ledger.connect(paths.usage_db)
+                try:
+                    stats, usage_warnings = usage.collect(conn, usage_providers(provider), since_days=usage_since_days, budget_s=budget, progress=progress)
+                finally:
+                    conn.close()
             warnings.extend(usage_warnings)
             appended["usage"] = stats
-        except sqlite3.Error as exc:
+        except (sqlite3.Error, RuntimeError) as exc:
             warnings.append(f"usage: ledger unavailable ({exc.__class__.__name__}: {exc})")
     if do_render:
         render.write_html(store, paths.html, now=now, warnings=warnings, usage_db=paths.usage_db)
     _log(paths, f"collect provider={provider} appended={json.dumps(appended)} warnings={len(warnings)}" + (" " + " | ".join(warnings) if warnings else ""))
     return {"appended": appended, "warnings": warnings}
 
+
+
+def run_collect(paths, *args, **kwargs) -> dict:
+    from .service import WriterLease
+    try:
+        lease = WriterLease(paths.home)
+        lease.__enter__()
+    except RuntimeError:
+        return {"appended": {}, "warnings": [], "delegated": "persistent capacity service owns collection"}
+    try:
+        return _run_collect(paths, *args, **kwargs)
+    finally:
+        lease.__exit__()
 
 def status_lines(burndowns: list[Burndown]) -> list[str]:
     lines = []
@@ -128,27 +143,33 @@ def cmd_collect(args) -> int:
 
 
 def cmd_backfill(args) -> int:
+    from .service import WriterLease
     paths = get_paths(args.home)
-    if not args.usage:
-        if args.rescan:
-            paths.codex_state.unlink(missing_ok=True)
-            print("forgot the Codex quota scan state; every rollout in range will be re-read from the start")
-        result = run_collect(paths, "codex", since_days=args.since_days, full=args.since_days is None, do_render=True, usage_on=False)
-        print(json.dumps(result, indent=1))
+    lease_name = ".usage-writer.lock" if args.usage else ".quota-writer.lock"
+    try:
+        with WriterLease(paths.home, lease_name):
+            if not args.usage:
+                if args.rescan:
+                    paths.codex_state.unlink(missing_ok=True)
+                    print("forgot the Codex quota scan state; every rollout in range will be re-read from the start")
+                result = _run_collect(paths, "codex", since_days=args.since_days,
+                                      full=args.since_days is None, do_render=True, usage_on=False)
+                print(json.dumps(result, indent=1))
+            else:
+                conn = ledger.connect(paths.usage_db)
+                try:
+                    if args.rescan:
+                        print(f"forgot {ledger.forget_scans(conn)} scan records; every file will be re-parsed")
+                    stats, warnings = usage.collect(conn, usage_providers(args.provider),
+                        since_days=args.since_days, budget_s=0, progress=print)
+                    print(json.dumps({"usage": stats, "warnings": warnings}, indent=1))
+                finally:
+                    conn.close()
+                render.write_html(Store(paths), paths.html, usage_db=paths.usage_db)
         return 0
-    if args.rescan:
-        conn = ledger.connect(paths.usage_db)
-        try:
-            print(f"forgot {ledger.forget_scans(conn)} scan records; every file will be re-parsed")
-        finally:
-            conn.close()
-    result = run_collect(
-        paths, args.provider, do_render=True, usage_on=True, usage_since_days=args.since_days, usage_budget_s=0, progress=print,
-    )
-    print(json.dumps(result["appended"].get("usage", {}), indent=1))
-    for warning in result["warnings"]:
-        print(f"warning: {warning}")
-    return 0
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
 def cmd_render(args) -> int:
@@ -235,87 +256,49 @@ def cmd_statusline(args) -> int:
 
 
 def cmd_serve(args) -> int:
-    paths = get_paths(args.home)
-    store = Store(paths)
-    state = {"last_collect": 0.0, "warnings": []}
-    lock = threading.Lock()
-
-    def refresh() -> None:
-        with lock:
-            if time.monotonic() - state["last_collect"] < args.min_interval:
-                return
-            result = run_collect(paths, "all")
-            state["warnings"] = result["warnings"]
-            state["last_collect"] = time.monotonic()
-
-    def usage_payload() -> bytes:
-        conn = ledger.connect(paths.usage_db)
-        try:
-            return json.dumps(usage_report.payload(conn), indent=1).encode("utf-8")
-        finally:
-            conn.close()
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_GET(self):  # noqa: N802
-            path = self.path.split("?", 1)[0]
-            if path in ("/", "/index.html"):
-                refresh()
-                body = render.render_html(store, warnings=state["warnings"], refresh_s=args.refresh, usage_db=paths.usage_db).encode("utf-8")
-                self._send(200, "text/html; charset=utf-8", body)
-            elif path == "/latest.json":
-                body = json.dumps({k: v.to_dict() for k, v in store.latest().items()}, indent=1).encode("utf-8")
-                self._send(200, "application/json", body)
-            elif path == "/status.json":
-                now = now_utc()
-                burndowns = current(store.load(since=now - timedelta(days=8)), store.latest(), now)
-                self._send(200, "application/json", json.dumps([_bd_json(b) for b in burndowns], indent=1).encode("utf-8"))
-            elif path == "/usage.json":
-                refresh()
-                self._send(200, "application/json", usage_payload())
-            else:
-                self._send(404, "text/plain", b"not found")
-
-        def _send(self, code: int, ctype: str, body: bytes) -> None:
-            self.send_response(code)
-            self.send_header("Content-Type", ctype)
-            self.send_header("Content-Length", str(len(body)))
-            self.send_header("Cache-Control", "no-store")
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, *_):
-            return
-
-    server = ThreadingHTTPServer((args.host, args.port), Handler)
-    print(f"serving http://{args.host}:{args.port}/  (Ctrl+C to stop)")
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        pass
-    finally:
-        server.server_close()
+    from .service import serve
+    serve(get_paths(args.home), host=args.host, port=args.port)
     return 0
+
+
+def cmd_capacity(args) -> int:
+    from .client import read_capacity, watch_capacity
+    paths = get_paths(args.home)
+    try:
+        if args.watch:
+            for snapshot in watch_capacity(paths.home, args.url):
+                print(json.dumps(snapshot), flush=True)
+        else:
+            print(json.dumps(read_capacity(paths.home, args.url), indent=2))
+        return 0
+    except KeyboardInterrupt:
+        return 0
+    except (OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
 
 
 def cmd_install(args) -> int:
     apply = args.apply
-    wants_all = args.all or not (args.statusline or args.task or args.codex_skill)
+    wants_all = args.all or not (args.statusline or args.task or args.codex_skill or args.service)
     lines = []
     if wants_all or args.statusline:
         lines.append(install.install_statusline(apply=apply, force=args.force))
-    if wants_all or args.task:
+    if args.task:
         lines.append(install.install_task(apply=apply, every_min=args.every))
+    if wants_all or args.service:
+        lines.append(install.install_service(apply=apply, home=args.home))
     if wants_all or args.codex_skill:
         lines.append(install.install_codex_skill(apply=apply))
     lines.append(install.plugin_instructions())
     if not apply:
         lines.append("(dry run; add --apply to make these changes)")
     print("\n".join(lines))
-    return 0
+    return 1 if any("failed (" in line or "could not be applied" in line for line in lines) else 0
 
 
 def cmd_uninstall(args) -> int:
-    lines = [install.uninstall_statusline(apply=args.apply), install.uninstall_task(apply=args.apply)]
+    lines = [install.uninstall_statusline(apply=args.apply), install.uninstall_service(apply=args.apply), install.uninstall_task(apply=args.apply)]
     if not args.apply:
         lines.append("(dry run; add --apply to make these changes)")
     print("\n".join(lines))
@@ -337,7 +320,9 @@ def cmd_where(args) -> int:
 def cmd_prune(args) -> int:
     paths = get_paths(args.home)
     keep_since = now_utc() - timedelta(days=args.keep_days) if args.keep_days else None
-    dropped = Store(paths).prune(keep_since=keep_since, drop_source=args.drop_source)
+    from .service import WriterLease
+    with WriterLease(paths.home):
+        dropped = Store(paths).prune(keep_since=keep_since, drop_source=args.drop_source)
     print(f"dropped {dropped} samples; latest.json rebuilt")
     return 0
 
@@ -390,16 +375,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-color", action="store_true")
     p.set_defaults(func=cmd_statusline)
 
-    p = sub.add_parser("serve", help="local web page that re-collects on each load")
+    p = sub.add_parser("serve", help="persistent loopback capacity service and live dashboard")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
-    p.add_argument("--min-interval", type=float, default=60, help="seconds between collections triggered by page loads")
-    p.add_argument("--refresh", type=int, default=120, help="page auto-reload seconds")
+    p.add_argument("--min-interval", type=float, default=60, help="deprecated; native collection uses active/idle intervals")
+    p.add_argument("--refresh", type=int, default=120, help="deprecated; live pages use the event stream")
     p.set_defaults(func=cmd_serve)
+
+    p = sub.add_parser("capacity", help="read or stream the versioned live capacity contract")
+    p.add_argument("--json", action="store_true", help="print JSON (the default)")
+    p.add_argument("--watch", action="store_true", help="stream full snapshots as JSON lines")
+    p.add_argument("--url", help="override the saved loopback service URL")
+    p.set_defaults(func=cmd_capacity)
 
     p = sub.add_parser("install", help="wire up the status line, scheduled task, and Codex skill (dry run by default)")
     p.add_argument("--apply", action="store_true")
     p.add_argument("--all", action="store_true")
+    p.add_argument("--service", action="store_true", help="install the persistent logon service and disable periodic collection")
     p.add_argument("--statusline", action="store_true")
     p.add_argument("--task", action="store_true")
     p.add_argument("--codex-skill", action="store_true")

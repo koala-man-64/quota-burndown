@@ -12,6 +12,7 @@ from .config import TASK_NAME, claude_home, codex_home, project_root
 from .util import atomic_write_text, read_json
 
 STATUSLINE_REFRESH_S = 60
+SERVICE_TASK_NAME = "QuotaBurndownService"
 
 
 def launcher_path() -> Path:
@@ -107,16 +108,84 @@ def install_task(apply: bool = False, every_min: int = 5) -> str:
     return f"scheduled task {TASK_NAME} runs every {every_min} min, on battery too: {task_command()}"
 
 
-def uninstall_task(apply: bool = False) -> str:
+def uninstall_task(apply: bool = False, name: str = TASK_NAME) -> str:
     if os.name != "nt":
         return "skip: scheduled task is Windows-only"
-    cmd = ["schtasks", "/Delete", "/F", "/TN", TASK_NAME]
+    cmd = ["schtasks", "/Delete", "/F", "/TN", name]
     if not apply:
         return "would run: " + subprocess.list2cmdline(cmd)
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode != 0:
         return f"schtasks failed ({result.returncode}): {(result.stderr or result.stdout).strip()}"
-    return f"scheduled task {TASK_NAME} removed"
+    return f"scheduled task {name} removed"
+
+
+def uninstall_service(apply: bool = False) -> str:
+    startup = startup_shortcut()
+    if startup.exists():
+        if not apply:
+            return f"would remove user startup shortcut {startup}; stop the running service separately"
+        startup.unlink()
+        return f"removed user startup shortcut {startup}; running process remains until stopped or sign-out"
+    if os.name == "nt" and apply:
+        subprocess.run(["schtasks", "/End", "/TN", SERVICE_TASK_NAME], capture_output=True, text=True)
+    return uninstall_task(apply=apply, name=SERVICE_TASK_NAME)
+
+
+def startup_shortcut() -> Path:
+    roaming = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+    return roaming / "Microsoft/Windows/Start Menu/Programs/Startup" / (SERVICE_TASK_NAME + ".lnk")
+
+
+def _install_startup(interpreter: Path, arguments: str) -> str:
+    """Normal per-user autostart when task registration requires administrator rights."""
+    shortcut = startup_shortcut()
+    shortcut.parent.mkdir(parents=True, exist_ok=True)
+    quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+    script = (
+        "$ErrorActionPreference='Stop'; $shell=New-Object -ComObject WScript.Shell; "
+        f"$link=$shell.CreateShortcut({quote(shortcut)}); "
+        f"$link.TargetPath={quote(interpreter)}; $link.Arguments={quote(arguments)}; "
+        f"$link.WorkingDirectory={quote(project_root())}; $link.WindowStyle=7; $link.Save(); "
+        f"Start-Process -FilePath {quote(interpreter)} -ArgumentList {quote(arguments)} -WindowStyle Hidden"
+    )
+    result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                            capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    if result.returncode:
+        return f"service installation failed ({result.returncode}): {(result.stderr or result.stdout).strip()}"
+    return f"installed and started per-user Startup service: {shortcut}; Task Scheduler registration denied; periodic collection delegates via writer lease"
+
+
+def install_service(apply: bool = False, home: str | None = None) -> str:
+    """Installation owns the logon process; serving runtime never installs itself."""
+    if os.name != "nt":
+        return "Start quota-burndown serve with your user service manager."
+    exe = Path(sys.executable)
+    interpreter = exe.with_name("pythonw.exe")
+    if not interpreter.exists():
+        interpreter = exe
+    quote = lambda value: "'" + str(value).replace("'", "''") + "'"
+    arguments = subprocess.list2cmdline(["-B", str(launcher_path()), *(["--home", home] if home else []), "serve"])
+    script = (
+        f"$a = New-ScheduledTaskAction -Execute {quote(interpreter)} -Argument {quote(arguments)}; "
+        "$t = New-ScheduledTaskTrigger -AtLogOn; "
+        "$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries "
+        "-StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) "
+        "-RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1); "
+        f"Register-ScheduledTask -TaskName '{SERVICE_TASK_NAME}' -Action $a -Trigger $t -Settings $s -Force | Out-Null; "
+        f"if (Get-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue) "
+        f"{{ Disable-ScheduledTask -TaskName '{TASK_NAME}' | Out-Null }}; "
+        f"Start-ScheduledTask -TaskName '{SERVICE_TASK_NAME}'"
+    )
+    if not apply:
+        return f"would install and start {SERVICE_TASK_NAME} at logon; disable {TASK_NAME}; command: {interpreter} {arguments}"
+    command = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; " + script]
+    result = subprocess.run(command, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    if result.returncode:
+        if "0x80070005" in result.stderr or "Access is denied" in result.stderr:
+            return _install_startup(interpreter, arguments)
+        return f"service installation failed ({result.returncode}): {(result.stderr or result.stdout).strip()}"
+    return f"installed and started {SERVICE_TASK_NAME}; periodic collection disabled"
 
 
 def task_status() -> str:

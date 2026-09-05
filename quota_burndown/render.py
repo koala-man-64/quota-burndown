@@ -14,7 +14,7 @@ from .charts import ChartData
 from .ledger import Totals
 from .model import Burndown, current
 from .store import Sample, Store
-from .util import atomic_write_text, fmt_local, fmt_minutes, now_utc, to_local
+from .util import atomic_write_text, fmt_local, fmt_minutes, now_utc, read_json, to_local
 
 STALE_MIN = 20
 PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex"}
@@ -347,6 +347,114 @@ def usage_section_html(usage_db: Path, now: datetime) -> str:
     )
 
 
+def efficiency_table_html(rows: list[dict], title: str) -> str:
+    """A compact, escaped ledger drilldown.  This is presentation-only accounting."""
+    detail_id = "efficiency-session" if title == "By session" else "efficiency-model"
+    if not rows:
+        return f'<details id="{detail_id}" class="efficiency"><summary>{esc(title)}: no requests in range</summary></details>'
+    body = []
+    for row in rows[:20]:
+        if row.get("exact"):
+            reasoning = "unknown" if row.get("reasoning_share_of_output_pct") is None else f"{row['reasoning_share_of_output_pct']:.1f}%"
+            median = "—" if row.get("median_tokens_per_request") is None else _n(int(row["median_tokens_per_request"]))
+            values = tuple(_n(row[field]) if row.get(field) is not None else "unknown" for field in ("uncached_input", "cached_input", "output")) + (reasoning, str(row["requests"]), median)
+        else:
+            values = ("unknown", "unknown", "unknown", "unknown", str(row["requests"]), "unknown")
+        anchor = f' id="{esc(row["anchor"])}"' if row.get("anchor") else ""
+        body.append("<tr" + anchor + ">" + f"<td>{esc(row['key'])}</td>" + "".join(f"<td>{esc(value)}</td>" for value in values) + "</tr>")
+    return (
+        f'<details id="{detail_id}" class="efficiency"><summary>{esc(title)} (last 7 days)</summary>'
+        '<table class="usage"><thead><tr><th>group</th><th>uncached in</th><th>cached in</th><th>output</th><th>reasoning / output</th><th>requests</th><th>median tokens/request</th></tr></thead>'
+        f'<tbody>{"".join(body)}</tbody></table><div class="note">Uncached input normalizes Codex inclusive input by subtracting cache tokens once; ledger totals are unchanged.</div></details>'
+    )
+
+
+def efficiency_section_html(usage_db: Path, now: datetime) -> str:
+    try:
+        conn = ledger.connect(usage_db)
+        try:
+            data = usage_report.efficiency_payload(conn, now)
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        return f'<section class="efficiency-section"><h2>Efficiency drilldowns</h2><div class="banner">usage ledger unavailable: {esc(exc.__class__.__name__)}</div></section>'
+    insight_html = "".join(
+        f'<li>{esc(item["label"])}: {_n(int(item["value"]))} <a href="#{esc(item["session_anchor"])}">view session evidence</a></li>'
+        for item in data.get("insights", [])
+    )
+    return (
+        '<section class="efficiency-section"><h2>Efficiency drilldowns</h2>'
+        '<div class="note">Evidence-linked local ledger aggregates. Antigravity activity has unknown exact token capacity and counts.</div>'
+        f'<ul id="efficiency-insights" class="insights">{insight_html}</ul>'
+        f'<div id="efficiency-session-panel">{efficiency_table_html(data["by_session"], "By session")}</div>'
+        f'<div id="efficiency-model-panel">{efficiency_table_html(data["by_model_effort"], "By model × effort")}</div>'
+        '</section>'
+    )
+
+
+# -- live capacity --------------------------------------------------------------------
+
+def _capacity_window_html(window: dict) -> str:
+    if not isinstance(window, dict):
+        window = {}
+    remaining = window.get("remaining_pct")
+    usable = window.get("usable_pct")
+    state = window.get("allowance_state") or "unknown"
+    freshness = window.get("freshness") or "unknown"
+    remaining_text = "unknown" if remaining is None else f"{float(remaining):.0f}%"
+    budget = "unknown" if usable is None else f"{float(usable):.0f}%"
+    reset = window.get("resets_at") or "unknown"
+    runway = window.get("runway_minutes")
+    runway_text = "unknown" if runway is None else fmt_minutes(float(runway))
+    age = window.get("source_age_s")
+    age_text = "unknown" if age is None else f'<span class="source-age" data-source-age="{float(age):.3f}">{float(age):.0f}s ago</span>'
+    values = (window.get("window") or "window", remaining_text, budget, reset, runway_text)
+    cells = "".join(f"<td>{esc(value)}</td>" for value in values)
+    cells += f"<td>{esc(freshness)} · {age_text}</td><td>{esc(window.get('source') or 'unknown')}</td>"
+    return "<tr>" + cells + "</tr>"
+
+
+def capacity_matrix_html(capacity: dict | None, live: bool = False) -> str:
+    """The capacity contract is observational: unknown values stay visibly unknown."""
+    if not isinstance(capacity, dict) or not capacity:
+        return '<section id="capacity" class="capacity"><h2>Capacity</h2><div class="banner">Capacity is unknown: snapshot unavailable; quota cards below are historic readings.</div></section>'
+    policy = capacity.get("policy") if isinstance(capacity.get("policy"), dict) else {}
+    reserve = policy.get("reserve_pct", 10)
+    presets = policy.get("presets", (5, 10, 20))
+    rows = []
+    for pool in capacity.get("pools") or []:
+        if not isinstance(pool, dict):
+            continue
+        windows = [window for window in (pool.get("windows") or [{}]) if isinstance(window, dict)] or [{}]
+        pool_label = pool.get("label") or f"{pool.get('provider', '?')} / {pool.get('limit_id', '?')}"
+        models = ", ".join(pool.get("models") or []) or "unknown"
+        first = True
+        for window in windows:
+            pool_cells = f'<td rowspan="{len(windows)}">{esc(pool_label)}<br><small>{esc(pool.get("account_scope", "unknown"))}<br>{esc(models)} · mapping {esc(pool.get("mapping_confidence") or "unknown")}<br>constraining: {esc(pool.get("constraining_window", "unknown"))}</small></td>' if first else ""
+            first = False
+            rows.append("<tr>" + pool_cells + _capacity_window_html(window)[4:])
+    controls = "".join(
+        f'<button type="button" data-reserve="{int(value)}" class="{"on" if value == reserve else ""}">{int(value)}%</button>'
+        for value in presets
+    )
+    mode = "live" if live else "static fallback"
+    health = capacity.get("collector_health") if isinstance(capacity.get("collector_health"), dict) else {}
+    health_text = ", ".join(f"{name}: {(info if isinstance(info, dict) else {}).get('state', 'unknown')}" for name, info in health.items()) or "unknown"
+    provider_states = capacity.get("provider_states") if isinstance(capacity.get("provider_states"), dict) else {}
+    def provider_state(name):
+        value = provider_states.get(name, "unknown")
+        return value.get("state", "unknown") if isinstance(value, dict) else value
+    provider_text = ", ".join(f"{name}: {provider_state(name)}" for name in ("codex", "claude", "antigravity"))
+    return (
+        '<section id="capacity" class="capacity" aria-live="polite"><header><h2>Capacity</h2>'
+        f'<span id="capacity-state" class="badge">{esc(mode)} · rev {esc(capacity.get("revision", "?"))}</span></header>'
+        f'<div id="capacity-observation-state" class="note">Pools are shared allowances. Models show membership only. Unreported in-flight usage: {esc(capacity.get("unreported_in_flight_usage", "unknown"))}. Provider observations: {esc(provider_text)}. Collector health: {esc(health_text)}.</div>'
+        '<div class="reserve" role="group" aria-label="Reserve policy"><span>Reserve</span>' + controls + '</div>'
+        '<div class="capacity-scroll"><table class="usage capacity-table"><thead><tr><th>pool / associated models</th><th>window</th><th>remaining</th><th>reserve-adjusted budget</th><th>reset</th><th>runway</th><th>freshness</th><th>source</th></tr></thead>'
+        f'<tbody>{"".join(rows) or "<tr><td colspan=8>no reported pools</td></tr>"}</tbody></table></div></section>'
+    )
+
+
 # -- page ------------------------------------------------------------------------------
 
 CSS = """
@@ -428,6 +536,10 @@ table.usage tr.inferred td{color:var(--muted);font-style:italic}
 .recent{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-top:16px;overflow-x:auto}
 .recent h3{margin:0 0 8px;font-size:15px}
 .note{font-size:11px;color:var(--muted);margin-top:8px}
+section.capacity{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:8px 0 18px;border-top:4px solid var(--actual)}
+section.capacity header{display:flex;justify-content:space-between;gap:8px;align-items:center}section.capacity h2,.efficiency-section h2{font-size:15px;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.reserve{display:flex;gap:5px;align-items:center;margin:10px 0;font-size:12px}.reserve button{font:inherit;font-size:12px;padding:2px 9px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;cursor:pointer}.reserve button.on{border-color:var(--chart-series);color:var(--chart-series);font-weight:600}.reserve button:focus-visible{outline:2px solid var(--chart-series);outline-offset:1px}
+.capacity-scroll{overflow-x:auto}.capacity-table small{color:var(--muted);font-weight:400}.efficiency-section{margin-top:18px}.efficiency{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:8px;overflow-x:auto}.efficiency summary{cursor:pointer;font-weight:600}.efficiency table{margin-top:8px}
 """
 
 HOVER_SCRIPT = """
@@ -512,6 +624,96 @@ HOVER_SCRIPT = """
 })();
 """
 
+CAPACITY_SCRIPT = """
+(function(){
+  var section = document.getElementById('capacity');
+  if (!section || !window.EventSource) return;
+  var table = section.querySelector('tbody'), state = document.getElementById('capacity-state'), ageStarted = Date.now();
+  function text(v){ return v === undefined || v === null || v === '' ? 'unknown' : String(v); }
+  function pct(v){ return v === undefined || v === null ? 'unknown' : Math.round(Number(v)) + '%'; }
+  function age(v){ return v === undefined || v === null ? 'unknown' : '<span class="source-age" data-source-age="' + Number(v) + '">' + Math.round(Number(v)) + 's ago</span>'; }
+  function runway(v){ return v === undefined || v === null ? 'unknown' : Math.round(Number(v)) + ' min'; }
+  function esc(v){ var d=document.createElement('div'); d.textContent=text(v); return d.innerHTML; }
+  function tickAges(){
+    var elapsed=(Date.now()-ageStarted)/1000;
+    Array.prototype.forEach.call(section.querySelectorAll('[data-source-age]'), function(el){
+      el.textContent=Math.floor(Number(el.getAttribute('data-source-age')) + elapsed) + 's ago';
+    });
+    Array.prototype.forEach.call(section.querySelectorAll('[data-freshness-deadline]'), function(el){
+      if(Date.now() >= Date.parse(el.getAttribute('data-freshness-deadline'))) el.textContent='stale';
+    });
+    Array.prototype.forEach.call(section.querySelectorAll('[data-reset]'), function(row){
+      if(Date.now() >= Date.parse(row.getAttribute('data-reset'))){
+        Array.prototype.forEach.call(row.querySelectorAll('.window-budget'), function(el){el.textContent='unknown';});
+      }
+    });
+  }
+  setInterval(tickAges, 1000);
+  var lastInstance=null, lastRevision=-1;
+  function render(snapshot){
+    if (!snapshot || !table) return;
+    if (snapshot.instance_id === lastInstance && snapshot.revision < lastRevision) return;
+    lastInstance=snapshot.instance_id; lastRevision=snapshot.revision;
+    var active = document.activeElement, reserveFocus = active && active.getAttribute && active.getAttribute('data-reserve');
+    var scroller = section.querySelector('.capacity-scroll'), left = scroller ? scroller.scrollLeft : 0;
+    var rows = [];
+    (snapshot.pools || []).forEach(function(pool){
+      var wins = pool.windows && pool.windows.length ? pool.windows : [{}], label = pool.label || (text(pool.provider) + ' / ' + text(pool.limit_id));
+      var models = (pool.models || []).join(', ') || 'unknown';
+      wins.forEach(function(w, i){
+        var poolCell = i ? '' : '<td rowspan="' + wins.length + '">' + esc(label) + '<br><small>' + esc(pool.account_scope) + '<br>' + esc(models) + ' · mapping ' + esc(pool.mapping_confidence) + '<br>constraining: ' + esc(pool.constraining_window) + '</small></td>';
+        if(w.observed_at) w.source_age_s=Math.max(0,(Date.now()-Date.parse(w.observed_at))/1000);
+        var deadline=w.used_pct === null || !w.valid_until ? '' : ' data-freshness-deadline="' + esc(w.valid_until) + '"';
+        rows.push('<tr data-reset="' + esc(w.resets_at) + '">' + poolCell + '<td>' + esc(w.window || 'window') + '</td><td class="window-budget">' + pct(w.remaining_pct) + '</td><td class="window-budget">' + pct(w.usable_pct) + '</td><td>' + esc(w.resets_at) + '</td><td class="window-budget">' + runway(w.runway_minutes) + '</td><td><span' + deadline + '>' + esc(w.freshness) + '</span> · ' + age(w.source_age_s) + '</td><td>' + esc(w.source) + '<br><small>reset: ' + esc(w.reset_provenance) + '; observation: ' + esc(w.observation_time_provenance) + '; TTL ' + esc(w.freshness_ttl_s) + 's</small></td></tr>');
+      });
+    });
+    table.innerHTML = rows.join('') || '<tr><td colspan="8">no reported pools</td></tr>';
+    if (state) state.textContent = 'live · rev ' + text(snapshot.revision);
+    var observation=document.getElementById('capacity-observation-state');
+    if(observation){
+      var states=snapshot.provider_states || {}, health=snapshot.collector_health || {};
+      observation.textContent='Pools are shared allowances. Models show membership only. Unreported in-flight usage: unknown. Provider observations: ' + ['codex','claude','antigravity'].map(function(p){return p + ': ' + text(typeof states[p] === 'object' ? states[p].state : states[p]);}).join(', ') + '. Collector health: ' + Object.keys(health).map(function(p){return p + ': ' + text(health[p].state);}).join(', ');
+    }
+    Array.prototype.forEach.call(section.querySelectorAll('[data-reserve]'),function(b){b.classList.toggle('on', Number(b.getAttribute('data-reserve')) === Number((snapshot.policy || {}).reserve_pct));});
+    ageStarted = Date.now(); tickAges();
+    if (scroller) scroller.scrollLeft = left;
+    if (reserveFocus) { var button = section.querySelector('[data-reserve="' + reserveFocus + '"]'); if (button) button.focus(); }
+  }
+  function reserve(button){
+    fetch('/v1/policy', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({reserve_pct:Number(button.getAttribute('data-reserve'))})})
+      .catch(function(){ /* keep the server policy authoritative */ });
+  }
+  section.addEventListener('click', function(event){ var b=event.target.closest('[data-reserve]'); if (b) reserve(b); });
+  var stream = new EventSource('/v1/capacity/events');
+  stream.onopen = function(){ if (state) state.textContent = 'live · stream connected'; };
+  stream.onmessage = function(event){ try { render(JSON.parse(event.data)); } catch (ignore) {} };
+  stream.onerror = function(){ if (state) state.textContent = 'stream disconnected · reconnecting; last snapshot retained'; };
+
+  function value(v){ return v === undefined || v === null ? 'unknown' : String(v); }
+  function count(v){ return v === undefined || v === null ? 'unknown' : Math.round(Number(v)).toLocaleString(); }
+  function panel(name, title, rows){
+    var host=document.getElementById('efficiency-' + name + '-panel'); if (!host) return;
+    var old=document.getElementById('efficiency-' + name), open=old && old.open;
+    var focused=document.activeElement === (old && old.querySelector('summary'));
+    var left=old ? old.scrollLeft : 0, top=old ? old.scrollTop : 0;
+    var body=(rows || []).slice(0,20).map(function(r){
+      var reasoning=r.reasoning_share_of_output_pct === undefined || r.reasoning_share_of_output_pct === null ? 'unknown' : r.reasoning_share_of_output_pct + '%';
+      var id=r.anchor ? ' id="' + esc(r.anchor) + '"' : '';
+      return '<tr' + id + '><td>' + esc(r.key) + '</td><td>' + count(r.uncached_input) + '</td><td>' + count(r.cached_input) + '</td><td>' + count(r.output) + '</td><td>' + reasoning + '</td><td>' + count(r.requests) + '</td><td>' + count(r.median_tokens_per_request) + '</td></tr>';
+    }).join('') || '<tr><td colspan="7">no requests in range</td></tr>';
+    host.innerHTML='<details id="efficiency-' + name + '" class="efficiency"' + (open ? ' open' : '') + '><summary>' + esc(title) + ' (last 7 days)</summary><table class="usage"><thead><tr><th>group</th><th>uncached in</th><th>cached in</th><th>output</th><th>reasoning / output</th><th>requests</th><th>median tokens/request</th></tr></thead><tbody>' + body + '</tbody></table></details>';
+    var replacement=document.getElementById('efficiency-' + name);
+    if (replacement){ replacement.scrollLeft=left; replacement.scrollTop=top; if (focused) replacement.querySelector('summary').focus(); }
+  }
+  function efficiency(){
+    fetch('/v1/usage', {cache:'no-store'}).then(function(r){ return r.ok ? r.json() : null; }).then(function(data){
+      if (!data) return; panel('session','By session',data.by_session); panel('model','By model × effort',data.by_model_effort);
+    }).catch(function(){});
+  }
+  efficiency(); setInterval(efficiency, 30000);
+})();
+"""
+
 RANGE_OPTIONS = (("auto", "Auto"), *((key, key) for key in charts.SPANS))
 RANGE_HTML = (
     '<div class="range" role="group" aria-label="Chart time range"><span>Range</span>'
@@ -525,7 +727,11 @@ LEGEND_HTML = (
 )
 
 
-def render_html(store: Store, now: datetime | None = None, days: int = 7, warnings: list[str] | None = None, refresh_s: int = 120, usage_db: Path | None = None) -> str:
+def render_html(
+    store: Store, now: datetime | None = None, days: int = 7,
+    warnings: list[str] | None = None, refresh_s: int = 120,
+    usage_db: Path | None = None, capacity: dict | None = None, live: bool = False,
+) -> str:
     """The whole page. `days` sizes how much sample history is loaded (at least 31 days, so
     every chart span up to 30 days can be drawn); the range control picks the span shown."""
     now = now or now_utc()
@@ -546,7 +752,11 @@ def render_html(store: Store, now: datetime | None = None, days: int = 7, warnin
         for bd in items:
             chart_count += 1
             cards.append(card_html(bd, by_key.get(bd.key, []), now, f"c{chart_count}"))
-        sections.append(f'<section class="provider"><h2>{esc(PROVIDER_TITLES.get(provider, provider))}</h2><div class="cards">{"".join(cards)}</div></section>')
+        sections.append(
+            f'<section class="provider"><h2>Historic readings as of {esc(to_local(now).strftime("%Y-%m-%d %H:%M"))} · {esc(PROVIDER_TITLES.get(provider, provider))}</h2>'
+            '<div class="note">Model-grouped recorded usage only; these cards do not represent independent live allowances.</div>'
+            f'<div class="cards">{"".join(cards)}</div></section>'
+        )
     if not sections:
         sections.append('<p class="empty">No samples yet. Run <code>quota-burndown collect</code>.</p>')
 
@@ -555,24 +765,27 @@ def render_html(store: Store, now: datetime | None = None, days: int = 7, warnin
         banner = '<div class="banner">' + "<br>".join(esc(w) for w in warnings) + "</div>"
     updated = to_local(now).strftime("%a %Y-%m-%d %H:%M")
     hover = f'<div id="chart-tooltip" role="status" aria-live="polite" hidden></div><script>{HOVER_SCRIPT}</script>' if chart_count else ""
-    return (
-        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">"
-        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-        f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">"
-        f"<title>Quota Burndown</title><style>{CSS}</style></head><body>"
-        f'<header class="top"><h1>Quota burndown</h1><div class="meta">updated {esc(updated)} · page reloads every {int(refresh_s) // 60} min · {len(samples)} samples in view</div></header>'
-        "<main>"
-        f"{banner}"
-        f"{LEGEND_HTML}"
-        + "".join(sections)
-        + (usage_section_html(usage_db, now) if usage_db is not None else "")
-        + "</main>"
-        f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>"
-        f"{hover}"
-        "</body></html>\n"
-    )
+    capacity_script = f'<script id="capacity-script">{CAPACITY_SCRIPT}</script>' if live else ""
+    mode = "live dashboard" if live else f"static fallback generated {updated}"
+    return "".join((
+        "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">",
+        "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+        "" if live else f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">",
+        f"<title>Quota Burndown</title><style>{CSS}</style></head><body>",
+        f'<header class="top"><h1>Quota burndown</h1><div class="meta">{esc(mode)} · {len(samples)} historic samples in view</div></header>',
+        "<main>", banner, capacity_matrix_html(capacity, live), LEGEND_HTML, "".join(sections),
+        usage_section_html(usage_db, now) if usage_db is not None else "",
+        efficiency_section_html(usage_db, now) if usage_db is not None else "", "</main>",
+        f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",
+        hover, capacity_script, "</body></html>\n",
+    ))
 
 
 def write_html(store: Store, path: Path, **kwargs) -> Path:
+    # The collector's static page is an explicitly dated fallback.  Reuse the last
+    # atomically persisted capacity observation when no service supplied one.
+    if "capacity" not in kwargs:
+        persisted = read_json(store.paths.home / "capacity.json", None)
+        kwargs["capacity"] = persisted if isinstance(persisted, dict) else None
     atomic_write_text(path, render_html(store, **kwargs))
     return path

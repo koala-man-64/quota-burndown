@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import sqlite3
 from datetime import datetime, timedelta
@@ -180,4 +181,119 @@ def payload(conn: sqlite3.Connection, now: datetime | None = None, days: int = 7
         ],
         "recent": [row_dict(r) for r in ledger.recent_requests(conn, recent)],
         "note": "Antigravity token counts are inferred from an unlabeled context counter and are kept out of exact totals; Google exposes no local limit signal.",
+    }
+
+
+def _efficiency_key(row: sqlite3.Row, dimension: str) -> str:
+    """A display-only drilldown key.  Keep the original identifiers in the ledger.
+
+    Session IDs are intentionally not shortened here: callers decide how much of an
+    already-local identifier to present, and HTML rendering escapes it.
+    """
+    if dimension == "session":
+        return f"{row['provider']} {row['session_id'] or '?'}"
+    return f"{row['provider']} {row['model'] or '?'} @ {row['effort'] or '?'}"
+
+
+def _anchor(key: str) -> str:
+    return "efficiency-session-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:12]
+
+
+def efficiency_rows(rows: Sequence[sqlite3.Row], dimension: str) -> list[dict]:
+    """Normalize request accounting for dashboard drilldowns without changing ledger totals.
+
+    Codex's recorded input includes cache tokens.  The presentation therefore subtracts
+    cache read/write once for its uncached-input column.  Providers with inferred input
+    retain unknown exact token fields instead of turning an unknown into zero.
+    """
+    groups: dict[str, dict] = {}
+    for row in rows:
+        if row["kind"] != ledger.REQUEST:
+            continue
+        key = _efficiency_key(row, dimension)
+        item = groups.setdefault(key, {
+            "key": key, "anchor": _anchor(key) if dimension == "session" else None,
+            "provider": row["provider"], "requests": 0, "uncached_input": 0,
+            "cached_input": 0, "output": 0, "reasoning": 0,
+            "uncached_input_known": True, "cached_input_known": True,
+            "output_known": True, "reasoning_known": True, "total_known": True,
+            "exact_requests": 0, "inferred_requests": 0,
+            "tokens_per_request": [],
+        })
+        item["requests"] += 1
+        if row["input_tokens_inferred"] is not None:
+            item["inferred_requests"] += 1
+            item["uncached_input_known"] = item["cached_input_known"] = False
+            item["output_known"] = item["reasoning_known"] = item["total_known"] = False
+            continue
+        input_value, read_value, write_value = row["input_tokens"], row["cache_read_tokens"], row["cache_write_tokens"]
+        output_value, reasoning_value, total_value = row["output_tokens"], row["reasoning_tokens"], row["total_tokens"]
+        if input_value is None:
+            item["uncached_input_known"] = False
+        # Some adapters omit an absent cache-write field; a reported cache-read is
+        # still enough to present cached input.  When neither exists, it is unknown.
+        if read_value is None and write_value is None:
+            item["cached_input_known"] = False
+        if output_value is None:
+            item["output_known"] = False
+        if reasoning_value is None:
+            item["reasoning_known"] = False
+        if total_value is None:
+            item["total_known"] = False
+        input_tokens = int(input_value or 0)
+        cached = int(read_value or 0) + int(write_value or 0)
+        # Codex's input field is inclusive.  Other providers' fields are kept as
+        # reported because their cache values are separately accounted by the ledger.
+        uncached = max(0, input_tokens - cached) if row["provider"] == "codex" else input_tokens
+        output = int(output_value or 0)
+        reasoning = int(reasoning_value or 0)
+        item["uncached_input"] += uncached
+        item["cached_input"] += cached
+        item["output"] += output
+        item["reasoning"] += reasoning
+        item["exact_requests"] += 1
+        if total_value is not None:
+            item["tokens_per_request"].append(int(total_value))
+
+    out = []
+    for item in groups.values():
+        values = sorted(item.pop("tokens_per_request"))
+        median = None
+        if values:
+            mid = len(values) // 2
+            median = values[mid] if len(values) % 2 else (values[mid - 1] + values[mid]) / 2
+        for field in ("uncached_input", "cached_input", "output", "reasoning"):
+            if not item.pop(field + "_known"):
+                item[field] = None
+        total_known = item.pop("total_known")
+        item["median_tokens_per_request"] = median
+        # Reasoning is a subset of output, so use output as the unambiguous denominator.
+        item["reasoning_share_of_output_pct"] = (
+            round(100 * item["reasoning"] / item["output"], 1)
+            if item["reasoning"] is not None and item["output"] not in (None, 0) else None
+        )
+        if not total_known:
+            item["median_tokens_per_request"] = None
+        item["exact"] = item["inferred_requests"] == 0
+        out.append(item)
+    return sorted(out, key=lambda item: (-item["requests"], item["key"]))
+
+
+def efficiency_payload(conn: sqlite3.Connection, now: datetime | None = None, days: int = 7) -> dict:
+    """Dashboard-ready, local-ledger efficiency drilldowns for the rolling range."""
+    now = now or now_utc()
+    rows = ledger.rows(conn, since=now - timedelta(days=days), kind=ledger.REQUEST)
+    sessions = efficiency_rows(rows, "session")
+    insights = []
+    for field, label in (("uncached_input", "highest uncached input"), ("median_tokens_per_request", "largest median tokens per request"), ("reasoning", "largest reasoning-token contribution")):
+        candidates = [row for row in sessions if isinstance(row.get(field), (int, float))]
+        if candidates:
+            chosen = max(candidates, key=lambda row: row[field])
+            insights.append({"label": label, "value": chosen[field], "session_anchor": chosen["anchor"]})
+    return {
+        "generated_at": iso(now), "days": days,
+        "by_session": sessions,
+        "by_model_effort": efficiency_rows(rows, "model_effort"),
+        "insights": insights,
+        "note": "Uncached input is normalized for presentation only. Antigravity exact token fields remain unknown.",
     }

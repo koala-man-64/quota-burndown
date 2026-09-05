@@ -62,39 +62,27 @@ class Sample:
 
 
 class _Lock:
-    """Exclusive-create lock file; best effort, never blocks for long."""
+    """OS-owned sample lock; a live owner is never evicted by wall-clock age."""
 
     def __init__(self, path: Path, timeout: float = 3.0, stale_after: float = 30.0):
-        self.path = path
-        self.timeout = timeout
-        self.stale_after = stale_after
-        self.fd: int | None = None
+        self.path, self.timeout, self.lease = path, timeout, None
 
     def __enter__(self):
+        from .service import WriterLease
         deadline = time.monotonic() + self.timeout
         while True:
             try:
-                self.fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                self.lease = WriterLease(self.path.parent, self.path.name)
+                self.lease.__enter__()
                 return self
-            except FileExistsError:
-                try:
-                    if time.time() - self.path.stat().st_mtime > self.stale_after:
-                        self.path.unlink()
-                        continue
-                except OSError:
-                    pass
-                if time.monotonic() > deadline:
-                    self.fd = None
-                    return self
+            except RuntimeError:
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("quota sample store is locked by another writer") from None
                 time.sleep(0.05)
 
     def __exit__(self, *exc):
-        if self.fd is not None:
-            os.close(self.fd)
-            try:
-                self.path.unlink()
-            except OSError:
-                pass
+        if self.lease:
+            self.lease.__exit__(*exc)
 
 
 class Store:
