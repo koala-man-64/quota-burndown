@@ -79,6 +79,19 @@ def test_idle_window_gets_history_only():
     assert data.resets == [charts.ResetMark(reset, False)]
 
 
+def test_spark_idle_sentinel_has_no_timer_pace_or_poll_history():
+    readings = [
+        Sample(NOW - timedelta(minutes=10), "codex", "5h:spark", 0, NOW + timedelta(hours=4, minutes=50), 300, "app-server"),
+        Sample(NOW - timedelta(minutes=5), "codex", "5h:spark", 0, NOW + timedelta(hours=4, minutes=55), 300, "app-server"),
+        Sample(NOW, "codex", "5h:spark", 0, NOW + timedelta(hours=5), 300, "app-server"),
+    ]
+    bd = current(readings, {"codex:5h:spark": readings[-1]}, NOW)[0]
+    data = charts.build(bd, readings, NOW)
+    assert data is not None and not data.active and data.pace is None and data.projection is None
+    assert data.resets == []
+    assert [point.used for segment in data.segments for point in segment.points] == [0]
+
+
 def test_projection_geometry_by_status():
     reset = NOW + timedelta(hours=2)
     over = [sample(reset - timedelta(hours=3), 5.0, reset), sample(NOW, 90.0, reset)]

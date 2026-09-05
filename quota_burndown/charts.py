@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from .model import Burndown, find_instance, group_instances
+from .model import Burndown, canonical_samples, find_instance, group_instances
 from .store import Sample
 from .util import fmt_local, to_local
 
@@ -166,7 +166,9 @@ def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | No
               and bd.resets_at is not None and bd.resets_at > now)
     span_end = bd.resets_at if active else now
     span_start = span_end - span
-    history = _dedupe([s for s in samples if s.key == bd.key] + list(bd.samples))
+    # Apply the same provider normalization as the burndown selection. In particular,
+    # Spark's rolling idle sentinel must not be reconstructed as dozens of windows here.
+    history = _dedupe(canonical_samples([s for s in samples if s.key == bd.key] + list(bd.samples)))
     all_instances = group_instances(history).get(bd.key, [])
     instances = [
         inst for inst in all_instances
