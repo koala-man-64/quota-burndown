@@ -1,8 +1,7 @@
 """Data behind each window's usage chart: dates and percentages only, no markup, no pixels.
 
-One chart per window shows % used rising over time: the last 24 hours for windows up to a
-day long, the last 7 days for longer ones, extended to the right as far as the current
-window's reset so its pace line and projection fit. Every window instance (one 5-hour
+One chart per window spans exactly two allowance intervals, ending at the active
+window's reset or at now when no active window is known. Every window instance (one 5-hour
 session, one 7-day period) is its own segment; segments never join across a reset, and
 past instances end at their last reading instead of being held flat.
 """
@@ -16,15 +15,6 @@ from .store import Sample
 from .util import fmt_local, to_local
 
 TARGET_POINTS = 300
-SPANS = {
-    "24h": timedelta(hours=24),
-    "3d": timedelta(days=3),
-    "7d": timedelta(days=7),
-    "14d": timedelta(days=14),
-    "30d": timedelta(days=30),
-}
-SPAN_LABELS = {"24h": "last 24 hours", "3d": "last 3 days", "7d": "last 7 days", "14d": "last 14 days", "30d": "last 30 days"}
-SHORT_SPAN_MAX_MIN = 1440
 ACTIVE_STATUSES = ("over", "under", "on-pace", "early", "exhausted")
 PROJECTED_STATUSES = ("over", "under", "on-pace")
 
@@ -89,11 +79,16 @@ class ChartData:
 
 
 def default_span_key(window_min: int) -> str:
-    return "24h" if window_min <= SHORT_SPAN_MAX_MIN else "7d"
+    minutes = 2 * window_min
+    if minutes % 1440 == 0:
+        return f"{minutes // 1440}d"
+    if minutes % 60 == 0:
+        return f"{minutes // 60}h"
+    return f"{minutes}m"
 
 
 def span_for(window_min: int) -> timedelta:
-    return SPANS[default_span_key(window_min)]
+    return timedelta(minutes=2 * window_min)
 
 
 def bucket(points: list[Point], width: timedelta) -> list[Point]:
@@ -120,10 +115,11 @@ def bucket(points: list[Point], width: timedelta) -> list[Point]:
 
 
 def x_ticks(span_start: datetime, span_end: datetime, span: timedelta) -> list[Tick]:
-    """Clock-aligned local ticks whose spacing follows the plotted span: 6 hours up to a day
-    and a half, 12 hours up to 4 days, then 1, 2 or 5 whole days."""
+    """Clock-aligned local ticks with spacing suited to the exact plotted domain."""
     local_start = to_local(span_start)
-    if span <= timedelta(hours=36):
+    if span <= timedelta(hours=12):
+        step, fmt, hours = timedelta(hours=2), "%H:%M", 2
+    elif span <= timedelta(hours=36):
         step, fmt, hours = timedelta(hours=6), "%H:%M", 6
     elif span <= timedelta(days=4):
         step, fmt, hours = timedelta(hours=12), "%a %H:%M", 12
@@ -160,16 +156,20 @@ def _dedupe(samples: list[Sample]) -> list[Sample]:
 
 def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | None = None) -> ChartData | None:
     """Chart data for one window from its burndown and its sample history (the burndown's
-    own samples are merged in, so the latest reading is always present). `span_key` picks
-    one of SPANS; the default follows the window length. None when there is nothing to draw."""
-    span_key = span_key or default_span_key(bd.window_min)
-    span = SPANS[span_key]
-    span_start = now - span
-    active = bd.status in ACTIVE_STATUSES and bd.start is not None and bd.resets_at is not None
-    span_end = max(now, bd.resets_at) if active else now
+    own samples are merged in). Legacy `span_key` arguments cannot override the fixed
+    two-cycle domain. None when the interval is unknown or there is nothing to draw."""
+    if bd.window_min <= 0:
+        return None
+    span_key = default_span_key(bd.window_min)
+    span = span_for(bd.window_min)
+    active = (bd.status in ACTIVE_STATUSES and bd.start is not None
+              and bd.resets_at is not None and bd.resets_at > now)
+    span_end = bd.resets_at if active else now
+    span_start = span_end - span
     history = _dedupe([s for s in samples if s.key == bd.key] + list(bd.samples))
+    all_instances = group_instances(history).get(bd.key, [])
     instances = [
-        inst for inst in group_instances(history).get(bd.key, [])
+        inst for inst in all_instances
         if inst.samples and inst.samples[-1].ts >= span_start and inst.samples[0].ts <= span_end
     ]
     current_inst = find_instance(instances, bd.resets_at) if active else None
@@ -178,14 +178,16 @@ def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | No
     segments: list[Segment] = []
     resets: list[ResetMark] = []
     for inst in instances:
-        inside = [Point(s.ts, s.used) for s in inst.samples if s.ts >= span_start]
+        inside = [Point(s.ts, s.used) for s in inst.samples if span_start <= s.ts <= span_end]
         earlier = [s for s in inst.samples if s.ts < span_start]
         if earlier:
             inside.insert(0, Point(span_start, earlier[-1].used))
         if inside:
             segments.append(Segment(bucket(inside, width), inst is current_inst))
-        if span_start <= inst.resets_at <= span_end:
-            resets.append(ResetMark(inst.resets_at, inst is current_inst))
+    # A reset on a domain boundary remains visible even when the preceding
+    # instance's final reading is outside the plotted domain.
+    resets = [ResetMark(inst.resets_at, inst is current_inst) for inst in all_instances
+              if span_start <= inst.resets_at <= span_end]
     # Readings with no reset time (idle 0 % readings, or a weekly reading before any reset is
     # known) belong to no instance; draw them too, as runs split at long gaps.
     loose = [Point(s.ts, s.used) for s in history if s.resets_at is None and span_start <= s.ts <= span_end]
@@ -217,7 +219,7 @@ def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | No
         span_start=span_start, span_end=span_end, now=now,
         segments=segments, resets=resets, pace=pace, projection=projection,
         x_ticks=x_ticks(span_start, span_end, span),
-        span_key=span_key, span_label=SPAN_LABELS[span_key],
+        span_key=span_key, span_label=f"two cycles ({span_key})",
     )
 
 

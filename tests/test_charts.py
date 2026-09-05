@@ -46,11 +46,11 @@ def test_bucket_keeps_first_point_and_peaks():
 def test_segments_never_join_across_a_reset_and_resets_are_marked():
     history, (reset_a, reset_b, reset_c) = five_hour_history()
     data = charts.build(burndown_for(history), history, NOW)
-    assert data is not None and data.span_label == "last 24 hours"
-    assert data.span_start == NOW - timedelta(hours=24) and data.span_end == reset_c
-    assert [seg.current for seg in data.segments] == [False, False, True]
+    assert data is not None and data.span_label == "two cycles (10h)"
+    assert data.span_start == reset_c - timedelta(hours=10) and data.span_end == reset_c
+    assert [seg.current for seg in data.segments] == [False, True]
     assert all(all(b.used >= a.used for a, b in zip(seg.points, seg.points[1:])) for seg in data.segments)
-    assert [(r.ts, r.current) for r in data.resets] == [(reset_a, False), (reset_b, False), (reset_c, True)]
+    assert [(r.ts, r.current) for r in data.resets] == [(reset_b, False), (reset_c, True)]
     assert data.end_point is not None and data.end_point.used == 170 / 4
     assert data.pace is not None and data.pace.start == (reset_c - timedelta(minutes=300), 0.0) and data.pace.end == (reset_c, 100.0)
     assert data.projection is not None and data.projection.start == (NOW, 170 / 4)
@@ -62,7 +62,7 @@ def test_leading_point_is_carried_in_for_a_clipped_window():
     bd = burndown_for(history)
     data = charts.build(bd, history, NOW)
     seg = data.segments[0]
-    assert seg.points[0] == charts.Point(data.span_start, 5.0)  # the last reading before the span, pinned to its edge
+    assert seg.points[0] == charts.Point(data.span_start, 30.0)  # the last reading before the span, pinned to its edge
     assert seg.points[-1].used == 60.0
 
 
@@ -96,6 +96,9 @@ def test_projection_geometry_by_status():
 
 
 def test_ticks_are_clock_aligned_and_follow_the_span():
+    ten_hours = charts.x_ticks(NOW - timedelta(hours=10), NOW, timedelta(hours=10))
+    assert 5 <= len(ten_hours) <= 6
+    assert all(to_local(t.ts).minute == 0 and to_local(t.ts).hour % 2 == 0 for t in ten_hours)
     short = charts.x_ticks(NOW - timedelta(hours=24), NOW + timedelta(hours=2), timedelta(hours=24))
     assert 4 <= len(short) <= 5
     assert all(to_local(t.ts).minute == 0 and to_local(t.ts).hour % 6 == 0 for t in short)
@@ -109,19 +112,19 @@ def test_ticks_are_clock_aligned_and_follow_the_span():
     assert 7 <= len(fortnight) <= 8 and all(to_local(t.ts).hour == 0 for t in fortnight)
     month = charts.x_ticks(NOW - timedelta(days=30), NOW, timedelta(days=30))
     assert 6 <= len(month) <= 7 and all(to_local(t.ts).hour == 0 for t in month)
-    assert charts.span_for(300) == timedelta(hours=24) and charts.span_for(10080) == timedelta(days=7)
-    assert charts.default_span_key(300) == "24h" and charts.default_span_key(10080) == "7d"
+    assert charts.span_for(300) == timedelta(hours=10) and charts.span_for(10080) == timedelta(days=14)
+    assert charts.default_span_key(300) == "10h" and charts.default_span_key(10080) == "14d"
 
 
-def test_build_honours_a_chosen_span():
+def test_legacy_range_arguments_cannot_override_the_two_cycle_domain():
     history, (reset_a, reset_b, reset_c) = five_hour_history()
     bd = burndown_for(history)
-    for key, span in charts.SPANS.items():
+    for key in (None, "24h", "3d", "7d", "14d", "30d"):
         data = charts.build(bd, history, NOW, key)
-        assert data.span_key == key and data.span_label == charts.SPAN_LABELS[key]
-        assert data.span_start == NOW - span and data.span_end == reset_c
+        assert data.span_key == "10h" and data.span_label == "two cycles (10h)"
+        assert data.span_start == reset_c - timedelta(hours=10) and data.span_end == reset_c
         assert [seg.current for seg in data.segments][-1] is True
-    assert charts.build(bd, history, NOW).span_key == "24h"
+    assert charts.build(bd, history, NOW).span_key == "10h"
 
 
 def test_weekly_span_and_no_samples():
@@ -129,7 +132,8 @@ def test_weekly_span_and_no_samples():
     history = [sample(NOW - timedelta(days=d), 10.0 * (6 - d), reset, "7d", 10080) for d in range(6, 0, -1)]
     bd = burndown_for(history, "claude:7d")
     data = charts.build(bd, history, NOW)
-    assert data.span_key == "7d" and data.span_label == "last 7 days" and data.span_end == reset and len(data.segments) == 1
+    assert data.span_key == "14d" and data.span_label == "two cycles (14d)" and data.span_end == reset and len(data.segments) == 1
+    assert data.span_end - data.span_start == timedelta(days=14)
     assert charts.build(bd, [], NOW) is not None  # the burndown's own samples still draw
     bare = current([], {"claude:7d": sample(NOW, 5.0, None, "7d", 10080)}, NOW)[0]
     data = charts.build(bare, [], NOW)
@@ -141,9 +145,39 @@ def test_weekly_span_and_no_samples():
 def test_reset_less_readings_form_runs_split_at_gaps():
     reset = NOW + timedelta(hours=1)
     history = [
-        sample(NOW - timedelta(hours=20), 0.0, None), sample(NOW - timedelta(hours=19), 0.0, None),   # idle run
+        sample(NOW - timedelta(hours=8), 0.0, None), sample(NOW - timedelta(hours=7, minutes=45), 0.0, None),   # idle run
         sample(NOW - timedelta(hours=4), 10.0, reset), sample(NOW - timedelta(minutes=30), 40.0, reset),  # live window
-        sample(NOW - timedelta(hours=10), 0.0, None),  # a lone idle reading, hours from the others
+        sample(NOW - timedelta(hours=5), 0.0, None),  # a lone idle reading, hours from the others
     ]
     data = charts.build(burndown_for(history), history, NOW)
     assert [(len(seg.points), seg.current) for seg in data.segments] == [(2, False), (1, False), (2, True)]
+
+
+def test_two_cycle_domain_for_exhausted_expired_and_unknown_reset_windows():
+    for window, minutes in (("5h", 300), ("7d", 10080)):
+        for reset, used in ((NOW + timedelta(hours=1), 100), (NOW - timedelta(minutes=10), 50), (None, 0)):
+            reading = sample(NOW - timedelta(minutes=20), used, reset, window, minutes)
+            bd = current([reading], {reading.key: reading}, NOW)[0]
+            data = charts.build(bd, [reading], NOW)
+            assert data is not None
+            assert data.span_end == (reset if bd.status == "exhausted" else NOW)
+            assert data.span_end - data.span_start == timedelta(minutes=2 * minutes)
+            assert all(data.span_start <= tick.ts <= data.span_end for tick in data.x_ticks)
+
+
+def test_domain_clips_samples_and_keeps_reset_marks_at_both_boundaries():
+    end = NOW + timedelta(hours=2)
+    start = end - timedelta(hours=10)
+    history = [sample(start - timedelta(hours=1), 100, start),
+               sample(start - timedelta(minutes=30), 5, end),
+               sample(start + timedelta(minutes=30), 10, end),
+               sample(NOW, 40, end)]
+    bd = burndown_for(history)
+    future = sample(end + timedelta(hours=1), 90, end)
+    all_readings = history + [future]
+    data = charts.build(bd, all_readings, NOW)
+    assert data.span_start == start and data.span_end == end
+    assert data.resets == [charts.ResetMark(start, False), charts.ResetMark(end, True)]
+    assert data.segments[0].points[0] == charts.Point(start, 5)
+    assert all(start <= point.ts <= end and point.used != 90 for segment in data.segments for point in segment.points)
+    assert all_readings == history + [future]  # Domain clipping never edits stored history.

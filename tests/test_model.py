@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from quota_burndown.model import WindowInstance, compute, current, find_instance, group_instances
+from quota_burndown.model import WindowInstance, canonical_samples, compute, current, find_instance, group_instances
 from quota_burndown.store import Sample
 
 UTC = timezone.utc
@@ -117,3 +117,46 @@ def test_current_without_history_still_computes():
     now = START + timedelta(minutes=60)
     out = current([], {"claude:5h": sample(now, 20.0)}, now)
     assert out[0].pace == 20.0 and out[0].status == "on-pace"
+
+
+def test_claude_aliases_use_newest_state_in_either_order():
+    now = START + timedelta(minutes=60)
+    entries = [
+        sample(now - timedelta(minutes=30), 100, source="desktop"),
+        sample(now, 0, None, "300m:Claude", source="desktop-history"),
+        sample(now - timedelta(minutes=30), 24, RESET, "7d", 10080, source="desktop"),
+        sample(now, 25, RESET, "10080m:claude", 10080, source="desktop-history"),
+        sample(now, 70, RESET, "7d:fable", 10080),
+    ]
+    for ordered in (entries, list(reversed(entries))):
+        result = {bd.key: bd for bd in current(ordered, {s.key: s for s in ordered}, now)}
+        assert set(result) == {"claude:5h", "claude:7d", "claude:7d:fable"}
+        assert result["claude:5h"].used == 0 and result["claude:5h"].status == "idle"
+        assert result["claude:5h"].sample_ts == now
+        assert result["claude:7d"].used == 25
+        assert result["claude:7d:fable"].used == 70
+
+
+def test_claude_duplicate_timestamp_prefers_direct_then_canonical_reading():
+    now = START + timedelta(minutes=60)
+    canonical = sample(now, 40, source="desktop")
+    for alias_source, expected in (("desktop-history", 40), ("statusline", 45)):
+        alias = sample(now, 45, RESET + timedelta(seconds=60), window="300m:claude", source=alias_source)
+        for ordered in ([canonical, alias], [alias, canonical]):
+            result = current(ordered, {s.key: s for s in ordered}, now)
+            assert len(result) == 1 and result[0].used == expected
+            assert len(result[0].samples) == 1
+
+
+def test_claude_same_timestamp_retains_distinct_historical_reset_boundaries():
+    now = START + timedelta(minutes=60)
+    old = sample(now, 100, now - timedelta(minutes=5), source="desktop")
+    new = sample(now, 20, now + timedelta(hours=4), "300m:claude", source="statusline")
+    for ordered in ([old, new], [new, old]):
+        history = canonical_samples(ordered)
+        instances = group_instances(history)["claude:5h"]
+        assert len(instances) == 2
+        assert [inst.resets_at for inst in instances] == [old.resets_at, new.resets_at]
+        result = current(history, {s.key: s for s in ordered}, now)
+        assert len(result) == 1 and result[0].used == 20
+        assert result[0].resets_at == new.resets_at

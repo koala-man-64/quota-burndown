@@ -78,12 +78,19 @@ def sort_key(bd: Burndown) -> tuple:
 
 
 def canonical_sample(sample: Sample) -> Sample | None:
-    """Fold legacy per-version Codex keys into the shared standard Codex allowance pool.
+    """Fold provider aliases into their historical allowance keys.
 
     Older collectors stored numeric GPT versions independently (for example
     ``7d:gpt-5.6`` and ``7d:gpt-6``), even though they report the same limit. Preserve the
     append-only store and normalize those readings at the model boundary.
     """
+    if sample.provider == "claude":
+        aliases = {"300m": ("5h", 300), "300m:claude": ("5h", 300),
+                   "10080m": ("7d", 10080), "10080m:claude": ("7d", 10080)}
+        alias = aliases.get(sample.window.lower())
+        if alias and sample.window_min == alias[1]:
+            return replace(sample, window=alias[0])
+        return sample
     if sample.provider != "codex":
         return sample
     base, separator, scope = sample.window.partition(":")
@@ -99,6 +106,34 @@ def canonical_sample(sample: Sample) -> Sample | None:
             return None
         return replace(sample, window=f"{base}:codex")
     return sample
+
+
+def canonical_samples(samples: list[Sample], *, preserve_resets: bool = True) -> list[Sample]:
+    """Merge Claude alias observations without rewriting storage.
+
+    At equal timestamps prefer direct readings, then canonical keys. This keeps an
+    alias from adding a second, potentially conflicting point to the same timeline.
+    History retains distinct reset boundaries; latest selection resolves across them.
+    Model-specific Claude limits and other providers retain their existing history.
+    """
+    out = []
+    claude = {}
+    source_rank = {"api": 4, "statusline": 4, "app-server": 4,
+                   "desktop": 1, "desktop-history": 1}
+    for raw in samples:
+        sample = canonical_sample(raw)
+        if sample is None:
+            continue
+        if sample.provider != "claude" or sample.window not in ("5h", "7d"):
+            out.append(sample)
+            continue
+        key = sample.key, sample.ts, sample.resets_at if preserve_resets else None
+        priority = source_rank.get(raw.source, 0), raw.window == sample.window
+        prior = claude.get(key)
+        if prior is None or priority > prior[0]:
+            claude[key] = priority, sample
+    out.extend(record[1] for record in claude.values())
+    return sorted(out, key=lambda sample: sample.ts)
 
 
 def group_instances(samples: list[Sample]) -> dict[str, list[WindowInstance]]:
@@ -190,12 +225,9 @@ def idle(sample: Sample, now: datetime) -> Burndown:
 
 def current(samples: list[Sample], latest: dict[str, Sample], now: datetime) -> list[Burndown]:
     """One burndown per window key, built from the latest reading and that window's history."""
-    samples = [normalized for sample in samples if (normalized := canonical_sample(sample)) is not None]
+    samples = canonical_samples(samples)
     canonical_latest: dict[str, Sample] = {}
-    for sample in latest.values():
-        sample = canonical_sample(sample)
-        if sample is None:
-            continue
+    for sample in canonical_samples(list(latest.values()), preserve_resets=False):
         prior = canonical_latest.get(sample.key)
         if prior is None or sample.ts >= prior.ts:
             canonical_latest[sample.key] = sample
@@ -213,6 +245,10 @@ def current(samples: list[Sample], latest: dict[str, Sample], now: datetime) -> 
             inst = WindowInstance(key, last.provider, last.window, last.window_min, last.resets_at, [last])
         elif inst.samples[-1].ts < last.ts:
             inst.samples.append(last)
+        elif last.provider == "claude" and last.window in ("5h", "7d") and inst.samples[-1].ts == last.ts:
+            # Nearby reset boundaries can cluster into one instance. Keep the
+            # selected latest reading authoritative when their timestamps tie.
+            inst.samples = [s for s in inst.samples if s.ts != last.ts] + [last]
         out.append(compute(inst, now))
     out.sort(key=sort_key)
     return out

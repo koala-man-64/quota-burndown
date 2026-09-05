@@ -1,8 +1,8 @@
 """Claude Code statusLine entry point.
 
-Prints one compact line from latest.json, the newest reading per window that the collector
-wrote. It is display only: the JSON Claude Code pipes on stdin is ignored, nothing is sampled
-and nothing is written, so the status bar never becomes a scheduled process of its own.
+Prints a compact line from latest.json and captures only supported quota fields
+from stdin into a bounded handoff for the live service. It performs no network
+requests; identical status-line redraws preserve the original observation time.
 """
 from __future__ import annotations
 
@@ -51,6 +51,7 @@ def format_line(burndowns: list[Burndown], color: bool = True) -> str:
 
 def run(stdin_text: str, store: Store, now: datetime | None = None, color: bool = True) -> str:
     """The status line for whatever latest.json holds. `stdin_text` is accepted so Claude Code's
-    payload can be drained, and otherwise ignored."""
-    del stdin_text
+    quota payload is handed off locally without collecting or blocking on the service."""
+    from .handoff import capture
+    capture(stdin_text, store.paths.home)
     return format_line(from_latest(store.latest(), now or now_utc()), color=color)
