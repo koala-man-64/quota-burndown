@@ -77,6 +77,27 @@ def freshness_seconds(source: str) -> int:
     return 1200 if source in ("desktop", "claude_desktop", "desktop-history") else 60
 
 
+SOURCE_RANK = {"app-server": 4, "statusline": 3, "rollout": 2, "desktop-history": 1}
+_RESET_RANK = {"reported": 2, "inferred": 1, "unknown": 0}
+
+
+def downgrades_reading(item: Observation, prior: Observation, now: datetime) -> bool:
+    """A weaker source must not replace a still-valid reading with worse reset information.
+
+    The desktop-history collector runs on its own cadence, so it always looks newer than the
+    status-line reading it duplicates.  Recency alone would let it discard a provider-reported
+    reset time, downgrade the reset provenance and erase the remaining budget it implies.
+    Sources that report resets just as well (rollout against app-server) still take over
+    normally, and once the better reading expires the weaker source resumes filling the pool.
+    """
+    return (
+        prior.used_pct is not None
+        and SOURCE_RANK.get(item.source, 0) < SOURCE_RANK.get(prior.source, 0)
+        and _RESET_RANK.get(item.reset_provenance, 0) < _RESET_RANK.get(prior.reset_provenance, 0)
+        and now < prior.observed_at + timedelta(seconds=freshness_seconds(prior.source))
+    )
+
+
 def provider_groups(pools: list[dict]) -> list[dict]:
     """Requested display slots reference observations without creating quota pools.
 
@@ -260,7 +281,8 @@ class CapacityState:
         self.publish()
 
     def ingest(self, items: list[Observation]) -> bool:
-        items = [i for i in items if valid_observation(i, self.clock())]
+        now = self.clock()
+        items = [i for i in items if valid_observation(i, now)]
         changed = False
         self.accepted = []
         # A complete native reading reconciles even windows recovered from disk.
@@ -296,9 +318,10 @@ class CapacityState:
                     continue
                 if item.observation_id and item.observation_id == prior.observation_id:
                     continue
+                if downgrades_reading(item, prior, now):
+                    continue
                 if item.observed_at == prior.observed_at:
-                    rank = {"app-server": 4, "statusline": 3, "rollout": 2, "desktop-history": 1}
-                    if rank.get(item.source, 0) <= rank.get(prior.source, 0):
+                    if SOURCE_RANK.get(item.source, 0) <= SOURCE_RANK.get(prior.source, 0):
                         continue
                     history.pop()
                 reset_changed = item.resets_at != prior.resets_at and (

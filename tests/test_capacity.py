@@ -104,3 +104,52 @@ def test_unknown_and_shared_reserve_policy(tmp_path):
     assert pool(state)["allowance_state"] == "reserve_reached"
     assert pool(state)["windows"][0]["usable_pct"] == 0
     with pytest.raises(ValueError): state.set_policy(True)
+
+
+def claude_statusline(**kw):
+    values = dict(provider="claude", account_scope="acct-local", limit_id="claude", window="300m",
+                  window_min=300, used_pct=4, resets_at=NOW + timedelta(hours=3),
+                  observed_at=NOW, received_at=NOW, source="statusline", reset_provenance="reported")
+    return Observation(**(values | kw))
+
+
+def claude_pool(state):
+    return next(p for p in state.publish()["pools"] if p["provider"] == "claude")
+
+
+def test_desktop_history_does_not_downgrade_a_valid_statusline_reading(tmp_path):
+    clock = [NOW]
+    state = CapacityState(tmp_path, clock=lambda: clock[0])
+    state.ingest([claude_statusline()])
+    # The desktop collector runs on its own cadence, so its reading always looks newer.
+    stale_desktop = claude_statusline(source="desktop-history", used_pct=5, resets_at=None,
+                                      reset_provenance="unknown", observed_at=NOW + timedelta(seconds=30),
+                                      received_at=NOW + timedelta(seconds=30))
+    clock[0] = NOW + timedelta(seconds=30)
+    assert state.ingest([stale_desktop]) is False
+    window = claude_pool(state)["windows"][0]
+    assert (window["source"], window["reset_provenance"]) == ("statusline", "reported")
+    assert (window["used_pct"], window["remaining_pct"], window["usable_pct"]) == (4.0, 96.0, 86.0)
+    assert window["allowance_state"] == "available"
+
+    # An inferred reset is still a downgrade of a reported one.
+    clock[0] = NOW + timedelta(seconds=45)
+    assert state.ingest([replace(stale_desktop, resets_at=NOW + timedelta(hours=5), reset_provenance="inferred",
+                                 observed_at=clock[0], received_at=clock[0])]) is False
+    assert claude_pool(state)["windows"][0]["source"] == "statusline"
+
+    # Once the status-line reading expires the weaker source takes over again.
+    clock[0] = NOW + timedelta(seconds=90)
+    assert state.ingest([replace(stale_desktop, observed_at=clock[0], received_at=clock[0])]) is True
+    window = claude_pool(state)["windows"][0]
+    assert (window["source"], window["used_pct"], window["reset_provenance"]) == ("desktop-history", 5.0, "unknown")
+    assert window["remaining_pct"] is None and window["allowance_state"] == "unknown"
+
+
+def test_equal_reset_provenance_sources_still_take_over_by_recency(tmp_path):
+    """Codex rollout readings report resets as well as the app server, so they are not held back."""
+    state = CapacityState(tmp_path, clock=lambda: NOW + timedelta(seconds=10))
+    state.ingest([reading(source="app-server")])
+    assert state.ingest([reading(source="rollout", used_pct=41, observed_at=NOW + timedelta(seconds=5),
+                                 received_at=NOW + timedelta(seconds=5))]) is True
+    assert pool(state)["windows"][0]["source"] == "rollout"
