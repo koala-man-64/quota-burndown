@@ -77,6 +77,78 @@ def freshness_seconds(source: str) -> int:
     return 1200 if source in ("desktop", "claude_desktop", "desktop-history") else 60
 
 
+def provider_groups(pools: list[dict]) -> list[dict]:
+    """Requested display slots reference observations without creating quota pools.
+
+    A missing slot has no provider reading, timestamp or independent allowance.
+    Additional reported windows stay visible even when they are not in this layout.
+    """
+    specifications = (
+        ("codex", "Codex", (
+            ("general-weekly", "General weekly", "codex", 10080),
+            ("spark-five-hour", "GPT-5.3-Codex-Spark · 5-hour", "codex_bengalfox", 300),
+            ("spark-weekly", "GPT-5.3-Codex-Spark · weekly", "codex_bengalfox", 10080),
+        )),
+        ("antigravity", "Antigravity / Gemini", (
+            ("gemini-five-hour", "Gemini · 5-hour", None, 300),
+            ("gemini-weekly", "Gemini · weekly", None, 10080),
+        )),
+        ("claude", "Claude", (
+            ("current-session", "Current session · 5-hour", "claude", 300),
+            ("all-models-weekly", "All models · weekly", "claude", 10080),
+            ("fable-weekly", "Fable · weekly", None, 10080),
+        )),
+    )
+    groups = []
+    for provider, title, slots in specifications:
+        observed_pools = [pool for pool in pools if pool.get("provider") == provider]
+        limits, matched = [], set()
+
+        def entry(slot, label, minutes, pool=None, window=None):
+            unavailable = window is None
+            if unavailable:
+                window = dict.fromkeys(("used_pct", "remaining_pct", "usable_pct", "resets_at",
+                    "observed_at", "received_at", "valid_until", "freshness_ttl_s", "source_age_s",
+                    "upstream_reporting_delay_s", "whole_window_rate_pph", "recent_rate_pph",
+                    "conservative_rate_pph", "sustainable_rate_pph", "runway_minutes", "exhaust_at"))
+                window.update(window=f"{minutes}m", window_min=minutes, allowance_state="unknown",
+                    freshness="unknown", source="unavailable", reset_provenance="unknown",
+                    observation_time_provenance="unknown")
+            reason = None
+            if unavailable:
+                reason = "No reading for this limit from the configured provider sources."
+                if provider == "antigravity":
+                    reason = "Configured Antigravity sources report activity, not Gemini quota limits."
+                elif slot == "fable-weekly":
+                    reason = "Supported Claude status-line and desktop history sources do not report Fable weekly quota."
+            return {
+                "id": f"{provider}:{slot}" + (":" + pool["id"] if pool else ""),
+                "label": label, "pool_id": pool["id"] if pool else None,
+                "account_scope": pool.get("account_scope") if pool else None,
+                "account_scope_confidence": pool.get("account_scope_confidence", "unknown") if pool else "unknown",
+                "models": pool.get("models", []) if pool else [],
+                "mapping_confidence": pool.get("mapping_confidence", "unknown") if pool else "unknown",
+                "constraining_window": pool.get("constraining_window") if pool else None,
+                "window": copy.deepcopy(window), "availability_reason": reason,
+                "display_only": unavailable,
+            }
+
+        for slot, label, limit_id, minutes in slots:
+            relevant = [p for p in observed_pools if limit_id and p.get("limit_id") == limit_id]
+            for pool in relevant or [None]:
+                window = next((w for w in pool.get("windows", []) if w.get("window_min") == minutes), None) if pool else None
+                limits.append(entry(slot, label, minutes, pool, window))
+                if window is not None:
+                    matched.add((pool["id"], window["window"]))
+        for pool in observed_pools:
+            for window in pool.get("windows", []):
+                if (pool["id"], window["window"]) not in matched:
+                    limits.append(entry(f"reported-{pool['id']}-{window['window']}",
+                        f"{pool.get('label', pool['id'])} · {window['window']}", window["window_min"], pool, window))
+        groups.append({"provider": provider, "label": title, "limits": limits})
+    return groups
+
+
 def window_view(history: list[Observation], now: datetime, reserve: float, baseline: tuple[datetime, float] | None = None) -> dict:
     last = history[-1]
     used = last.used_pct
@@ -280,13 +352,15 @@ class CapacityState:
                 "generated_at": iso(now), "collector_health": copy.deepcopy(self.health),
                 "policy": {"reserve_pct": self.reserve_pct, "presets": [5, 10, 20]},
                 "pools": list(pools.values()), "unreported_in_flight_usage": "unknown",
+                "provider_groups": provider_groups(list(pools.values())),
                 "service_state": "running", "restored_from_disk": self.restored,
                 "provider_states": {p: "observed" if any(v["provider"] == p and v["windows"] for v in pools.values()) else "unknown"
                                     for p in ("codex", "claude", "antigravity")},
             }
             def signature(value):
                 result = copy.deepcopy(value)
-                for k in ("generated_at", "revision"):
+                # Grouped display is entirely derived from pools plus fixed slot labels.
+                for k in ("generated_at", "revision", "provider_groups"):
                     result.pop(k, None)
                 for pool in result.get("pools", []):
                     for window in pool["windows"]:

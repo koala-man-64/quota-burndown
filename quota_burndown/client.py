@@ -61,6 +61,8 @@ def read_capacity(home: Path, url: str | None = None) -> dict:
             pool["allowance_state"] = next((s for s in ("exhausted", "unknown", "reserve_reached", "available") if s in states), "unknown")
             fresh = {w["freshness"] for w in pool.get("windows", [])}
             pool["freshness"] = "unknown" if not fresh or "unknown" in fresh else "stale" if "stale" in fresh else "fresh"
+        from .capacity import provider_groups
+        snapshot["provider_groups"] = provider_groups(snapshot.get("pools", []))
         return snapshot
 
 

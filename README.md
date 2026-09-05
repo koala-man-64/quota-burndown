@@ -45,6 +45,8 @@ Sources: [Codex app-server](https://learn.chatgpt.com/docs/app-server), [Claude 
 
 Schema version 1 includes `instance_id`, monotonic per-instance `revision`, `generated_at`, `collector_health`, `provider_states`, `policy`, `pools`, and `unreported_in_flight_usage=unknown`. Replace state on reconnect; a new instance starts a new revision sequence. Disconnected disk reads retain source freshness independently of connectivity and clear forecasts.
 
+The additive `provider_groups` view presents the requested limit slots under Codex, Antigravity / Gemini, and Claude. Codex shows general weekly and Spark five-hour/weekly; Claude shows current-session five-hour, all-models weekly, and Fable weekly; Antigravity shows Gemini five-hour/weekly. Each observed slot references a real `pool_id` and window. Unsupported slots have null readings/timestamps and `display_only=true`; they create no independent allowance in `pools`. Additional provider-reported windows remain visible. Screenshots define labels and grouping, never current percentages. Configured Claude sources do not expose Fable weekly; configured Antigravity sources do not expose Gemini quota.
+
 A pool is keyed by provider, account scope and limit ID. Model names are memberships, never independent allowances. `account_scope_confidence`, `limit_id_provenance` and `mapping_confidence` distinguish reported identifiers from adapter grouping and missing mappings. Every window constrains the pool: exhausted weekly allowance blocks unused five-hour allowance. Complete native readings reconcile omitted windows against persisted history; omitted windows stay unknown. Account switches retire the previous active account view.
 
 Windows contain used/remaining percentages, `usable_pct = max(0, 100 - reserve_pct - used_pct)`, reset, separate `allowance_state` and `freshness`, whole-window/recent burn in percentage points/hour, sustainable rate, and runway to reserve. Missing percentages/resets produce null budgets. Model mapping can stay unknown until a model is observed in an active rollout.
@@ -55,7 +57,7 @@ For routing, check connectivity, collector health, account/mapping confidence, s
 
 ## Dashboard and persistence
 
-The dashboard uses the same snapshot and SSE stream. Its capacity matrix comes first, followed by dated historic charts and model/effort and session efficiency drilldowns. Live updates retain range, scroll, focus and expanded details. Reserve presets default to 10% and share `capacity-policy.json` with API consumers. Advice links to local session evidence; it never sends notifications or changes models.
+The dashboard uses the same snapshot and SSE stream. Its capacity matrix comes first, followed by dated historic charts and model/effort and session efficiency drilldowns. Runway includes whole-window and last-hour burn rates in percentage points per hour. Live updates retain range, scroll, focus and expanded details. Reserve presets default to 10% and share `capacity-policy.json` with API consumers. Advice links to local session evidence; it never sends notifications or changes models.
 
 Legacy `/latest.json`, `/status.json`, `/usage.json`, CLI `status`, and raw usage exports remain available. Historic model-grouped charts are labeled as history, not independent live pools. `render` produces a dated HTML fallback using persisted `capacity.json`.
 

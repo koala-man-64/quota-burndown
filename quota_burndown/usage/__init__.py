@@ -41,7 +41,7 @@ def collect(
         files.sort(key=lambda item: -item[2])
         parsed = written = deferred = 0
         for position, (path, size, mtime) in enumerate(files):
-            if deadline is not None and time.monotonic() > deadline:
+            if deadline is not None and time.monotonic() >= deadline:
                 deferred = len(files) - position
                 break
             if not ledger.file_changed(conn, path, size, mtime):

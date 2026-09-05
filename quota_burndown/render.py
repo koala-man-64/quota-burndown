@@ -414,6 +414,106 @@ def _capacity_window_html(window: dict) -> str:
     return "<tr>" + cells + "</tr>"
 
 
+def _capacity_value(value, suffix: str = "%") -> str:
+    """Format reported capacity values without turning missing values into zero."""
+    if value is None:
+        return "unknown"
+    try:
+        return f"{float(value):.0f}{suffix}"
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+def _capacity_rate(value) -> str:
+    try:
+        return f"{float(value):.2f} pp/hour"
+    except (TypeError, ValueError):
+        return "unknown"
+
+
+def _group_limit_row(limit: dict) -> str:
+    window = limit.get("window") if isinstance(limit.get("window"), dict) else {}
+    unavailable = not limit.get("pool_id")
+    reason = limit.get("availability_reason")
+    models = ", ".join(str(model) for model in (limit.get("models") or [])) or "unknown"
+    scope = limit.get("account_scope") or "unknown"
+    mapping = limit.get("mapping_confidence") or "unknown"
+    remaining = _capacity_value(window.get("remaining_pct"))
+    used = _capacity_value(window.get("used_pct"))
+    reserve = _capacity_value(window.get("usable_pct"))
+    runway = window.get("runway_minutes")
+    runway_text = "unknown" if runway is None else fmt_minutes(float(runway))
+    whole_rate = _capacity_rate(window.get("whole_window_rate_pph"))
+    recent_rate = _capacity_rate(window.get("recent_rate_pph"))
+    age = window.get("source_age_s")
+    age_html = "unknown" if age is None else f'<span class="source-age" data-source-age="{float(age):.3f}">{float(age):.0f}s ago</span>'
+    deadline = window.get("valid_until")
+    freshness_html = f'<span data-freshness-deadline="{esc(deadline)}">{esc(window.get("freshness") or "unknown")}</span>' if deadline else esc(window.get("freshness") or "unknown")
+    provenance = f'<br><small>reset: {esc(window.get("reset_provenance") or "unknown")}; observation: {esc(window.get("observation_time_provenance") or "unknown")}</small>'
+    availability = f"<br><small>{esc(reason)}</small>" if reason else ""
+    pool = "unreported" if unavailable else esc(limit.get("pool_id"))
+    return (
+        f'<tr data-reset="{esc(window.get("resets_at") or "")}">'
+        f'<th scope="row">{esc(limit.get("label") or limit.get("id") or "limit")}{availability}</th>'
+        f'<td>{pool}<br><small>{esc(scope)} · {esc(models)} · mapping {esc(mapping)}<br>'
+        f'constraining: {esc(limit.get("constraining_window") or "unknown")}</small></td>'
+        f'<td>{used}</td><td class="window-budget">{remaining}</td>'
+        f'<td class="window-budget">{reserve}</td><td>{esc(window.get("resets_at") or "unknown")}</td>'
+        f'<td class="window-forecast">{esc(runway_text)}<br><small>whole: {whole_rate}; last hour: {recent_rate}</small></td>'
+        f'<td>{freshness_html} · {age_html}</td>'
+        f'<td>{esc(window.get("source") or "unavailable")}{provenance}</td></tr>'
+    )
+
+
+def _group_extras_html(capacity: dict, group: dict) -> str:
+    """Render observations that did not match one of the fixed consumer slots."""
+    provider = group.get("provider")
+    seen = {
+        (limit.get("pool_id"), (limit.get("window") or {}).get("window"))
+        for limit in (group.get("limits") or []) if isinstance(limit, dict) and limit.get("pool_id") and ":reported-" not in str(limit.get("id"))
+    }
+    rows = []
+    for pool in capacity.get("pools") or []:
+        if not isinstance(pool, dict) or pool.get("provider") != provider:
+            continue
+        for window in pool.get("windows") or []:
+            if not isinstance(window, dict) or (pool.get("id"), window.get("window")) in seen:
+                continue
+            rows.append(_group_limit_row({
+                "id": f"reported-{pool.get('id')}-{window.get('window')}",
+                "label": f"{pool.get('label') or pool.get('limit_id') or 'reported pool'} · {window.get('window') or 'window'}",
+                "pool_id": pool.get("id"), "account_scope": pool.get("account_scope"),
+                "models": pool.get("models"), "mapping_confidence": pool.get("mapping_confidence"),
+                "constraining_window": pool.get("constraining_window"), "window": window,
+            }))
+    if not rows:
+        return ""
+    return (
+        f'<details class="capacity-extras" data-extra-provider="{esc(provider)}"><summary>Other observed windows</summary>'
+        '<div class="capacity-scroll"><table class="usage capacity-table"><thead><tr><th>allowance</th><th>pool / membership</th><th>used</th><th>remaining</th><th>reserve-adjusted budget</th><th>reset</th><th>runway</th><th>freshness</th><th>source</th></tr></thead><tbody>'
+        + "".join(rows) + "</tbody></table></div></details>"
+    )
+
+
+def _provider_groups_html(capacity: dict) -> str:
+    groups = capacity.get("provider_groups")
+    if not isinstance(groups, list):
+        return ""
+    rendered = []
+    for group in groups:
+        if not isinstance(group, dict):
+            continue
+        rows = "".join(_group_limit_row(limit) for limit in (group.get("limits") or []) if isinstance(limit, dict) and ":reported-" not in str(limit.get("id")))
+        rendered.append(
+            f'<section class="capacity-provider" data-provider="{esc(group.get("provider") or "unknown")}">'
+            f'<h3>{esc(group.get("label") or group.get("provider") or "Provider")}</h3>'
+            '<div class="capacity-scroll"><table class="usage capacity-table"><thead><tr><th>allowance</th><th>pool / membership</th><th>used</th><th>remaining</th><th>reserve-adjusted budget</th><th>reset</th><th>runway</th><th>freshness</th><th>source</th></tr></thead><tbody>'
+            + (rows or '<tr><td colspan="9">no reported allowances</td></tr>') + "</tbody></table></div>"
+            + _group_extras_html(capacity, group) + "</section>"
+        )
+    return "".join(rendered)
+
+
 def capacity_matrix_html(capacity: dict | None, live: bool = False) -> str:
     """The capacity contract is observational: unknown values stay visibly unknown."""
     if not isinstance(capacity, dict) or not capacity:
@@ -421,6 +521,7 @@ def capacity_matrix_html(capacity: dict | None, live: bool = False) -> str:
     policy = capacity.get("policy") if isinstance(capacity.get("policy"), dict) else {}
     reserve = policy.get("reserve_pct", 10)
     presets = policy.get("presets", (5, 10, 20))
+    grouped = _provider_groups_html(capacity)
     rows = []
     for pool in capacity.get("pools") or []:
         if not isinstance(pool, dict):
@@ -437,6 +538,11 @@ def capacity_matrix_html(capacity: dict | None, live: bool = False) -> str:
         f'<button type="button" data-reserve="{int(value)}" class="{"on" if value == reserve else ""}">{int(value)}%</button>'
         for value in presets
     )
+    fallback_table = (
+        '<div class="capacity-scroll"><table class="usage capacity-table"><thead><tr><th>pool / associated models</th><th>window</th><th>remaining</th><th>reserve-adjusted budget</th><th>reset</th><th>runway</th><th>freshness</th><th>source</th></tr></thead>'
+        + '<tbody>' + ("".join(rows) or '<tr><td colspan="8">no reported pools</td></tr>') + "</tbody></table></div>"
+    )
+    matrix = grouped or fallback_table
     mode = "live" if live else "static fallback"
     health = capacity.get("collector_health") if isinstance(capacity.get("collector_health"), dict) else {}
     health_text = ", ".join(f"{name}: {(info if isinstance(info, dict) else {}).get('state', 'unknown')}" for name, info in health.items()) or "unknown"
@@ -450,8 +556,7 @@ def capacity_matrix_html(capacity: dict | None, live: bool = False) -> str:
         f'<span id="capacity-state" class="badge">{esc(mode)} · rev {esc(capacity.get("revision", "?"))}</span></header>'
         f'<div id="capacity-observation-state" class="note">Pools are shared allowances. Models show membership only. Unreported in-flight usage: {esc(capacity.get("unreported_in_flight_usage", "unknown"))}. Provider observations: {esc(provider_text)}. Collector health: {esc(health_text)}.</div>'
         '<div class="reserve" role="group" aria-label="Reserve policy"><span>Reserve</span>' + controls + '</div>'
-        '<div class="capacity-scroll"><table class="usage capacity-table"><thead><tr><th>pool / associated models</th><th>window</th><th>remaining</th><th>reserve-adjusted budget</th><th>reset</th><th>runway</th><th>freshness</th><th>source</th></tr></thead>'
-        f'<tbody>{"".join(rows) or "<tr><td colspan=8>no reported pools</td></tr>"}</tbody></table></div></section>'
+        f'<div id="capacity-groups">{matrix}</div></section>'
     )
 
 
@@ -540,6 +645,7 @@ section.capacity{background:var(--card);border:1px solid var(--line);border-radi
 section.capacity header{display:flex;justify-content:space-between;gap:8px;align-items:center}section.capacity h2,.efficiency-section h2{font-size:15px;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 .reserve{display:flex;gap:5px;align-items:center;margin:10px 0;font-size:12px}.reserve button{font:inherit;font-size:12px;padding:2px 9px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;cursor:pointer}.reserve button.on{border-color:var(--chart-series);color:var(--chart-series);font-weight:600}.reserve button:focus-visible{outline:2px solid var(--chart-series);outline-offset:1px}
 .capacity-scroll{overflow-x:auto}.capacity-table small{color:var(--muted);font-weight:400}.efficiency-section{margin-top:18px}.efficiency{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:8px;overflow-x:auto}.efficiency summary{cursor:pointer;font-weight:600}.efficiency table{margin-top:8px}
+.capacity-provider{margin:16px 0}.capacity-provider h3{font-size:14px;margin:0 0 6px}.capacity-extras{margin-top:8px;font-size:12px}.capacity-extras summary{cursor:pointer;color:var(--muted)}
 """
 
 HOVER_SCRIPT = """
@@ -628,11 +734,15 @@ CAPACITY_SCRIPT = """
 (function(){
   var section = document.getElementById('capacity');
   if (!section || !window.EventSource) return;
-  var table = section.querySelector('tbody'), state = document.getElementById('capacity-state'), ageStarted = Date.now();
+  var groupsHost = document.getElementById('capacity-groups'), state = document.getElementById('capacity-state'), ageStarted = Date.now();
   function text(v){ return v === undefined || v === null || v === '' ? 'unknown' : String(v); }
   function pct(v){ return v === undefined || v === null ? 'unknown' : Math.round(Number(v)) + '%'; }
   function age(v){ return v === undefined || v === null ? 'unknown' : '<span class="source-age" data-source-age="' + Number(v) + '">' + Math.round(Number(v)) + 's ago</span>'; }
+  function sourceAge(w){ var observed=w && w.observed_at ? Date.parse(w.observed_at) : NaN; return Number.isFinite(observed) ? Math.max(0, (Date.now()-observed)/1000) : w && w.source_age_s; }
+  function freshness(w){ var deadline=w && w.valid_until ? ' data-freshness-deadline="' + esc(w.valid_until) + '"' : ''; return '<span' + deadline + '>' + esc(w && w.freshness) + '</span>'; }
+  function provenance(w){ return '<br><small>reset: ' + esc(w && w.reset_provenance) + '; observation: ' + esc(w && w.observation_time_provenance) + '; TTL ' + esc(w && w.freshness_ttl_s) + 's</small>'; }
   function runway(v){ return v === undefined || v === null ? 'unknown' : Math.round(Number(v)) + ' min'; }
+  function rate(v){ return v === undefined || v === null ? 'unknown' : Number(v).toFixed(2) + ' pp/hour'; }
   function esc(v){ var d=document.createElement('div'); d.textContent=text(v); return d.innerHTML; }
   function tickAges(){
     var elapsed=(Date.now()-ageStarted)/1000;
@@ -640,34 +750,57 @@ CAPACITY_SCRIPT = """
       el.textContent=Math.floor(Number(el.getAttribute('data-source-age')) + elapsed) + 's ago';
     });
     Array.prototype.forEach.call(section.querySelectorAll('[data-freshness-deadline]'), function(el){
-      if(Date.now() >= Date.parse(el.getAttribute('data-freshness-deadline'))) el.textContent='stale';
+      if(Date.now() >= Date.parse(el.getAttribute('data-freshness-deadline'))){
+        el.textContent='stale';
+        var row=el.closest('tr'); if(row) Array.prototype.forEach.call(row.querySelectorAll('.window-forecast'), function(cell){cell.textContent='unknown';});
+      }
     });
     Array.prototype.forEach.call(section.querySelectorAll('[data-reset]'), function(row){
       if(Date.now() >= Date.parse(row.getAttribute('data-reset'))){
-        Array.prototype.forEach.call(row.querySelectorAll('.window-budget'), function(el){el.textContent='unknown';});
+        Array.prototype.forEach.call(row.querySelectorAll('.window-budget,.window-forecast'), function(el){el.textContent='unknown';});
       }
     });
   }
   setInterval(tickAges, 1000);
   var lastInstance=null, lastRevision=-1;
+  function groupRow(l){
+    var w=l.window || {}, reason=l.availability_reason ? '<br><small>' + esc(l.availability_reason) + '</small>' : '';
+    return '<tr data-reset="' + esc(w.resets_at) + '"><th scope="row">' + esc(l.label || l.id || 'limit') + reason + '</th><td>' + (l.pool_id ? esc(l.pool_id) : 'unreported') + '<br><small>' + esc(l.account_scope) + ' · ' + esc((l.models || []).join(', ') || 'unknown') + ' · mapping ' + esc(l.mapping_confidence) + '<br>constraining: ' + esc(l.constraining_window) + '</small></td><td>' + pct(w.used_pct) + '</td><td class="window-budget">' + pct(w.remaining_pct) + '</td><td class="window-budget">' + pct(w.usable_pct) + '</td><td>' + esc(w.resets_at) + '</td><td class="window-forecast">' + runway(w.runway_minutes) + '<br><small>whole: ' + rate(w.whole_window_rate_pph) + '; last hour: ' + rate(w.recent_rate_pph) + '</small></td><td>' + freshness(w) + ' · ' + age(sourceAge(w)) + '</td><td>' + esc(w.source || 'unavailable') + provenance(w) + '</td></tr>';
+  }
+  function grouped(snapshot){
+    if (!Array.isArray(snapshot.provider_groups)) return '';
+    var used = {};
+    snapshot.provider_groups.forEach(function(g){ (g.limits || []).forEach(function(l){ if(l && l.pool_id && String(l.id).indexOf(':reported-') < 0) used[l.pool_id + '\\u0000' + text((l.window || {}).window)] = true; }); });
+    return snapshot.provider_groups.map(function(g){
+      if (!g || typeof g !== 'object') return '';
+      var rows=(g.limits || []).filter(function(l){return l && typeof l === 'object' && String(l.id).indexOf(':reported-') < 0;}).map(groupRow).join('') || '<tr><td colspan="9">no reported allowances</td></tr>';
+      var extras=[];
+      (snapshot.pools || []).forEach(function(p){ if(!p || p.provider !== g.provider) return; (p.windows || []).forEach(function(w){ if(!w || used[p.id + '\\u0000' + text(w.window)]) return; extras.push(groupRow({id:'reported-' + p.id + '-' + w.window,label:(p.label || p.limit_id || 'reported pool') + ' · ' + (w.window || 'window'),pool_id:p.id,account_scope:p.account_scope,models:p.models,mapping_confidence:p.mapping_confidence,constraining_window:p.constraining_window,window:w})); }); });
+      var extraHtml=extras.length ? '<details class="capacity-extras" data-extra-provider="' + esc(g.provider) + '"><summary>Other observed windows</summary><div class="capacity-scroll"><table class="usage capacity-table"><thead><tr><th>allowance</th><th>pool / membership</th><th>used</th><th>remaining</th><th>reserve-adjusted budget</th><th>reset</th><th>runway</th><th>freshness</th><th>source</th></tr></thead><tbody>' + extras.join('') + '</tbody></table></div></details>' : '';
+      return '<section class="capacity-provider" data-provider="' + esc(g.provider) + '"><h3>' + esc(g.label || g.provider || 'Provider') + '</h3><div class="capacity-scroll"><table class="usage capacity-table"><thead><tr><th>allowance</th><th>pool / membership</th><th>used</th><th>remaining</th><th>reserve-adjusted budget</th><th>reset</th><th>runway</th><th>freshness</th><th>source</th></tr></thead><tbody>' + rows + '</tbody></table></div>' + extraHtml + '</section>';
+    }).join('');
+  }
   function render(snapshot){
-    if (!snapshot || !table) return;
+    if (!snapshot || !groupsHost) return;
     if (snapshot.instance_id === lastInstance && snapshot.revision < lastRevision) return;
     lastInstance=snapshot.instance_id; lastRevision=snapshot.revision;
     var active = document.activeElement, reserveFocus = active && active.getAttribute && active.getAttribute('data-reserve');
-    var scroller = section.querySelector('.capacity-scroll'), left = scroller ? scroller.scrollLeft : 0;
+    var scroller = section.querySelector('.capacity-scroll'), left = scroller ? scroller.scrollLeft : 0, providerScroll = {};
+    Array.prototype.forEach.call(section.querySelectorAll('.capacity-provider'), function(provider){ var scroll=provider.querySelector(':scope > .capacity-scroll'); if(scroll) providerScroll[provider.getAttribute('data-provider')]=scroll.scrollLeft; });
+    var extraState={};
+    Array.prototype.forEach.call(section.querySelectorAll('details.capacity-extras'), function(detail){ var scroll=detail.querySelector('.capacity-scroll'); extraState[detail.getAttribute('data-extra-provider')]={open:detail.open,left:scroll ? scroll.scrollLeft : 0,focused:document.activeElement === detail.querySelector('summary')}; });
     var rows = [];
     (snapshot.pools || []).forEach(function(pool){
       var wins = pool.windows && pool.windows.length ? pool.windows : [{}], label = pool.label || (text(pool.provider) + ' / ' + text(pool.limit_id));
       var models = (pool.models || []).join(', ') || 'unknown';
       wins.forEach(function(w, i){
         var poolCell = i ? '' : '<td rowspan="' + wins.length + '">' + esc(label) + '<br><small>' + esc(pool.account_scope) + '<br>' + esc(models) + ' · mapping ' + esc(pool.mapping_confidence) + '<br>constraining: ' + esc(pool.constraining_window) + '</small></td>';
-        if(w.observed_at) w.source_age_s=Math.max(0,(Date.now()-Date.parse(w.observed_at))/1000);
-        var deadline=w.used_pct === null || !w.valid_until ? '' : ' data-freshness-deadline="' + esc(w.valid_until) + '"';
-        rows.push('<tr data-reset="' + esc(w.resets_at) + '">' + poolCell + '<td>' + esc(w.window || 'window') + '</td><td class="window-budget">' + pct(w.remaining_pct) + '</td><td class="window-budget">' + pct(w.usable_pct) + '</td><td>' + esc(w.resets_at) + '</td><td class="window-budget">' + runway(w.runway_minutes) + '</td><td><span' + deadline + '>' + esc(w.freshness) + '</span> · ' + age(w.source_age_s) + '</td><td>' + esc(w.source) + '<br><small>reset: ' + esc(w.reset_provenance) + '; observation: ' + esc(w.observation_time_provenance) + '; TTL ' + esc(w.freshness_ttl_s) + 's</small></td></tr>');
+        rows.push('<tr data-reset="' + esc(w.resets_at) + '">' + poolCell + '<td>' + esc(w.window || 'window') + '</td><td class="window-budget">' + pct(w.remaining_pct) + '</td><td class="window-budget">' + pct(w.usable_pct) + '</td><td>' + esc(w.resets_at) + '</td><td class="window-forecast">' + runway(w.runway_minutes) + '</td><td>' + freshness(w) + ' · ' + age(sourceAge(w)) + '</td><td>' + esc(w.source) + provenance(w) + '</td></tr>');
       });
     });
-    table.innerHTML = rows.join('') || '<tr><td colspan="8">no reported pools</td></tr>';
+    var groupedHtml=grouped(snapshot);
+    groupsHost.innerHTML = groupedHtml || '<div class="capacity-scroll"><table class="usage capacity-table"><thead><tr><th>pool / associated models</th><th>window</th><th>remaining</th><th>reserve-adjusted budget</th><th>reset</th><th>runway</th><th>freshness</th><th>source</th></tr></thead><tbody>' + (rows.join('') || '<tr><td colspan="8">no reported pools</td></tr>') + '</tbody></table></div>';
+    Object.keys(extraState).forEach(function(provider){ var extra=section.querySelector('[data-extra-provider="' + provider + '"]'), saved=extraState[provider]; if(!extra) return; extra.open=saved.open; var scroll=extra.querySelector('.capacity-scroll'); if(scroll) scroll.scrollLeft=saved.left; if(saved.focused) extra.querySelector('summary').focus(); });
     if (state) state.textContent = 'live · rev ' + text(snapshot.revision);
     var observation=document.getElementById('capacity-observation-state');
     if(observation){
@@ -676,7 +809,8 @@ CAPACITY_SCRIPT = """
     }
     Array.prototype.forEach.call(section.querySelectorAll('[data-reserve]'),function(b){b.classList.toggle('on', Number(b.getAttribute('data-reserve')) === Number((snapshot.policy || {}).reserve_pct));});
     ageStarted = Date.now(); tickAges();
-    if (scroller) scroller.scrollLeft = left;
+    Array.prototype.forEach.call(section.querySelectorAll('.capacity-provider'), function(provider){ var scroll=provider.querySelector(':scope > .capacity-scroll'), saved=providerScroll[provider.getAttribute('data-provider')]; if(scroll && saved !== undefined) scroll.scrollLeft=saved; });
+    if (!groupedHtml && scroller) section.querySelector('.capacity-scroll').scrollLeft = left;
     if (reserveFocus) { var button = section.querySelector('[data-reserve="' + reserveFocus + '"]'); if (button) button.focus(); }
   }
   function reserve(button){
@@ -717,7 +851,9 @@ CAPACITY_SCRIPT = """
 RANGE_OPTIONS = (("auto", "Auto"), *((key, key) for key in charts.SPANS))
 RANGE_HTML = (
     '<div class="range" role="group" aria-label="Chart time range"><span>Range</span>'
-    + "".join(f'<button type="button" data-span="{key}"{" class=\"on\"" if key == "auto" else ""}>{label}</button>' for key, label in RANGE_OPTIONS)
+    + "".join('<button type="button" data-span="{}"{}>{}</button>'.format(
+        key, ' class="on"' if key == "auto" else "", label
+    ) for key, label in RANGE_OPTIONS)
     + "</div>"
 )
 LEGEND_HTML = (

@@ -20,10 +20,17 @@ def test_disconnected_separate_from_source_freshness(paths, monkeypatch):
     pool = next(p for p in snapshot["pools"] if p["provider"] == "codex")
     assert pool["freshness"] == "fresh"
     monkeypatch.setattr(client, "now_utc", lambda: now+timedelta(hours=2))
-    pool = next(p for p in client.read_capacity(paths.home)["pools"] if p["provider"] == "codex")
+    snapshot = client.read_capacity(paths.home)
+    pool = next(p for p in snapshot["pools"] if p["provider"] == "codex")
     assert pool["freshness"] == "stale"
     assert pool["allowance_state"] == "unknown"
     assert pool["windows"][0]["usable_pct"] is None
+    grouped = next(limit for limit in snapshot["provider_groups"][0]["limits"]
+                   if limit["pool_id"] == pool["id"] and limit["window"]["window"] == "300m")
+    assert grouped["window"] == pool["windows"][0]
+    assert grouped["window"]["used_pct"] == 30  # Preserve the observation after expiry.
+    assert grouped["window"]["freshness"] == "stale"
+    assert grouped["window"]["allowance_state"] == "unknown"
 
 
 @pytest.mark.parametrize("url", ["https://127.0.0.1", "http://example.com", "http://127.0.0.1/path", "http://user@localhost"])

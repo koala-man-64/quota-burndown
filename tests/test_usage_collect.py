@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 
 from test_usage_antigravity import make_home as make_antigravity_home
 from test_usage_claude import assistant, make_home as make_claude_home
@@ -34,10 +35,15 @@ def test_collect_parses_changed_files_only(tmp_path, paths):
     conn.close()
 
 
-def test_collect_budget_defers_and_reports(tmp_path, paths):
+def test_collect_budget_defers_and_reports(tmp_path, paths, monkeypatch):
     h, main = homes(tmp_path)
     conn = ledger.connect(paths.usage_db)
-    stats, warnings = usage.collect(conn, providers=["claude"], homes=h, budget_s=1e-9)
+    # Discovery has consumed the full budget before the first file. Avoid relying
+    # on sub-tick wall time: Python 3.10's Windows clock has 15.6 ms resolution.
+    with monkeypatch.context() as patch:
+        clock = iter((100.0, 101.0))
+        patch.setattr(usage, "time", SimpleNamespace(monotonic=lambda: next(clock)))
+        stats, warnings = usage.collect(conn, providers=["claude"], homes=h, budget_s=1)
     assert stats["claude"]["files_parsed"] == 0 and stats["claude"]["files_deferred"] == 3
     assert warnings and "deferred" in warnings[0]
     stats, warnings = usage.collect(conn, providers=["claude"], homes=h, budget_s=30)
