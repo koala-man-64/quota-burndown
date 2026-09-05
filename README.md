@@ -57,7 +57,9 @@ For routing, check connectivity, collector health, account/mapping confidence, s
 
 ## Dashboard and persistence
 
-The dashboard uses the same snapshot and SSE stream. Its capacity matrix comes first, followed by dated historic charts and model/effort and session efficiency drilldowns. Runway includes whole-window and last-hour burn rates in percentage points per hour. Live updates retain range, scroll, focus and expanded details. Reserve presets default to 10% and share `capacity-policy.json` with API consumers. Advice links to local session evidence; it never sends notifications or changes models.
+The dashboard uses the same snapshot and SSE stream. Its capacity matrix comes first, followed by dated historic charts and model/effort and session efficiency drilldowns. Runway includes whole-window and last-hour burn rates in percentage points per hour. Live updates retain scroll, focus and expanded details. Reserve presets default to 10% and share `capacity-policy.json` with API consumers. Advice links to local session evidence; it never sends notifications or changes models.
+
+Each historical chart has a fixed two-cycle x-axis: 10 hours for five-hour limits and 14 days for weekly limits. Active charts end at the next reset; idle, expired, or unknown-reset charts end at the current time. The range control is removed, so older saved preferences cannot override this domain. Clipping affects presentation only; stored history remains intact.
 
 Legacy `/latest.json`, `/status.json`, `/usage.json`, CLI `status`, and raw usage exports remain available. Historic model-grouped charts are labeled as history, not independent live pools. `render` produces a dated HTML fallback using persisted `capacity.json`.
 
@@ -86,4 +88,4 @@ py -B -m pytest -q
 py -B -m pytest tests/test_service.py -q -s
 ```
 
-Regression coverage includes shared pools, weekly exhaustion, missing/stale windows, resets/corrections, duplicates/out-of-order events, persisted recovery, SSE reconnection, same-origin controls, bounded handoff, and collector overlap. The benchmark runs 100 HTTP reads while the history worker is busy, targeting p95 below 100 ms. Adapter enqueue-to-publication latency is separate from unknown upstream delay; its target is two seconds. Browser acceptance exercises reserve updates, range/focus preservation and drilldowns.
+Regression coverage includes shared pools, weekly exhaustion, missing/stale windows, resets/corrections, duplicates/out-of-order events, persisted recovery, SSE reconnection, same-origin controls, bounded handoff, collector overlap, and exact two-cycle chart domains. The benchmark runs 100 HTTP reads while the history worker is busy, targeting p95 below 100 ms. Adapter enqueue-to-publication latency is separate from unknown upstream delay; its target is two seconds. Browser acceptance exercises reserve updates, focus preservation, chart domains and drilldowns.

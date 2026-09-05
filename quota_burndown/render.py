@@ -159,15 +159,14 @@ def chart_table_html(points: list[dict]) -> str:
     )
 
 
-def chart_figure_html(data: ChartData, chart_id: str, title: str, auto_key: str, visible: bool) -> str:
-    """One span's chart for a card. Every span is rendered; the range control shows one.
-    `auto_key` is the span the card shows when the control is on Auto."""
+def chart_figure_html(data: ChartData, chart_id: str, title: str) -> str:
+    """The one exact two-cycle chart rendered for a capacity card."""
     points = chart_points(data)
     reset = next((f"resets {fmt_local(m.ts)}" for m in data.resets if m.current), None)
     payload = json.dumps({"points": points, "reset": reset}, separators=(",", ":")).replace("</", "<\\/")
-    hidden = "" if visible else " hidden"
     return (
-        f'<figure class="chart-figure" data-span="{esc(data.span_key)}" data-auto="{esc(auto_key)}"{hidden}>'
+        f'<figure class="chart-figure" data-span="{esc(data.span_key)}" '
+        f'data-domain-start="{esc(data.span_start.isoformat())}" data-domain-end="{esc(data.span_end.isoformat())}">'
         f'<h4>% used, {esc(data.span_label)}</h4>{chart_svg(data, chart_id, title)}'
         f'<script type="application/json" class="chart-data" data-for="{esc(chart_id)}">{payload}</script>'
         f"{chart_table_html(points)}</figure>"
@@ -175,18 +174,10 @@ def chart_figure_html(data: ChartData, chart_id: str, title: str, auto_key: str,
 
 
 def card_figures_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str, title: str) -> str:
-    """Every span's chart for the card; the card's default span (or the shortest span with
-    data) is visible, the rest hidden until the range control asks for them."""
-    available = {}
-    for key in charts.SPANS:
-        data = charts.build(bd, history, now, key)
-        if data is not None:
-            available[key] = data
-    if not available:
-        return '<div class="note">No readings in the last 30 days.</div>'
-    default_key = charts.default_span_key(bd.window_min)
-    shown = default_key if default_key in available else next(iter(available))
-    return "".join(chart_figure_html(data, f"{chart_id}-{key}", title, shown, key == shown) for key, data in available.items())
+    data = charts.build(bd, history, now)
+    if data is None:
+        return '<div class="note">No readings in the two-cycle domain.</div>'
+    return chart_figure_html(data, chart_id, title)
 
 
 # -- quota cards -----------------------------------------------------------------------
@@ -619,10 +610,6 @@ details.chart-table summary{cursor:pointer}
 details.chart-table table{margin-top:4px;max-height:220px;display:block;overflow:auto}
 .banner{background:var(--card);border:1px solid var(--warn);border-radius:8px;padding:8px 12px;margin:8px 0;font-size:13px}
 .legend{display:flex;gap:18px;align-items:center;font-size:12px;color:var(--muted);margin:4px 0 0;flex-wrap:wrap}
-.range{display:inline-flex;gap:4px;align-items:center;margin-left:auto}
-.range button{font:inherit;font-size:12px;padding:2px 9px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;cursor:pointer}
-.range button.on{border-color:var(--chart-series);color:var(--chart-series);font-weight:600}
-.range button:focus-visible{outline:2px solid var(--chart-series);outline-offset:1px}
 .legend i{display:inline-block;width:22px;vertical-align:middle;margin-right:6px;border-top:2px solid var(--chart-series)}
 .legend i.k-pace{border-top:2px dashed var(--chart-axis)}
 .legend i.k-proj{border-top:2px dotted var(--chart-ink)}
@@ -650,35 +637,6 @@ section.capacity header{display:flex;justify-content:space-between;gap:8px;align
 
 HOVER_SCRIPT = """
 (function(){
-  var RANGE_KEY = 'quota-burndown.range';
-  var buttons = Array.prototype.slice.call(document.querySelectorAll('.range button[data-span]'));
-  function applyRange(sel){
-    Array.prototype.forEach.call(document.querySelectorAll('article'), function(card){
-      var figures = Array.prototype.slice.call(card.querySelectorAll('figure.chart-figure[data-span]'));
-      if (!figures.length) return;
-      var shown = 0;
-      figures.forEach(function(f){
-        var want = sel === 'auto' ? f.getAttribute('data-auto') : sel;
-        f.hidden = f.getAttribute('data-span') !== want;
-        if (!f.hidden) shown++;
-      });
-      if (!shown) figures.forEach(function(f){ f.hidden = f.getAttribute('data-span') !== f.getAttribute('data-auto'); });
-    });
-    buttons.forEach(function(b){ b.classList.toggle('on', b.getAttribute('data-span') === sel); });
-  }
-  if (buttons.length){
-    var saved = 'auto';
-    try { saved = localStorage.getItem(RANGE_KEY) || 'auto'; } catch (e) {}
-    if (!buttons.some(function(b){ return b.getAttribute('data-span') === saved; })) saved = 'auto';
-    applyRange(saved);
-    buttons.forEach(function(b){
-      b.addEventListener('click', function(){
-        var sel = b.getAttribute('data-span');
-        applyRange(sel);
-        try { localStorage.setItem(RANGE_KEY, sel); } catch (e) {}
-      });
-    });
-  }
   var tip = document.getElementById('chart-tooltip');
   if (!tip) return;
   Array.prototype.forEach.call(document.querySelectorAll('svg.chart[data-chart]'), function(svg){
@@ -848,18 +806,10 @@ CAPACITY_SCRIPT = """
 })();
 """
 
-RANGE_OPTIONS = (("auto", "Auto"), *((key, key) for key in charts.SPANS))
-RANGE_HTML = (
-    '<div class="range" role="group" aria-label="Chart time range"><span>Range</span>'
-    + "".join('<button type="button" data-span="{}"{}>{}</button>'.format(
-        key, ' class="on"' if key == "auto" else "", label
-    ) for key, label in RANGE_OPTIONS)
-    + "</div>"
-)
 LEGEND_HTML = (
     '<div class="legend"><span><i class="k-used"></i>% used</span><span><i class="k-pace"></i>linear pace</span>'
     '<span><i class="k-proj"></i>projection at current rate</span><span><i class="k-reset"></i>window reset</span>'
-    f'<span><i class="k-now"></i>now</span>{RANGE_HTML}</div>'
+    '<span><i class="k-now"></i>now</span></div>'
 )
 
 
@@ -868,8 +818,7 @@ def render_html(
     warnings: list[str] | None = None, refresh_s: int = 120,
     usage_db: Path | None = None, capacity: dict | None = None, live: bool = False,
 ) -> str:
-    """The whole page. `days` sizes how much sample history is loaded (at least 31 days, so
-    every chart span up to 30 days can be drawn); the range control picks the span shown."""
+    """The whole page. Each historical card renders one exact two-window-cycle chart."""
     now = now or now_utc()
     samples = canonical_samples(store.load(since=now - timedelta(days=max(days, 31))))
     latest = store.latest()

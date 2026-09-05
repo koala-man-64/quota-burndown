@@ -31,17 +31,15 @@ def test_render_html_contains_cards_and_charts(store):
     assert html.count("<article") == 4
     assert "status-over" in html and "5-hour session" in html and "7-day (all models)" in html
     assert "claude: test warning" in html
-    spans = len(render.charts.SPANS)
-    assert html.count('<figure class="chart-figure"') == 4 * spans and html.count('<svg class="chart"') == 4 * spans
-    assert html.count(' hidden><h4>') == 4 * (spans - 1)  # one span visible per card
-    assert html.count('data-auto="24h"') == 2 * spans and html.count('data-auto="7d"') == 2 * spans
-    assert html.count('class="pace"') == 3 * spans and html.count('class="proj"') >= spans  # the idle codex:5h card draws its 0% reading but no pace
+    assert html.count('<figure class="chart-figure"') == 4 and html.count('<svg class="chart"') == 4
+    assert html.count('data-domain-start=') == 4 and html.count('data-domain-end=') == 4
+    assert html.count('class="pace"') == 3 and html.count('class="proj"') >= 1  # the idle codex:5h card draws its 0% reading but no pace
     assert 'class="ideal"' not in html and 'class="reset"' not in html
-    assert html.count('class="used"') >= 4 * spans and html.count("<details") == 4 * spans
+    assert html.count('class="used"') >= 4 and html.count("<details") == 4
     assert "no active window" in html
-    assert 'class="range"' in html and html.count('<button type="button" data-span=') == spans + 1 and "quota-burndown.range" in html
-    payloads = re.findall(r'<script type="application/json" class="chart-data" data-for="c\d+-\w+">(.*?)</script>', html)
-    assert len(payloads) == 4 * spans
+    assert 'class="range"' not in html and 'data-span="24h"' not in html and "quota-burndown.range" not in html
+    payloads = re.findall(r'<script type="application/json" class="chart-data" data-for="c\d+">(.*?)</script>', html)
+    assert len(payloads) == 4
     first = json.loads(payloads[0])
     assert first["points"] and {"x", "y", "t", "v"} <= set(first["points"][0]) and first["points"][-1]["v"] == "60%"
     assert first["reset"].startswith("resets ")
@@ -73,8 +71,8 @@ def test_render_collapses_legacy_gpt_versions_into_three_allowance_cards(store):
 
 def test_claude_alias_cards_keep_newest_state_and_all_history_without_rewriting_store(store):
     store.append([
-        Sample(NOW - timedelta(days=2), "claude", "5h", 13, RESET - timedelta(days=2), 300, "desktop"),
-        Sample(NOW - timedelta(days=1), "claude", "300m:claude", 27, RESET - timedelta(days=1), 300, "desktop-history"),
+        Sample(NOW - timedelta(hours=9), "claude", "5h", 13, NOW - timedelta(hours=7), 300, "desktop"),
+        Sample(NOW - timedelta(hours=8), "claude", "300m:claude", 27, NOW - timedelta(hours=7), 300, "desktop-history"),
         Sample(NOW - timedelta(minutes=30), "claude", "5h", 100, RESET, 300, "desktop"),
         Sample(NOW, "claude", "300m:claude", 0, None, 300, "desktop-history"),
         Sample(NOW - timedelta(minutes=30), "claude", "7d", 24, RESET, 10080, "desktop"),
@@ -89,7 +87,7 @@ def test_claude_alias_cards_keep_newest_state_and_all_history_without_rewriting_
     cards = re.findall(r"<article.*?</article>", html, re.S)
     assert '<div class="stats"><div><b>0%</b><span>used</span>' in cards[0]
     assert '<div class="stats"><div><b>25%</b>' in cards[1]
-    chart = re.search(r'<script type="application/json" class="chart-data" data-for="c1-7d">(.*?)</script>', html)
+    chart = re.search(r'<script type="application/json" class="chart-data" data-for="c1">(.*?)</script>', html)
     points = json.loads(chart.group(1))["points"]
     assert {p["v"] for p in points} >= {"13%", "27%", "100%", "0%"}
     assert raw_before == (store.paths.samples.read_bytes(), store.paths.latest.read_bytes())
@@ -134,8 +132,8 @@ def test_expired_window_is_labelled_as_awaiting_a_sample(store):
     assert "7-day (Fable)" in html and "no reading for the new window yet" in html and "final use of that window" in html
     assert "window ended · awaiting a fresh sample" in html and "74%" in html
     assert html.count('class="pace"') == 0  # nothing to pace against until a reading for the new window arrives
-    assert html.count('<figure class="chart-figure"') == len(render.charts.SPANS) - 1  # no reading in the last 24 h, so no 24h figure
-    assert 'data-span="7d" data-auto="7d">' in html
+    assert html.count('<figure class="chart-figure"') == 1
+    assert 'data-span="14d"' in html
     lines = cli.status_lines(current(store.load(), store.latest(), NOW))
     assert lines == [f"Claude 7-day (Fable): previous window ended {render.fmt_local(ended)} at 74%; no reading for the new window yet"]
 
