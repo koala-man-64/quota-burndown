@@ -97,7 +97,11 @@ def canonical_sample(sample: Sample) -> Sample | None:
     scope_lower = scope.lower()
     if scope_lower == "codex_bengalfox":
         aliases = {300: "5h:spark", 10080: "7d:spark"}
-        return replace(sample, window=aliases[sample.window_min]) if sample.window_min in aliases else sample
+        sample = replace(sample, window=aliases[sample.window_min]) if sample.window_min in aliases else sample
+    if _is_spark_idle_placeholder(sample):
+        # The native rate-limit read reports an unused Spark 5-hour allowance with a
+        # rolling `now + 5h` reset. It is an idle sentinel, not an active window.
+        return replace(sample, resets_at=None)
     if scope_lower == "codex" and sample.window_min == 10080:
         return replace(sample, window="7d:codex")
     version = scope_lower.removeprefix("gpt-")
@@ -106,6 +110,18 @@ def canonical_sample(sample: Sample) -> Sample | None:
             return None
         return replace(sample, window=f"{base}:codex")
     return sample
+
+
+def _is_spark_idle_placeholder(sample: Sample) -> bool:
+    """Whether a Spark 5-hour reading is the provider's rolling idle sentinel."""
+    return bool(
+        sample.provider == "codex"
+        and sample.window.lower() == "5h:spark"
+        and sample.window_min == 300
+        and sample.used == 0
+        and sample.resets_at is not None
+        and abs((sample.resets_at - sample.ts).total_seconds() - sample.window_min * 60) <= RESET_TOLERANCE_S
+    )
 
 
 def canonical_samples(samples: list[Sample], *, preserve_resets: bool = True) -> list[Sample]:
@@ -133,7 +149,17 @@ def canonical_samples(samples: list[Sample], *, preserve_resets: bool = True) ->
         if prior is None or priority > prior[0]:
             claude[key] = priority, sample
     out.extend(record[1] for record in claude.values())
-    return sorted(out, key=lambda sample: sample.ts)
+    # Repeated native Spark polls emit the same idle sentinel. Keep the newest one
+    # for diagnostic visibility without making hundreds of false historical readings.
+    idle_spark = {}
+    retained = []
+    for sample in out:
+        if sample.provider == "codex" and sample.window == "5h:spark" and sample.used == 0 and sample.resets_at is None:
+            idle_spark[sample.key] = sample
+        else:
+            retained.append(sample)
+    retained.extend(idle_spark.values())
+    return sorted(retained, key=lambda sample: sample.ts)
 
 
 def group_instances(samples: list[Sample]) -> dict[str, list[WindowInstance]]:

@@ -113,6 +113,19 @@ def test_legacy_codex_versions_collapse_to_one_pool_while_spark_stays_separate()
     assert [sample.used for sample in out[1].samples] == [27.0, 28.0, 28.0]
 
 
+def test_spark_rolling_zero_readings_are_one_idle_sample_not_an_active_window():
+    now = START + timedelta(minutes=60)
+    readings = [
+        sample(now - timedelta(minutes=10), 0, now + timedelta(hours=4, minutes=50), "5h:spark", 300, "codex", "app-server"),
+        sample(now - timedelta(minutes=5), 0, now + timedelta(hours=4, minutes=55), "5h:spark", 300, "codex", "app-server"),
+        sample(now, 0, now + timedelta(hours=5), "5h:spark", 300, "codex", "app-server"),
+    ]
+    history = canonical_samples(readings)
+    assert len(history) == 1 and history[0].resets_at is None and history[0].ts == now
+    bd = current(readings, {"codex:5h:spark": readings[-1]}, now)[0]
+    assert bd.status == "idle" and bd.resets_at is None and len(bd.samples) == 1
+
+
 def test_current_without_history_still_computes():
     now = START + timedelta(minutes=60)
     out = current([], {"claude:5h": sample(now, 20.0)}, now)

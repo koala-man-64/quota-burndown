@@ -33,6 +33,9 @@ def test_grouped_slots_reference_shared_pools_and_live_readings(tmp_path):
     assert [limit["window"]["used_pct"] for limit in codex["limits"]] == [37, 0, 100]
     assert codex["limits"][1]["pool_id"] == codex["limits"][2]["pool_id"]
     assert codex["limits"][1]["constraining_window"] == "10080m"
+    assert codex["limits"][1]["window"]["remaining_pct"] == 0
+    assert codex["limits"][1]["window"]["reported_remaining_pct"] == 100
+    assert "Blocked by the shared 10080m limit" in codex["limits"][1]["availability_reason"]
     assert claude["limits"][0]["pool_id"] == claude["limits"][1]["pool_id"]
     assert claude["limits"][2]["pool_id"] is None
     assert "Fable" in claude["limits"][2]["availability_reason"]

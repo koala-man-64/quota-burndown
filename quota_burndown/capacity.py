@@ -121,6 +121,25 @@ def provider_groups(pools: list[dict]) -> list[dict]:
                     reason = "Configured Antigravity sources report activity, not Gemini quota limits."
                 elif slot == "fable-weekly":
                     reason = "Supported Claude status-line and desktop history sources do not report Fable weekly quota."
+            elif pool and pool.get("allowance_state") in ("exhausted", "reserve_reached") and pool.get("constraining_window") != window.get("window"):
+                constraint = next((item for item in pool.get("windows", []) if item.get("window") == pool.get("constraining_window")), None)
+                if constraint:
+                    # The raw sibling reading is still useful diagnostic evidence, but it
+                    # cannot be presented as usable while the shared pool is constrained.
+                    window = copy.deepcopy(window)
+                    window.update(
+                        reported_remaining_pct=window.get("remaining_pct"),
+                        reported_usable_pct=window.get("usable_pct"),
+                        reported_resets_at=window.get("resets_at"),
+                        remaining_pct=constraint.get("remaining_pct"),
+                        usable_pct=constraint.get("usable_pct"),
+                        resets_at=constraint.get("resets_at"),
+                        runway_minutes=constraint.get("runway_minutes"),
+                        allowance_state=pool.get("allowance_state"),
+                        effective_constraint_window=constraint.get("window"),
+                    )
+                    state = "exhausted" if pool.get("allowance_state") == "exhausted" else "at its reserve"
+                    reason = f"Blocked by the shared {constraint.get('window')} limit, which is {state}."
             return {
                 "id": f"{provider}:{slot}" + (":" + pool["id"] if pool else ""),
                 "label": label, "pool_id": pool["id"] if pool else None,

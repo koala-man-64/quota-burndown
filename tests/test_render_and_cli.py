@@ -69,6 +69,21 @@ def test_render_collapses_legacy_gpt_versions_into_three_allowance_cards(store):
     assert "7-day (GPT-5.6)" not in html and "7-day (GPT-6)" not in html
 
 
+def test_render_spark_idle_sentinel_is_one_non_actionable_reading(store):
+    store.append([
+        Sample(NOW - timedelta(minutes=10), "codex", "5h:spark", 0, NOW + timedelta(hours=4, minutes=50), 300, "app-server"),
+        Sample(NOW - timedelta(minutes=5), "codex", "5h:spark", 0, NOW + timedelta(hours=4, minutes=55), 300, "app-server"),
+        Sample(NOW, "codex", "5h:spark", 0, NOW + timedelta(hours=5), 300, "app-server"),
+    ])
+
+    html = render.render_html(store, now=NOW)
+
+    assert html.count("<article") == 1
+    assert "no active window" in html and 'class="pace"' not in html and 'class="proj"' not in html
+    payload = re.search(r'<script type="application/json" class="chart-data" data-for="c1">(.*?)</script>', html)
+    assert len(json.loads(payload.group(1))["points"]) == 1
+
+
 def test_claude_alias_cards_keep_newest_state_and_all_history_without_rewriting_store(store):
     store.append([
         Sample(NOW - timedelta(hours=9), "claude", "5h", 13, NOW - timedelta(hours=7), 300, "desktop"),
