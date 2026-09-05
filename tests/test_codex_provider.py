@@ -24,8 +24,8 @@ def write_rollout(path, lines, trailing_partial=""):
 
 
 def test_model_family():
-    assert codex.model_family("gpt-5.6-sol") == "gpt-5.6"
-    assert codex.model_family("gpt-5.6-terra") == "gpt-5.6"
+    assert codex.model_family("gpt-5.6-sol") == "codex"
+    assert codex.model_family("gpt-6-terra") == "codex"
     assert codex.model_family("GPT-5.3-codex-spark") == "spark"
     assert codex.model_family("gpt-oss:20b") == "gpt-oss-20b"
     assert codex.model_family("o3") == "o3"
@@ -39,7 +39,7 @@ def test_samples_from_line_primary_and_secondary_keyed_by_family():
     assert samples[0].ts == datetime(2026, 9, 2, 23, 21, 33, 504000, tzinfo=timezone.utc)
     assert samples[0].resets_at == datetime.fromtimestamp(1788747992, tz=timezone.utc)
     assert samples[0].source == "rollout" and samples[0].provider == "codex"
-    assert [s.window for s in codex.samples_from_line(line, model="gpt-5.6-terra")] == ["7d:gpt-5.6", "5h:gpt-5.6"]
+    assert [s.window for s in codex.samples_from_line(line, model="gpt-5.6-terra")] == ["7d:codex"]
     assert codex.samples_from_line(line) == []  # no model known yet: not attributable to a pool
     assert codex.samples_from_line('{"type":"event_msg","payload":{"type":"token_count","rate_limits":null}}', model="gpt-5.6-sol") == []
     assert codex.samples_from_line("garbage", model="gpt-5.6-sol") == []
@@ -69,7 +69,7 @@ def test_scan_file_tracks_model_and_stops_before_partial_line(tmp_path):
         event("2026-09-02T10:05:00Z", 11),
     ], trailing_partial='{"timestamp":"2026-09-02T10:06:00Z","payload":{"rate_limits":')
     samples, offset, model = codex.scan_file(path, 0)
-    assert [(s.window, s.used) for s in samples] == [("7d:gpt-5.6", 10.0), ("7d:spark", 11.0)]
+    assert [(s.window, s.used) for s in samples] == [("7d:codex", 10.0), ("7d:spark", 11.0)]
     assert model == "gpt-5.3-codex-spark"
     # complete the partial line and rescan from the returned offset with the remembered model
     with open(path, "a", encoding="utf-8", newline="\n") as fh:
@@ -90,7 +90,7 @@ def test_collect_is_incremental_and_persists_model(tmp_path):
     state = tmp_path / "state.json"
 
     samples, warnings, stats = codex.collect(state, home=home, since_days=14)
-    assert [(s.window, s.used) for s in samples] == [("7d:gpt-5.6", 10.0)] and warnings == []
+    assert [(s.window, s.used) for s in samples] == [("7d:codex", 10.0)] and warnings == []
     assert stats == {"files_seen": 1, "files_scanned": 1}
     assert json.loads(state.read_text(encoding="utf-8"))[str(recent)]["model"] == "gpt-5.6-sol"
 
@@ -100,7 +100,7 @@ def test_collect_is_incremental_and_persists_model(tmp_path):
     with open(recent, "a", encoding="utf-8", newline="\n") as fh:
         fh.write(event("2026-09-02T10:10:00Z", 11) + "\n")  # no new turn_context: the remembered model applies
     samples, _, stats = codex.collect(state, home=home, since_days=14)
-    assert [(s.window, s.used) for s in samples] == [("7d:gpt-5.6", 11.0)] and stats["files_scanned"] == 1
+    assert [(s.window, s.used) for s in samples] == [("7d:codex", 11.0)] and stats["files_scanned"] == 1
 
     samples, _, stats = codex.collect(state, home=home, full=True)
     assert sorted(s.used for s in samples) == [10.0, 11.0, 50.0]

@@ -94,18 +94,23 @@ def test_current_hides_windows_that_ended_long_ago_but_keeps_recent_ones():
     assert current([], long_ago, now) == []
 
 
-def test_two_codex_weekly_pools_stay_separate():
+def test_legacy_codex_versions_collapse_to_one_pool_while_spark_stays_separate():
     now = START + timedelta(minutes=60)
+    earlier = now - timedelta(minutes=5)
     latest = {
-        "codex:7d:gpt-5.6": sample(now, 100.0, RESET + timedelta(days=3), "7d:gpt-5.6", 10080, "codex", "rollout"),
+        "codex:7d:gpt-5.6": sample(earlier, 27.0, RESET + timedelta(days=3), "7d:gpt-5.6", 10080, "codex", "rollout"),
+        "codex:7d:gpt-6": sample(now, 28.0, RESET + timedelta(days=3), "7d:gpt-6", 10080, "codex", "rollout"),
+        "codex:5h:gpt-5.6": sample(now, 9.0, RESET, "5h:gpt-5.6", 300, "codex", "rollout"),
         "codex:7d:spark": sample(now, 50.0, RESET + timedelta(days=4), "7d:spark", 10080, "codex", "rollout"),
         "codex:5h:spark": sample(now, 8.0, RESET, "5h:spark", 300, "codex", "rollout"),
+        "codex:10080m:Codex": sample(now, 28.0, RESET + timedelta(days=3), "10080m:Codex", 10080, "codex", "app-server"),
+        "codex:10080m:Codex_bengalfox": sample(now, 50.0, RESET + timedelta(days=4), "10080m:Codex_bengalfox", 10080, "codex", "app-server"),
+        "codex:300m:Codex_bengalfox": sample(now, 8.0, RESET, "300m:Codex_bengalfox", 300, "codex", "app-server"),
     }
-    out = current([], latest, now)
-    assert [bd.key for bd in out] == ["codex:5h:spark", "codex:7d:gpt-5.6", "codex:7d:spark"]
-    assert [bd.used for bd in out] == [8.0, 100.0, 50.0]
-    grouped = group_instances(list(latest.values()))
-    assert set(grouped) == set(latest) and all(len(v) == 1 for v in grouped.values())
+    out = current(list(latest.values()), latest, now)
+    assert [bd.key for bd in out] == ["codex:5h:spark", "codex:7d:codex", "codex:7d:spark"]
+    assert [bd.used for bd in out] == [8.0, 28.0, 50.0]
+    assert [sample.used for sample in out[1].samples] == [27.0, 28.0, 28.0]
 
 
 def test_current_without_history_still_computes():
