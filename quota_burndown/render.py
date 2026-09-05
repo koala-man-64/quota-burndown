@@ -12,7 +12,7 @@ from pathlib import Path
 from . import __version__, charts, ledger, usage_report
 from .charts import ChartData
 from .ledger import Totals
-from .model import Burndown, current
+from .model import Burndown, canonical_samples, current
 from .store import Sample, Store
 from .util import atomic_write_text, fmt_local, fmt_minutes, now_utc, read_json, to_local
 
@@ -871,7 +871,7 @@ def render_html(
     """The whole page. `days` sizes how much sample history is loaded (at least 31 days, so
     every chart span up to 30 days can be drawn); the range control picks the span shown."""
     now = now or now_utc()
-    samples = store.load(since=now - timedelta(days=max(days, 31)))
+    samples = canonical_samples(store.load(since=now - timedelta(days=max(days, 31))))
     latest = store.latest()
     burndowns = current(samples, latest, now)
     by_key: dict[str, list[Sample]] = {}

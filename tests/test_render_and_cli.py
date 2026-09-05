@@ -71,6 +71,30 @@ def test_render_collapses_legacy_gpt_versions_into_three_allowance_cards(store):
     assert "7-day (GPT-5.6)" not in html and "7-day (GPT-6)" not in html
 
 
+def test_claude_alias_cards_keep_newest_state_and_all_history_without_rewriting_store(store):
+    store.append([
+        Sample(NOW - timedelta(days=2), "claude", "5h", 13, RESET - timedelta(days=2), 300, "desktop"),
+        Sample(NOW - timedelta(days=1), "claude", "300m:claude", 27, RESET - timedelta(days=1), 300, "desktop-history"),
+        Sample(NOW - timedelta(minutes=30), "claude", "5h", 100, RESET, 300, "desktop"),
+        Sample(NOW, "claude", "300m:claude", 0, None, 300, "desktop-history"),
+        Sample(NOW - timedelta(minutes=30), "claude", "7d", 24, RESET, 10080, "desktop"),
+        Sample(NOW, "claude", "10080m:Claude", 25, RESET, 10080, "desktop-history"),
+    ])
+    raw_before = store.paths.samples.read_bytes(), store.paths.latest.read_bytes()
+    html = render.render_html(store, now=NOW)
+    assert html.count("<article") == 2
+    assert html.count("<h3>5-hour session</h3>") == 1
+    assert html.count("<h3>7-day (all models)</h3>") == 1
+    assert "300m (Claude)" not in html and "10080m (Claude)" not in html
+    cards = re.findall(r"<article.*?</article>", html, re.S)
+    assert '<div class="stats"><div><b>0%</b><span>used</span>' in cards[0]
+    assert '<div class="stats"><div><b>25%</b>' in cards[1]
+    chart = re.search(r'<script type="application/json" class="chart-data" data-for="c1-7d">(.*?)</script>', html)
+    points = json.loads(chart.group(1))["points"]
+    assert {p["v"] for p in points} >= {"13%", "27%", "100%", "0%"}
+    assert raw_before == (store.paths.samples.read_bytes(), store.paths.latest.read_bytes())
+
+
 def test_cli_quota_backfill_respects_since_days_and_rescan(paths, monkeypatch, tmp_path, capsys):
     import os
     import time
