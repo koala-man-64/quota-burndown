@@ -1,7 +1,7 @@
 """Burndown math: where you are versus a linear burn of the window's budget."""
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
 from .store import Sample
@@ -75,6 +75,30 @@ class Burndown:
 
 def sort_key(bd: Burndown) -> tuple:
     return (PROVIDER_ORDER.get(bd.provider, 9), bd.window_min, bd.window)
+
+
+def canonical_sample(sample: Sample) -> Sample | None:
+    """Fold legacy per-version Codex keys into the shared standard Codex allowance pool.
+
+    Older collectors stored numeric GPT versions independently (for example
+    ``7d:gpt-5.6`` and ``7d:gpt-6``), even though they report the same limit. Preserve the
+    append-only store and normalize those readings at the model boundary.
+    """
+    if sample.provider != "codex":
+        return sample
+    base, separator, scope = sample.window.partition(":")
+    scope_lower = scope.lower()
+    if scope_lower == "codex_bengalfox":
+        aliases = {300: "5h:spark", 10080: "7d:spark"}
+        return replace(sample, window=aliases[sample.window_min]) if sample.window_min in aliases else sample
+    if scope_lower == "codex" and sample.window_min == 10080:
+        return replace(sample, window="7d:codex")
+    version = scope_lower.removeprefix("gpt-")
+    if separator and scope_lower.startswith("gpt-") and version.replace(".", "").isdigit():
+        if sample.window_min != 10080:
+            return None
+        return replace(sample, window=f"{base}:codex")
+    return sample
 
 
 def group_instances(samples: list[Sample]) -> dict[str, list[WindowInstance]]:
@@ -166,6 +190,16 @@ def idle(sample: Sample, now: datetime) -> Burndown:
 
 def current(samples: list[Sample], latest: dict[str, Sample], now: datetime) -> list[Burndown]:
     """One burndown per window key, built from the latest reading and that window's history."""
+    samples = [normalized for sample in samples if (normalized := canonical_sample(sample)) is not None]
+    canonical_latest: dict[str, Sample] = {}
+    for sample in latest.values():
+        sample = canonical_sample(sample)
+        if sample is None:
+            continue
+        prior = canonical_latest.get(sample.key)
+        if prior is None or sample.ts >= prior.ts:
+            canonical_latest[sample.key] = sample
+    latest = canonical_latest
     grouped = group_instances(samples)
     out: list[Burndown] = []
     for key, last in latest.items():

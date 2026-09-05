@@ -49,6 +49,28 @@ def test_render_html_contains_cards_and_charts(store):
     assert "window reset" in html and "linear pace" in html
 
 
+def test_render_collapses_legacy_gpt_versions_into_three_allowance_cards(store):
+    weekly_reset = NOW + timedelta(days=3)
+    store.append([
+        Sample(NOW - timedelta(minutes=5), "codex", "7d:gpt-5.6", 27.0, weekly_reset, 10080, "rollout"),
+        Sample(NOW, "codex", "7d:gpt-6", 28.0, weekly_reset, 10080, "rollout"),
+        Sample(NOW, "codex", "5h:gpt-5.6", 9.0, NOW + timedelta(hours=2), 300, "rollout"),
+        Sample(NOW, "codex", "5h:spark", 12.0, NOW + timedelta(hours=2), 300, "rollout"),
+        Sample(NOW, "codex", "7d:spark", 50.0, NOW + timedelta(days=4), 10080, "rollout"),
+        Sample(NOW, "codex", "10080m:Codex", 28.0, weekly_reset, 10080, "app-server"),
+        Sample(NOW, "codex", "300m:Codex_bengalfox", 12.0, NOW + timedelta(hours=2), 300, "app-server"),
+        Sample(NOW, "codex", "10080m:Codex_bengalfox", 50.0, NOW + timedelta(days=4), 10080, "app-server"),
+    ])
+
+    html = render.render_html(store, now=NOW)
+
+    assert html.count("<article") == 3
+    assert html.count("<h3>7-day (Codex)</h3>") == 1
+    assert html.count("<h3>5-hour session (Spark)</h3>") == 1
+    assert html.count("<h3>7-day (Spark)</h3>") == 1
+    assert "7-day (GPT-5.6)" not in html and "7-day (GPT-6)" not in html
+
+
 def test_cli_quota_backfill_respects_since_days_and_rescan(paths, monkeypatch, tmp_path, capsys):
     import os
     import time
@@ -66,14 +88,14 @@ def test_cli_quota_backfill_respects_since_days_and_rescan(paths, monkeypatch, t
 
     assert cli.main(["--home", str(paths.home), "backfill", "--since-days", "30"]) == 0
     assert '"files_scanned": 1' in capsys.readouterr().out
-    assert set(Store(paths).latest()) == {"codex:7d:gpt-5.6"}
+    assert set(Store(paths).latest()) == {"codex:7d:codex"}
     assert cli.main(["--home", str(paths.home), "backfill", "--since-days", "30"]) == 0
     assert '"files_scanned": 0' in capsys.readouterr().out  # state says the file is already read
     assert cli.main(["--home", str(paths.home), "backfill", "--since-days", "30", "--rescan"]) == 0
     text = capsys.readouterr().out
     assert "forgot the Codex quota scan state" in text and '"files_scanned": 1' in text
     assert cli.main(["--home", str(paths.home), "backfill"]) == 0  # no range: everything, archive included
-    assert set(Store(paths).latest()) == {"codex:7d:gpt-5.6", "codex:7d:spark"}
+    assert set(Store(paths).latest()) == {"codex:7d:codex", "codex:7d:spark"}
 
 
 def test_expired_window_is_labelled_as_awaiting_a_sample(store):
@@ -98,6 +120,7 @@ def test_window_titles():
     assert render.window_title("5h") == "5-hour session"
     assert render.window_title("7d:fable") == "7-day (Fable)"
     assert render.window_title("7d:gpt-5.6") == "7-day (GPT-5.6)"
+    assert render.window_title("7d:codex") == "7-day (Codex)"
     assert render.window_title("5h:spark") == "5-hour session (Spark)"
     assert render.window_title("1d") == "1d"
 

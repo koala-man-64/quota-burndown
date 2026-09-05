@@ -5,10 +5,11 @@ used_percent, window_minutes and resets_at for each active window. Scanning roll
 full history for free, with no network call and no credentials. Files are scanned
 incrementally: a state file remembers the byte offset reached in each rollout.
 
-Codex keeps separate limit pools per model family (verified 2026-09-04: `gpt-5.6-*` threads
-report one weekly limit, `gpt-5.3-codex-spark` threads a 5-hour and a different weekly
-limit), so each window is keyed by the family of the model the thread was running, taken
-from the last `turn_context` seen in the file: `7d:gpt-5.6`, `5h:spark`, `7d:spark`. A
+Codex keeps separate limit pools for the standard Codex models and Spark (verified
+2026-09-05: standard GPT model versions share one weekly `codex` limit, while
+`gpt-5.3-codex-spark` reports a 5-hour and a different weekly limit). Each window is keyed
+by that allowance pool, taken from the last `turn_context` seen in the file:
+`7d:codex`, `5h:spark`, `7d:spark`. A
 reading before any `turn_context` (copied parent history at the top of a subagent rollout)
 is skipped; the parent's own rollout carries it with its model.
 """
@@ -31,7 +32,7 @@ _GPT_FAMILY = re.compile(r"^(gpt-\d+(?:\.\d+)?)")
 
 
 def model_family(model: str) -> str:
-    """`gpt-5.6-sol` -> `gpt-5.6`; anything mentioning spark -> `spark`; else a slug."""
+    """Map a model to its allowance pool: numeric GPTs share `codex`; Spark is separate."""
     text = (model or "").strip().lower()
     if not text:
         return ""
@@ -39,7 +40,7 @@ def model_family(model: str) -> str:
         return "spark"
     match = _GPT_FAMILY.match(text)
     if match:
-        return match.group(1)
+        return "codex"
     return re.sub(r"[^a-z0-9.]+", "-", text).strip("-")[:24]
 
 
@@ -106,6 +107,8 @@ def samples_from_line(line: str, fallback_ts: datetime | None = None, model: str
             percent = float(percent)
         except (TypeError, ValueError):
             continue
+        if family == "codex" and minutes != 10080:
+            continue  # the standard Codex allowance is weekly-only; Spark owns 5h + 7d
         resets_at = from_epoch(block.get("resets_at"))
         if resets_at is not None and resets_at < ts:
             continue  # a reading for a window that had already ended when it was written
