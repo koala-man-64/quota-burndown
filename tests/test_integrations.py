@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import io
 import json
 import threading
+import pytest
 from pathlib import Path
 
 from quota_burndown import integrations
@@ -10,6 +11,54 @@ from quota_burndown.integrations import missing_windows, observations_from_limit
 
 UTC = timezone.utc
 T0 = datetime(2026, 9, 5, tzinfo=UTC)
+
+
+def test_command_prefers_native_executable(monkeypatch):
+    monkeypatch.setattr(integrations.shutil, "which", lambda name: "C:/CLI/codex.exe" if name == "codex.exe" else None)
+    assert integrations._command() == ["C:/CLI/codex.exe", "app-server"]
+
+
+@pytest.mark.parametrize("shim", ["codex.cmd", "codex.ps1"])
+@pytest.mark.parametrize("layout", ["nested", "hoisted", "legacy"])
+@pytest.mark.parametrize("machine,arch,target", [("AMD64", "x64", "x86_64"), ("ARM64", "arm64", "aarch64")])
+def test_command_resolves_npm_binary(tmp_path, monkeypatch, shim, layout, machine, arch, target):
+    prefix = tmp_path / "npm with spaces"
+    packages = prefix / "node_modules" / "@openai"
+    root = {"nested": packages / "codex" / "node_modules" / "@openai" / f"codex-win32-{arch}",
+            "hoisted": packages / f"codex-win32-{arch}", "legacy": packages / "codex"}[layout]
+    binary = root / "vendor" / f"{target}-pc-windows-msvc" / "bin" / "codex.exe"
+    binary.parent.mkdir(parents=True)
+    binary.touch()
+    lookup = "codex" if shim.endswith(".cmd") else "codex.ps1"
+    monkeypatch.setattr(integrations.shutil, "which", lambda name: str(prefix / shim) if name == lookup else None)
+    monkeypatch.setattr(integrations.platform, "machine", lambda: machine)
+    assert integrations._command() == [str(binary), "app-server"]
+    binary.unlink()
+    assert integrations._command() is None
+
+
+def test_command_accepts_posix_cli(monkeypatch):
+    monkeypatch.setattr(integrations.shutil, "which", lambda name: "/usr/local/bin/codex" if name == "codex" else None)
+    assert integrations._command() == ["/usr/local/bin/codex", "app-server"]
+
+
+def test_collector_recovers_when_cli_appears(monkeypatch):
+    calls = []
+    states = []
+    class Stop:
+        def is_set(self): return False
+        def wait(self, delay):
+            calls.append(delay)
+            return len(calls) == 2
+    commands = iter([None, ["found", "app-server"]])
+    monkeypatch.setattr(integrations, "_command", lambda: next(commands))
+    def launch(command, **kwargs):
+        assert command == ["found", "app-server"]
+        raise OSError("test launch reached")
+    monkeypatch.setattr(integrations.subprocess, "Popen", launch)
+    integrations.run_codex(Stop(), lambda _: None, lambda *args: states.append(args), lambda: False)
+    assert states == [("codex", "unavailable", "codex launcher not found"), ("codex", "degraded", "OSError")]
+    assert len(calls) == 2
 
 
 def test_limit_ids_define_shared_pools_and_invalid_percent_is_unknown():

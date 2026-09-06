@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import platform
 import queue
 import shutil
 import subprocess
@@ -244,7 +245,27 @@ def missing_windows(previous: dict[tuple[str, str, str, str], Observation], curr
 def _command() -> list[str] | None:
     # A .cmd shim cannot be used as a hidden long-lived Windows subprocess.
     executable = shutil.which("codex.exe")
-    return [executable, "app-server"] if executable else None
+    if executable:
+        return [executable, "app-server"]
+    launcher = shutil.which("codex") or shutil.which("codex.ps1")
+    if not launcher:
+        return None
+    if Path(launcher).suffix.lower() not in {".cmd", ".ps1", ".bat"}:
+        return [launcher, "app-server"]
+    architecture = {"amd64": "x64", "x86_64": "x64", "arm64": "arm64", "aarch64": "arm64"}.get(platform.machine().lower())
+    if not architecture:
+        return None
+    target = "aarch64" if architecture == "arm64" else "x86_64"
+    packages = Path(launcher).parent / "node_modules" / "@openai"
+    package = packages / "codex"
+    # npm can nest or hoist the optional platform package. Older CLI releases
+    # bundle the vendor directory directly in the main package.
+    for root in (package / "node_modules" / "@openai" / f"codex-win32-{architecture}",
+                 packages / f"codex-win32-{architecture}", package):
+        binary = root / "vendor" / f"{target}-pc-windows-msvc" / "bin" / "codex.exe"
+        if binary.is_file():
+            return [str(binary), "app-server"]
+    return None
 
 
 def _run_native(stop: threading.Event, publish: Callable[[list[Observation]], None],
