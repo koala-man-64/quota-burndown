@@ -215,12 +215,15 @@ class CapacityService:
                         # An explicit backfill may hold the independent ledger lease.
                         pass
                 conn = ledger.connect(self.paths.usage_db)
+                now = now_utc()
                 try:
-                    self._usage = json.dumps(usage_report.payload(conn)).encode()
-                    self._efficiency = json.dumps(usage_report.efficiency_payload(conn)).encode()
+                    self._usage = json.dumps(usage_report.payload(conn, now)).encode()
+                    efficiency = usage_report.efficiency_payload(conn, now)
+                    efficiency["daily_models_html"] = render.daily_models_html(efficiency["daily_models"])
+                    self._efficiency = json.dumps(efficiency).encode()
                 finally:
                     conn.close()
-                self._page = render.render_html(self.store, usage_db=self.paths.usage_db,
+                self._page = render.render_html(self.store, now=now, usage_db=self.paths.usage_db,
                                                capacity=self.state.read(), live=True).encode("utf-8")
                 self._cache_legacy()
                 self.health("ledger", "healthy")

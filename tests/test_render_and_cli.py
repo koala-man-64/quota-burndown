@@ -28,26 +28,26 @@ def test_render_html_contains_cards_and_charts(store):
     seed(store)
     html = render.render_html(store, now=NOW, warnings=["claude: test warning"])
     assert "<title>Quota Burndown</title>" in html
-    assert html.count("<article") == 4
-    assert "status-over" in html and "5-hour session" in html and "7-day (all models)" in html
+    assert html.count("<article") == 2
+    assert "status-over" in html and "5-hour session" not in html and "7-day (all models)" in html
+    assert '<div class="history-grid">' in html
     assert "claude: test warning" in html
-    assert html.count('<figure class="chart-figure"') == 4 and html.count('<svg class="chart"') == 4
-    assert html.count('data-domain-start=') == 4 and html.count('data-domain-end=') == 4
-    assert html.count('class="pace"') == 3 and html.count('class="proj"') >= 1  # the idle codex:5h card draws its 0% reading but no pace
+    assert html.count('<figure class="chart-figure"') == 2 and html.count('<svg class="chart"') == 2
+    assert html.count('data-domain-start=') == 2 and html.count('data-domain-end=') == 2
+    assert html.count('class="pace"') == 2 and html.count('class="proj"') >= 1
     assert 'class="ideal"' not in html and 'class="reset"' not in html
-    assert html.count('class="used"') >= 4 and html.count("<details") == 4
-    assert "no active window" in html
+    assert html.count('class="used"') >= 2 and html.count("<details") == 2
     assert 'class="range"' not in html and 'data-span="24h"' not in html and "quota-burndown.range" not in html
     payloads = re.findall(r'<script type="application/json" class="chart-data" data-for="c\d+">(.*?)</script>', html)
-    assert len(payloads) == 4
+    assert len(payloads) == 2
     first = json.loads(payloads[0])
-    assert first["points"] and {"x", "y", "t", "v"} <= set(first["points"][0]) and first["points"][-1]["v"] == "60%"
+    assert first["points"] and {"x", "y", "t", "v"} <= set(first["points"][0]) and first["points"][-1]["v"] == "27%"
     assert first["reset"].startswith("resets ")
     assert html.count("<script>") == 1 and "src=" not in html and 'id="chart-tooltip"' in html
     assert "window reset" in html and "linear pace" in html
 
 
-def test_render_collapses_legacy_gpt_versions_into_three_allowance_cards(store):
+def test_render_collapses_legacy_gpt_versions_and_shows_spark_weekly(store):
     weekly_reset = NOW + timedelta(days=3)
     store.append([
         Sample(NOW - timedelta(minutes=5), "codex", "7d:gpt-5.6", 27.0, weekly_reset, 10080, "rollout"),
@@ -62,14 +62,15 @@ def test_render_collapses_legacy_gpt_versions_into_three_allowance_cards(store):
 
     html = render.render_html(store, now=NOW)
 
-    assert html.count("<article") == 3
+    assert html.count("<article") == 2
     assert html.count("<h3>7-day (Codex)</h3>") == 1
-    assert html.count("<h3>5-hour session (Spark)</h3>") == 1
+    assert "5-hour session" not in html
     assert html.count("<h3>7-day (Spark)</h3>") == 1
+    assert "· Codex Spark</h2>" in html
     assert "7-day (GPT-5.6)" not in html and "7-day (GPT-6)" not in html
 
 
-def test_render_spark_idle_sentinel_is_one_non_actionable_reading(store):
+def test_render_with_only_five_hour_history_has_no_chart_ui(store):
     store.append([
         Sample(NOW - timedelta(minutes=10), "codex", "5h:spark", 0, NOW + timedelta(hours=4, minutes=50), 300, "app-server"),
         Sample(NOW - timedelta(minutes=5), "codex", "5h:spark", 0, NOW + timedelta(hours=4, minutes=55), 300, "app-server"),
@@ -78,13 +79,13 @@ def test_render_spark_idle_sentinel_is_one_non_actionable_reading(store):
 
     html = render.render_html(store, now=NOW)
 
-    assert html.count("<article") == 1
-    assert "no active window" in html and 'class="pace"' not in html and 'class="proj"' not in html
-    payload = re.search(r'<script type="application/json" class="chart-data" data-for="c1">(.*?)</script>', html)
-    assert len(json.loads(payload.group(1))["points"]) == 1
+    assert html.count("<article") == 0
+    assert "No historical charts to show." in html
+    assert 'class="legend"' not in html and 'id="chart-tooltip"' not in html
+    assert '<svg class="chart"' not in html and 'class="chart-data"' not in html
 
 
-def test_claude_alias_cards_keep_newest_state_and_all_history_without_rewriting_store(store):
+def test_claude_aliases_keep_weekly_history_without_rewriting_store(store):
     store.append([
         Sample(NOW - timedelta(hours=9), "claude", "5h", 13, NOW - timedelta(hours=7), 300, "desktop"),
         Sample(NOW - timedelta(hours=8), "claude", "300m:claude", 27, NOW - timedelta(hours=7), 300, "desktop-history"),
@@ -95,16 +96,15 @@ def test_claude_alias_cards_keep_newest_state_and_all_history_without_rewriting_
     ])
     raw_before = store.paths.samples.read_bytes(), store.paths.latest.read_bytes()
     html = render.render_html(store, now=NOW)
-    assert html.count("<article") == 2
-    assert html.count("<h3>5-hour session</h3>") == 1
+    assert html.count("<article") == 1
+    assert "5-hour session" not in html
     assert html.count("<h3>7-day (all models)</h3>") == 1
     assert "300m (Claude)" not in html and "10080m (Claude)" not in html
     cards = re.findall(r"<article.*?</article>", html, re.S)
-    assert '<div class="stats"><div><b>0%</b><span>used</span>' in cards[0]
-    assert '<div class="stats"><div><b>25%</b>' in cards[1]
+    assert '<div class="stats"><div><b>25%</b>' in cards[0]
     chart = re.search(r'<script type="application/json" class="chart-data" data-for="c1">(.*?)</script>', html)
     points = json.loads(chart.group(1))["points"]
-    assert {p["v"] for p in points} >= {"13%", "27%", "100%", "0%"}
+    assert {p["v"] for p in points} == {"24%", "25%"}
     assert raw_before == (store.paths.samples.read_bytes(), store.paths.latest.read_bytes())
 
 
@@ -164,7 +164,7 @@ def test_window_titles():
 
 def test_render_empty_store(store):
     html = render.render_html(store, now=NOW)
-    assert "No samples yet" in html
+    assert "No historical charts to show." in html
 
 
 def test_write_html(store, paths):
@@ -206,7 +206,8 @@ def test_status_lines_text(store):
     assert any("no active window" in line for line in out)
 
 
-def test_cli_status_json_and_render(paths, store, capsys):
+def test_cli_status_json_and_render(paths, store, capsys, monkeypatch):
+    monkeypatch.setattr(cli, "now_utc", lambda: NOW)
     seed(store)
     assert cli.main(["--home", str(paths.home), "status", "--json"]) == 0
     data = json.loads(capsys.readouterr().out)

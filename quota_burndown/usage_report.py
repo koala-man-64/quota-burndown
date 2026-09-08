@@ -279,6 +279,46 @@ def efficiency_rows(rows: Sequence[sqlite3.Row], dimension: str) -> list[dict]:
     return sorted(out, key=lambda item: (-item["requests"], item["key"]))
 
 
+def daily_model_payload(conn: sqlite3.Connection, now: datetime) -> dict:
+    """Recorded totals for seven local calendar dates, without estimating missing tokens."""
+    today = to_local(now).date()
+    dates = [(today - timedelta(days=offset)).isoformat() for offset in range(6, -1, -1)]
+    providers = {provider: {} for provider in ledger.PROVIDERS}
+    # Read a bounded superset, then bucket each timestamp in its own local offset.
+    # Subtracting days from today's fixed UTC offset would misclassify DST boundaries.
+    for row in ledger.rows(conn, since=now - timedelta(days=8), kind=ledger.REQUEST):
+        ts = ledger.row_ts(row)
+        day = to_local(ts).date().isoformat()
+        if ts > now or day not in dates:
+            continue
+        models = providers.setdefault(row["provider"], {})
+        model = (row["model"] or "").strip()
+        item = models.setdefault(model, {
+            "model": model, "label": model or "Unknown model",
+            "color": f'hsl({int(hashlib.sha256(model.encode()).hexdigest()[:8], 16) % 36000 / 100:.2f}, 65%, 62%)',
+            "tokens": [0] * 7, "recorded_requests": 0, "excluded_requests": 0,
+        })
+        if row["total_tokens"] is None or row["input_tokens_inferred"] is not None:
+            item["excluded_requests"] += 1
+        else:
+            item["tokens"][dates.index(day)] += int(row["total_tokens"])
+            item["recorded_requests"] += 1
+    groups = []
+    for provider, models in sorted(providers.items()):
+        series = sorted(models.values(), key=lambda item: item["model"])
+        for item in series:
+            item["total_tokens"] = sum(item["tokens"])
+        groups.append({
+            "provider": provider, "label": PROVIDER_TITLES.get(provider, provider),
+            "models": series,
+            "daily_tokens": [sum(item["tokens"][i] for item in series) for i in range(7)],
+            "total_tokens": sum(item["total_tokens"] for item in series),
+            "recorded_requests": sum(item["recorded_requests"] for item in series),
+            "excluded_requests": sum(item["excluded_requests"] for item in series),
+        })
+    return {"dates": dates, "calendar": "local", "through": iso(now), "providers": groups}
+
+
 def efficiency_payload(conn: sqlite3.Connection, now: datetime | None = None, days: int = 7) -> dict:
     """Dashboard-ready, local-ledger efficiency drilldowns for the rolling range."""
     now = now or now_utc()
@@ -294,6 +334,7 @@ def efficiency_payload(conn: sqlite3.Connection, now: datetime | None = None, da
         "generated_at": iso(now), "days": days,
         "by_session": sessions,
         "by_model_effort": efficiency_rows(rows, "model_effort"),
+        "daily_models": daily_model_payload(conn, now),
         "insights": insights,
         "note": "Uncached input is normalized for presentation only. Antigravity exact token fields remain unknown.",
     }
