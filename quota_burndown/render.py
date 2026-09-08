@@ -17,7 +17,7 @@ from .store import Sample, Store
 from .util import atomic_write_text, fmt_local, fmt_minutes, now_utc, read_json, to_local
 
 STALE_MIN = 20
-PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex"}
+PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex", "codex-spark": "Codex Spark"}
 WINDOW_TITLES = {"5h": "5-hour session", "7d": "7-day (all models)"}
 FAMILY_TITLES = {"gpt": "GPT", "spark": "Spark", "fable": "Fable", "opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku"}
 STATUS_TEXT = {
@@ -338,6 +338,79 @@ def usage_section_html(usage_db: Path, now: datetime) -> str:
     )
 
 
+def daily_models_html(data: dict) -> str:
+    """One shared SVG/table renderer for the static page and live usage response."""
+    dates = data["dates"]
+    cards = []
+    for group in data["providers"]:
+        title = esc(group["label"])
+        models = group["models"]
+        recorded, excluded = group["recorded_requests"], group["excluded_requests"]
+        coverage = f'{recorded:,} requests with recorded totals.'
+        if excluded:
+            coverage += f' Incomplete data: {excluded:,} requests excluded because token totals are unknown.'
+        parts = []
+        if recorded:
+            peak = max(group["daily_tokens"]) or 1
+            for tick in range(5):
+                y = 250 - tick * 50
+                parts.append(f'<line class="grid" x1="65" y1="{y}" x2="785" y2="{y}"/>')
+                parts.append(f'<text class="lbl" x="57" y="{y + 4}" text-anchor="end">{esc(_n(round(peak * tick / 4)))}</text>')
+            for i, day in enumerate(dates):
+                x, stacked = 78 + i * 101, 0
+                for model in models:
+                    tokens = model["tokens"][i]
+                    height = tokens / peak * 200
+                    if tokens:
+                        label = f'{day} · {model["label"]}: {tokens:,} tokens'
+                        parts.append(f'<rect x="{x}" y="{250 - stacked - height:.2f}" width="70" height="{height:.2f}" fill="{esc(model["color"])}"><title>{esc(label)}</title></rect>')
+                    stacked += height
+                parts.append(f'<text class="lbl" x="{x + 35}" y="{240 - stacked:.2f}" text-anchor="middle">{esc(_n(group["daily_tokens"][i]))}</text>')
+                parts.append(f'<text class="lbl" x="{x + 35}" y="275" text-anchor="middle">{day[5:]}</text>')
+            chart = f'<svg class="model-token-chart" viewBox="0 0 800 290" role="img" aria-label="{title} daily recorded tokens by model"><title>{title} daily recorded tokens by model; exact values in the data table</title>{"".join(parts)}</svg>'
+        else:
+            chart = '<p class="empty">Recorded token totals unavailable.</p>'
+        legend = ''.join(
+            f'<li><i style="background:{esc(model["color"])}"></i>{esc(model["label"])} · {model["total_tokens"]:,} recorded tokens</li>'
+            for model in models
+        )
+        body = ''.join(
+            f'<tr><th scope="row">{esc(model["label"])}</th>'
+            + ''.join(f'<td>{tokens:,}</td>' for tokens in model["tokens"])
+            + f'<td>{model["total_tokens"]:,}</td><td>{model["excluded_requests"]:,}</td></tr>'
+            for model in models
+        )
+        totals = ''.join(f'<td>{tokens:,}</td>' for tokens in group["daily_tokens"])
+        # Provider values originate in ledger records; encode rather than interpolate into IDs.
+        detail_id = 'model-token-table-' + group['provider'].encode().hex()
+        table = (
+            f'<details id="{detail_id}" class="model-token-table"><summary>Daily/model totals · {title}</summary>'
+            f'<table class="usage"><caption>{title} recorded tokens · local dates; unknown totals excluded</caption>'
+            '<thead><tr><th scope="col">Model</th>'
+            + ''.join(f'<th scope="col">{day}</th>' for day in dates)
+            + '<th scope="col">Total</th><th scope="col">Excluded requests</th></tr></thead>'
+            + f'<tbody>{body}</tbody><tfoot><tr><th scope="row">Total</th>{totals}<td>{group["total_tokens"]:,}</td><td>{excluded:,}</td></tr></tfoot></table></details>'
+        )
+        cards.append(f'<article class="model-token-card"><h3>{title}</h3><p>{group["total_tokens"]:,} recorded tokens</p><p class="note">{coverage}</p>{chart}<ul class="model-token-legend">{legend}</ul>{table}</article>')
+    return '<div class="model-token-grid">' + ''.join(cards) + '</div>'
+
+
+def daily_models_section_html(usage_db: Path, now: datetime) -> str:
+    try:
+        conn = ledger.connect(usage_db)
+        try:
+            content = daily_models_html(usage_report.daily_model_payload(conn, now))
+        finally:
+            conn.close()
+    except sqlite3.Error as exc:
+        content = f'<p class="banner">Usage ledger unavailable: {esc(type(exc).__name__)}</p>'
+    return (
+        '<section class="model-tokens"><h2>Recorded tokens by model · last 7 days</h2>'
+        '<p class="note">Today and the preceding six local calendar days. Locally recorded tokens, not subscription quota share. Effort levels are combined; today is partial.</p>'
+        f'<div id="daily-models-panel">{content}</div></section>'
+    )
+
+
 def efficiency_table_html(rows: list[dict], title: str) -> str:
     """A compact, escaped ledger drilldown.  This is presentation-only accounting."""
     detail_id = "efficiency-session" if title == "By session" else "efficiency-model"
@@ -565,7 +638,18 @@ header.top h1{margin:0;font-size:20px}
 .meta{color:var(--muted);font-size:12px}
 main{padding:8px 24px 24px;max-width:1900px;margin:0 auto}
 section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.history-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;align-items:start}
+.history-grid section.provider{min-width:0}
+.history-grid .cards{grid-template-columns:minmax(0,1fr)}
+.model-token-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:20px}
+.model-token-card{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+.model-token-card h3{margin:0}.model-token-chart{display:block;width:100%;height:auto}
+.model-token-chart .lbl{fill:var(--muted);font-size:12px}.model-token-chart .grid{stroke:var(--line)}
+.model-token-legend{list-style:none;padding:0;display:flex;gap:8px 16px;flex-wrap:wrap;font-size:12px;overflow-wrap:anywhere}
+.model-token-legend i{display:inline-block;width:10px;height:10px;margin-right:6px;border-radius:2px}
+.model-token-table{overflow:auto}.model-token-table summary{cursor:pointer}.model-token-table table{white-space:nowrap}
 .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(620px,1fr));gap:20px}
+@media (max-width:1200px){.history-grid{grid-template-columns:1fr}}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;border-top:4px solid var(--ideal)}
 .card.status-over{border-top-color:var(--over)}
 .card.status-under{border-top-color:var(--under)}
@@ -797,9 +881,26 @@ CAPACITY_SCRIPT = """
     var replacement=document.getElementById('efficiency-' + name);
     if (replacement){ replacement.scrollLeft=left; replacement.scrollTop=top; if (focused) replacement.querySelector('summary').focus(); }
   }
+  function dailyModels(markup){
+    var host=document.getElementById('daily-models-panel');
+    if (!host || typeof markup !== 'string' || host.dataset.markup === markup) return;
+    var focused=document.activeElement, focusId=null, states={};
+    var x=window.scrollX, y=window.scrollY;
+    host.querySelectorAll('details').forEach(function(el){
+      states[el.id]={open:el.open,left:el.scrollLeft,top:el.scrollTop};
+      if (focused === el.querySelector('summary')) focusId=el.id;
+    });
+    host.innerHTML=markup; host.dataset.markup=markup;
+    host.querySelectorAll('details').forEach(function(el){
+      var old=states[el.id]; if (!old) return;
+      el.open=old.open; el.scrollLeft=old.left; el.scrollTop=old.top;
+      if (el.id === focusId) el.querySelector('summary').focus({preventScroll:true});
+    });
+    window.scrollTo(x,y);
+  }
   function efficiency(){
     fetch('/v1/usage', {cache:'no-store'}).then(function(r){ return r.ok ? r.json() : null; }).then(function(data){
-      if (!data) return; panel('session','By session',data.by_session); panel('model','By model × effort',data.by_model_effort);
+      if (!data) return; dailyModels(data.daily_models_html); panel('session','By session',data.by_session); panel('model','By model × effort',data.by_model_effort);
     }).catch(function(){});
   }
   efficiency(); setInterval(efficiency, 30000);
@@ -818,7 +919,7 @@ def render_html(
     warnings: list[str] | None = None, refresh_s: int = 120,
     usage_db: Path | None = None, capacity: dict | None = None, live: bool = False,
 ) -> str:
-    """The whole page. Each historical card renders one exact two-window-cycle chart."""
+    """The whole page. Weekly history renders as exact two-window-cycle charts."""
     now = now or now_utc()
     samples = canonical_samples(store.load(since=now - timedelta(days=max(days, 31))))
     latest = store.latest()
@@ -830,7 +931,10 @@ def render_html(
     sections: list[str] = []
     providers: dict[str, list[Burndown]] = {}
     for bd in burndowns:
-        providers.setdefault(bd.provider, []).append(bd)
+        if bd.window_min == 300:
+            continue
+        group = "codex-spark" if bd.provider == "codex" and bd.window.partition(":")[2].lower() == "spark" else bd.provider
+        providers.setdefault(group, []).append(bd)
     chart_count = 0
     for provider, items in providers.items():
         cards = []
@@ -842,13 +946,16 @@ def render_html(
             '<div class="note">Model-grouped recorded usage only; these cards do not represent independent live allowances.</div>'
             f'<div class="cards">{"".join(cards)}</div></section>'
         )
-    if not sections:
-        sections.append('<p class="empty">No samples yet. Run <code>quota-burndown collect</code>.</p>')
+    history = (
+        f'<div class="history-grid">{"".join(sections)}</div>'
+        if sections else '<p class="empty">No historical charts to show.</p>'
+    )
 
     banner = ""
     if warnings:
         banner = '<div class="banner">' + "<br>".join(esc(w) for w in warnings) + "</div>"
     updated = to_local(now).strftime("%a %Y-%m-%d %H:%M")
+    legend = LEGEND_HTML if chart_count else ""
     hover = f'<div id="chart-tooltip" role="status" aria-live="polite" hidden></div><script>{HOVER_SCRIPT}</script>' if chart_count else ""
     capacity_script = f'<script id="capacity-script">{CAPACITY_SCRIPT}</script>' if live else ""
     mode = "live dashboard" if live else f"static fallback generated {updated}"
@@ -858,7 +965,8 @@ def render_html(
         "" if live else f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">",
         f"<title>Quota Burndown</title><style>{CSS}</style></head><body>",
         f'<header class="top"><h1>Quota burndown</h1><div class="meta">{esc(mode)} · {len(samples)} historic samples in view</div></header>',
-        "<main>", banner, capacity_matrix_html(capacity, live), LEGEND_HTML, "".join(sections),
+        "<main>", banner, capacity_matrix_html(capacity, live), legend, history,
+        daily_models_section_html(usage_db, now) if usage_db is not None else "",
         usage_section_html(usage_db, now) if usage_db is not None else "",
         efficiency_section_html(usage_db, now) if usage_db is not None else "", "</main>",
         f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",

@@ -31,6 +31,32 @@ def get(server, path="/v1/capacity"):
     return data
 
 
+def test_usage_endpoint_publishes_daily_models_and_matching_markup(paths, monkeypatch):
+    from quota_burndown import ledger, render
+    from quota_burndown.ledger import Event
+    conn = ledger.connect(paths.usage_db)
+    ledger.upsert(conn, [Event("codex", "codex-desktop", ledger.REQUEST, "model-chart", now_utc(),
+                               model="gpt-5.3-codex-spark", total_tokens=1234)])
+    conn.close()
+    service = CapacityService(paths, collectors=False)
+    monkeypatch.setattr(service.stop_event, "wait", lambda timeout: service.stop_event.set())
+    service._ledger()  # one actual cache-publication iteration, without collectors
+    server = make_server(service, port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        data = get(server, "/v1/usage")
+        group = next(group for group in data["daily_models"]["providers"] if group["provider"] == "codex")
+        assert group["models"][0]["model"] == "gpt-5.3-codex-spark"
+        assert group["total_tokens"] == 1234
+        assert data["daily_models_html"] == render.daily_models_html(data["daily_models"])
+        assert data["daily_models_html"] in service._page.decode("utf-8")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(2)
+
+
 def send_reading(service, used=40):
     now = now_utc()
     service.publish([Observation("codex", "a", "codex", "300m", 300, used,
