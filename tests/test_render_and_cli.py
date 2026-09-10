@@ -286,6 +286,20 @@ def test_render_usage_section(store, paths):
     assert "Token usage" not in render.render_html(store, now=NOW)
 
 
+def test_render_antigravity_weekly_chart(store):
+    from quota_burndown.providers.antigravity import weekly_cycle_bounds
+    start, reset = weekly_cycle_bounds(NOW)
+    store.append([
+        Sample(start, "antigravity", "7d:gemini", 0.0, reset, 10080, "ledger"),
+        Sample(NOW, "antigravity", "7d:gemini", 35.0, reset, 10080, "ledger"),
+    ])
+    html = render.render_html(store, now=NOW)
+    assert "· Antigravity" in html
+    assert "<h3>7-day (Gemini)</h3>" in html
+    assert "35%" in html
+    assert html.count('<figure class="chart-figure"') >= 1
+
+
 def test_cli_usage_round_trip(paths, monkeypatch, tmp_path, capsys):
     from test_usage_antigravity import make_home
 
