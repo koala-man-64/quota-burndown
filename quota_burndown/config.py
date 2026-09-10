@@ -41,6 +41,10 @@ class Paths:
         return self.home / "claude_desktop_state.json"
 
     @property
+    def antigravity_state(self) -> Path:
+        return self.home / "antigravity_scan_state.json"
+
+    @property
     def html(self) -> Path:
         return self.home / "burndown.html"
 
@@ -117,6 +121,21 @@ def antigravity_home() -> Path:
     """Antigravity keeps its conversation store under ~/.gemini/antigravity. The override
     is this tool's own variable; Google does not define one."""
     return Path(os.environ.get("QUOTA_BURNDOWN_ANTIGRAVITY_HOME") or (Path.home() / ".gemini" / "antigravity"))
+
+
+DEFAULT_ANTIGRAVITY_WEEKLY_TOKENS = 50_000_000
+
+
+def antigravity_weekly_token_budget() -> int:
+    env = os.environ.get("QUOTA_BURNDOWN_ANTIGRAVITY_TOKEN_BUDGET")
+    if env:
+        try:
+            val = int(env)
+            if val > 0:
+                return val
+        except ValueError:
+            pass
+    return DEFAULT_ANTIGRAVITY_WEEKLY_TOKENS
 
 
 def project_root() -> Path:

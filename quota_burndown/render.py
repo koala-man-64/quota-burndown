@@ -17,9 +17,9 @@ from .store import Sample, Store
 from .util import atomic_write_text, fmt_local, fmt_minutes, now_utc, read_json, to_local
 
 STALE_MIN = 20
-PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex", "codex-spark": "Codex Spark"}
+PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex", "codex-spark": "Codex Spark", "antigravity": "Antigravity"}
 WINDOW_TITLES = {"5h": "5-hour session", "7d": "7-day (all models)"}
-FAMILY_TITLES = {"gpt": "GPT", "spark": "Spark", "fable": "Fable", "opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku"}
+FAMILY_TITLES = {"gpt": "GPT", "spark": "Spark", "fable": "Fable", "opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku", "gemini": "Gemini"}
 STATUS_TEXT = {
     "over": "over pace",
     "under": "under pace",

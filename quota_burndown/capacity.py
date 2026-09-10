@@ -111,8 +111,8 @@ def provider_groups(pools: list[dict]) -> list[dict]:
             ("spark-weekly", "GPT-5.3-Codex-Spark · weekly", "codex_bengalfox", 10080),
         )),
         ("antigravity", "Antigravity / Gemini", (
-            ("gemini-five-hour", "Gemini · 5-hour", None, 300),
-            ("gemini-weekly", "Gemini · weekly", None, 10080),
+            ("gemini-five-hour", "Gemini · 5-hour", "gemini", 300),
+            ("gemini-weekly", "Gemini · weekly", "gemini", 10080),
         )),
         ("claude", "Claude", (
             ("current-session", "Current session · 5-hour", "claude", 300),
