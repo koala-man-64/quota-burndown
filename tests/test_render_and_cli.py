@@ -28,9 +28,10 @@ def test_render_html_contains_cards_and_charts(store):
     seed(store)
     html = render.render_html(store, now=NOW, warnings=["claude: test warning"])
     assert "<title>Quota Burndown</title>" in html
-    assert html.count("<article") == 2
+    assert html.count("<article") == 3  # Claude weekly, the fixed Fable slot, Codex weekly
     assert "status-over" in html and "5-hour session" not in html and "7-day (all models)" in html
-    assert '<div class="history-grid">' in html
+    assert '<div class="history-grid">' in html and html.count('<section class="provider">') == 3
+    assert html.index("· Claude</h2>") < html.index("7-day (Fable)") < html.index("· Codex</h2>")
     assert "claude: test warning" in html
     assert html.count('<figure class="chart-figure"') == 2 and html.count('<svg class="chart"') == 2
     assert html.count('data-domain-start=') == 2 and html.count('data-domain-end=') == 2
@@ -68,6 +69,7 @@ def test_render_collapses_legacy_gpt_versions_and_shows_spark_weekly(store):
     assert html.count("<h3>7-day (Spark)</h3>") == 1
     assert "· Codex Spark</h2>" in html
     assert "7-day (GPT-5.6)" not in html and "7-day (GPT-6)" not in html
+    assert "7-day (Fable)" not in html  # the Fable slot belongs to Claude, not to a Codex-only store
 
 
 def test_render_with_only_five_hour_history_has_no_chart_ui(store):
@@ -96,7 +98,7 @@ def test_claude_aliases_keep_weekly_history_without_rewriting_store(store):
     ])
     raw_before = store.paths.samples.read_bytes(), store.paths.latest.read_bytes()
     html = render.render_html(store, now=NOW)
-    assert html.count("<article") == 1
+    assert html.count("<article") == 2  # the all-models chart plus the empty Fable slot
     assert "5-hour session" not in html
     assert html.count("<h3>7-day (all models)</h3>") == 1
     assert "300m (Claude)" not in html and "10080m (Claude)" not in html
@@ -133,6 +135,49 @@ def test_cli_quota_backfill_respects_since_days_and_rescan(paths, monkeypatch, t
     assert "forgot the Codex quota scan state" in text and '"files_scanned": 1' in text
     assert cli.main(["--home", str(paths.home), "backfill"]) == 0  # no range: everything, archive included
     assert set(Store(paths).latest()) == {"codex:7d:codex", "codex:7d:spark"}
+
+
+def test_history_grid_has_one_cell_per_weekly_chart_with_a_fixed_fable_slot(store):
+    from quota_burndown.capacity import FABLE_WEEKLY_UNAVAILABLE
+
+    weekly_reset = NOW + timedelta(days=3)
+    store.append([
+        Sample(NOW, "claude", "7d", 27.0, weekly_reset, 10080, "desktop"),
+        Sample(NOW, "codex", "7d:codex", 28.0, weekly_reset, 10080, "app-server"),
+        Sample(NOW, "codex", "7d:spark", 50.0, NOW + timedelta(days=4), 10080, "app-server"),
+        Sample(NOW, "antigravity", "7d:gemini", 35.0, weekly_reset, 10080, "ledger"),
+    ])
+
+    html = render.render_html(store, now=NOW)
+
+    cells = re.findall(r'<section class="provider">.*?</section>', html, re.S)
+    assert [re.search(r"· (.*?)</h2>", cell).group(1) for cell in cells] == ["Claude", "Claude", "Codex", "Codex Spark", "Antigravity"]
+    assert all(cell.count("<article") == 1 for cell in cells)
+    titles = [re.search(r"<h3>(.*?)</h3>", cell).group(1) for cell in cells]
+    assert titles == ["7-day (all models)", "7-day (Fable)", "7-day (Codex)", "7-day (Spark)", "7-day (Gemini)"]
+    assert 'class="card unavailable"' in cells[1] and "no readings" in cells[1] and FABLE_WEEKLY_UNAVAILABLE in cells[1]
+    assert '<figure class="chart-figure"' not in cells[1] and html.count('<figure class="chart-figure"') == 4
+    assert html.count('class="chart-data" data-for="c') == 4 and "grid-template-columns:repeat(3," in html
+
+
+def test_fable_readings_replace_the_empty_slot_with_a_chart(store):
+    from quota_burndown.capacity import FABLE_WEEKLY_UNAVAILABLE
+
+    weekly_reset = NOW + timedelta(days=3)
+    store.append([
+        Sample(NOW, "claude", "7d", 27.0, weekly_reset, 10080, "desktop"),
+        Sample(NOW - timedelta(hours=6), "claude", "7d:fable", 40.0, weekly_reset, 10080, "api"),
+        Sample(NOW, "claude", "7d:fable", 46.0, weekly_reset, 10080, "api"),
+        Sample(NOW, "codex", "7d:codex", 28.0, weekly_reset, 10080, "app-server"),
+    ])
+
+    html = render.render_html(store, now=NOW)
+
+    cells = re.findall(r'<section class="provider">.*?</section>', html, re.S)
+    titles = [re.search(r"<h3>(.*?)</h3>", cell).group(1) for cell in cells]
+    assert titles == ["7-day (all models)", "7-day (Fable)", "7-day (Codex)"]
+    assert '<figure class="chart-figure"' in cells[1] and "46%" in cells[1]
+    assert 'class="card unavailable"' not in html and FABLE_WEEKLY_UNAVAILABLE not in html
 
 
 def test_expired_window_is_labelled_as_awaiting_a_sample(store):
@@ -214,6 +259,9 @@ def test_cli_status_json_and_render(paths, store, capsys, monkeypatch):
     assert {d["window"] for d in data} == {"5h", "7d"}
     assert cli.main(["--home", str(paths.home), "render"]) == 0
     assert paths.html.exists()
+    out = paths.home / "elsewhere" / "page.html"
+    assert cli.main(["--home", str(paths.home), "render", "--out", str(out)]) == 0
+    assert out.read_text(encoding="utf-8").startswith("<!doctype html>")
 
 
 def test_install_statusline_dry_run_apply_and_guard(tmp_path):

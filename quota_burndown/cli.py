@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 from datetime import timedelta
+from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__, install, ledger, render, statusline, usage, usage_report
@@ -179,7 +180,7 @@ def cmd_backfill(args) -> int:
 
 def cmd_render(args) -> int:
     paths = get_paths(args.home)
-    out = render.write_html(Store(paths), args.out or paths.html, days=args.days, usage_db=paths.usage_db)
+    out = render.write_html(Store(paths), Path(args.out) if args.out else paths.html, days=args.days, usage_db=paths.usage_db)
     print(out)
     return 0
 

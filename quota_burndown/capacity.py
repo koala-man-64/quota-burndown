@@ -78,6 +78,7 @@ def freshness_seconds(source: str) -> int:
 
 
 SOURCE_RANK = {"app-server": 4, "statusline": 3, "rollout": 2, "desktop-history": 1}
+FABLE_WEEKLY_UNAVAILABLE = "Supported Claude status-line and desktop history sources do not report Fable weekly quota."
 _RESET_RANK = {"reported": 2, "inferred": 1, "unknown": 0}
 
 
@@ -141,7 +142,7 @@ def provider_groups(pools: list[dict]) -> list[dict]:
                 if provider == "antigravity":
                     reason = "Configured Antigravity sources report activity, not Gemini quota limits."
                 elif slot == "fable-weekly":
-                    reason = "Supported Claude status-line and desktop history sources do not report Fable weekly quota."
+                    reason = FABLE_WEEKLY_UNAVAILABLE
             elif pool and pool.get("allowance_state") in ("exhausted", "reserve_reached") and pool.get("constraining_window") != window.get("window"):
                 constraint = next((item for item in pool.get("windows", []) if item.get("window") == pool.get("constraining_window")), None)
                 if constraint:
