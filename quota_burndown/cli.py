@@ -414,7 +414,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("prune", help="drop samples older than N days and/or from one source; rebuilds latest.json")
     p.add_argument("--keep-days", type=int, default=90, help="0 keeps everything regardless of age")
-    p.add_argument("--drop-source", choices=["api", "desktop", "rollout"], help="remove every sample from this source (api: readings from the retired endpoint sampler)")
+    p.add_argument("--drop-source", choices=["api", "desktop", "rollout", "ledger"], help="remove every sample from this source (api: readings from the retired endpoint sampler)")
     p.set_defaults(func=cmd_prune)
     return parser
 

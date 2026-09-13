@@ -158,3 +158,29 @@ def test_tail_skips_giant_lines_without_unbounded_reads_and_handles_truncation(t
     assert tail.state[path]["offset"] - offset <= 1_048_576
     path.write_text('{}\n', encoding='utf-8')
     assert tail.poll() == [] and tail.state[path]["offset"] == path.stat().st_size
+
+
+def test_observations_from_limits_extracts_rate_limit_reset_credits():
+    payload = {
+        "rateLimitsByLimitId": {
+            "codex": {
+                "primary": {"used_percent": 60, "window_minutes": 10080, "resets_at": 1789000000},
+                "secondary": {"used_percent": 10, "window_minutes": 300},
+            }
+        },
+        "rateLimitResetCredits": {
+            "availableCount": 2,
+            "credits": [
+                {"id": "credit_1", "resetType": "codexRateLimits", "expiresAt": 1791080604},
+                {"id": "credit_2", "resetType": "codexRateLimits", "expiresAt": 1791173972},
+            ]
+        }
+    }
+    items = observations_from_limits(payload, provider="codex", account_scope="acct-one", source="app-server", observed_at=T0)
+    assert len(items) == 2
+    codex_item = next(it for it in items if it.limit_id == "codex" and it.window_min == 10080)
+    assert len(codex_item.reset_credits) == 2
+    assert codex_item.reset_credits[0]["id"] == "credit_1"
+    assert codex_item.reset_credits[0]["reset_type"] == "codexRateLimits"
+    assert codex_item.reset_credits[0]["expires_at"] == datetime.fromtimestamp(1791080604, tz=timezone.utc)
+

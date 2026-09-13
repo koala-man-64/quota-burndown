@@ -113,10 +113,11 @@ class CapacityService:
         # Build pages/usage independently. Never perform this work in HTTP handlers.
         self._spawn("capacity-ledger", self._ledger)
         if self.collectors:
-            from .integrations import AdapterContext, run_codex, run_files
+            from .integrations import AdapterContext, run_antigravity, run_codex, run_files
             context = AdapterContext()
             self._spawn("capacity-codex", lambda: run_codex(self.stop_event, self.publish, self.health, self.active, context))
             self._spawn("capacity-files", lambda: run_files(self.stop_event, self.publish, self.health, self.paths, context))
+            self._spawn("capacity-antigravity", lambda: run_antigravity(self.stop_event, self.publish, self.health, self.active))
         return self
 
     def close(self):

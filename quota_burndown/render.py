@@ -70,8 +70,12 @@ def _y_of(used: float) -> float:
 def _clip(data: ChartData, line: charts.Line) -> tuple[float, float, float, float] | None:
     """Pixel endpoints of a line clipped to the plotted time span."""
     (t0, v0), (t1, v1) = line.start, line.end
-    if t1 <= t0:
+    if t1 < t0:
         return None
+    if t1 == t0:
+        if not (data.span_start <= t0 <= data.span_end):
+            return None
+        return _x_of(data, t0), _y_of(v0), _x_of(data, t0), _y_of(v1)
     lo, hi = max(t0, data.span_start), min(t1, data.span_end)
     if hi <= lo:
         return None
@@ -119,10 +123,30 @@ def chart_svg(data: ChartData, chart_id: str, title: str) -> str:
         clipped = _clip(data, data.pace)
         if clipped:
             parts.append('<line class="pace" x1="{:.1f}" y1="{:.1f}" x2="{:.1f}" y2="{:.1f}"/>'.format(*clipped))
+    for line in data.reset_pace:
+        clipped = _clip(data, line)
+        if clipped:
+            parts.append('<line class="pace-reset" x1="{:.1f}" y1="{:.1f}" x2="{:.1f}" y2="{:.1f}"/>'.format(*clipped))
     if data.projection is not None:
         clipped = _clip(data, data.projection)
         if clipped:
             parts.append('<line class="proj" x1="{:.1f}" y1="{:.1f}" x2="{:.1f}" y2="{:.1f}"/>'.format(*clipped))
+    for line in data.reset_projections:
+        clipped = _clip(data, line)
+        if clipped:
+            parts.append('<line class="proj-reset" x1="{:.1f}" y1="{:.1f}" x2="{:.1f}" y2="{:.1f}"/>'.format(*clipped))
+    for ts, used, label in data.reset_markers:
+        if data.span_start <= ts <= data.span_end:
+            cx, cy = _x_of(data, ts), _y_of(used)
+            parts.append(f'<circle class="reset-marker" cx="{cx:.1f}" cy="{cy:.1f}" r="4.5"><title>{esc(label)}</title></circle>')
+            anchor = "end" if cx > CHART_W * 0.75 else "start"
+            dx = -8 if anchor == "end" else 8
+            parts.append(f'<text class="reset-marker-lbl" x="{cx + dx:.1f}" y="{cy - 6:.1f}" text-anchor="{anchor}">{esc(label)}</text>')
+    for mark in data.credit_expiries:
+        if data.span_start <= mark.ts <= data.span_end:
+            x = _x_of(data, mark.ts)
+            parts.append(f'<line class="credit-expiry-tick" x1="{x:.1f}" y1="{plot_bottom}" x2="{x:.1f}" y2="{plot_bottom + 8:.1f}"/>')
+            parts.append(f'<text class="credit-expiry-lbl" x="{x:.1f}" y="{plot_bottom + 18:.1f}" text-anchor="middle">credit expires</text>')
     if data.active:
         x_now = _x_of(data, data.now)
         parts.append(f'<line class="now" x1="{x_now:.1f}" y1="{PAD_T}" x2="{x_now:.1f}" y2="{plot_bottom:.1f}"/>')
@@ -234,15 +258,33 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str)
             f'<div><b>{esc(fmt_minutes(bd.remaining_min))}</b><span>left · resets {esc(resets)}</span></div>'
             f'<div><b>{esc(proj_value)}</b><span>{esc(proj_label)}</span></div>'
         )
-    figure = card_figures_html(bd, history, now, chart_id, title)
+    data = charts.build(bd, history, now)
+    if data is None:
+        figure = '<div class="note">No readings in the two-cycle domain.</div>'
+    else:
+        figure = chart_figure_html(data, chart_id, title)
+    reset_strip = ""
+    reset_badge = ""
+    if data is not None and data.reset_credits_count > 0:
+        reset_badge = f'<span class="badge reset-badge">{data.reset_credits_count} reset credit{"s" if data.reset_credits_count != 1 else ""}</span>'
+        strip_parts = [f"<b>{data.reset_credits_count} reset credit{'s' if data.reset_credits_count != 1 else ''} available</b>"]
+        if data.credit_expiries:
+            strip_parts.append(f"earliest expires {esc(fmt_local(data.credit_expiries[0].ts))}")
+        if data.next_reset_time is not None:
+            strip_parts.append(f"ideal next reset: <b>{esc(fmt_local(data.next_reset_time))}</b>")
+        if data.runway_with_resets_min is not None:
+            strip_parts.append(f"runway with resets: <b>{esc(fmt_minutes(data.runway_with_resets_min))}</b>")
+        reset_strip = f'<div class="reset-strip">{" · ".join(strip_parts)}</div>'
+    header_badge = f'<div class="badges"><span class="badge">{esc(badge_text(bd))}</span>{reset_badge}</div>' if reset_badge else f'<span class="badge">{esc(badge_text(bd))}</span>'
     age = f"{bd.age_min:.0f} min ago" if bd.age_min is not None else "never"
     foot = f"last sample {esc(age)} via {esc(bd.source or '?')} · {len(bd.samples)} samples this window"
     if stale:
         foot += " · <b>stale</b>: collector has not run recently"
     return (
         f'<article class="{classes}">'
-        f'<header><h3>{esc(title)}</h3><span class="badge">{esc(badge_text(bd))}</span></header>'
+        f'<header><h3>{esc(title)}</h3>{header_badge}</header>'
         f'<div class="stats">{stats}</div>'
+        f"{reset_strip}"
         f"{figure}"
         f'<div class="foot">{foot}</div>'
         "</article>"
@@ -538,11 +580,24 @@ def _group_limit_row(limit: dict) -> str:
     provenance = f'<br><small>reset: {esc(window.get("reset_provenance") or "unknown")}; observation: {esc(window.get("observation_time_provenance") or "unknown")}</small>'
     availability = f"<br><small>{esc(reason)}</small>" if reason else ""
     pool = "unreported" if unavailable else esc(limit.get("pool_id"))
+    credits = limit.get("reset_credits") or []
+    credits_html = ""
+    if credits:
+        credits_count = len(credits)
+        first_exp = credits[0].get("expires_at")
+        exp_txt = ""
+        if first_exp:
+            try:
+                dt = parse_iso(first_exp) if isinstance(first_exp, str) else first_exp
+                exp_txt = f" (expires {fmt_local(dt)})"
+            except Exception:
+                pass
+        credits_html = f'<br><span class="badge reset-badge">{credits_count} reset credit{"s" if credits_count != 1 else ""}{exp_txt}</span>'
     return (
         f'<tr data-reset="{esc(window.get("resets_at") or "")}">'
         f'<th scope="row">{esc(limit.get("label") or limit.get("id") or "limit")}{availability}</th>'
         f'<td>{pool}<br><small>{esc(scope)} · {esc(models)} · mapping {esc(mapping)}<br>'
-        f'constraining: {esc(limit.get("constraining_window") or "unknown")}</small></td>'
+        f'constraining: {esc(limit.get("constraining_window") or "unknown")}</small>{credits_html}</td>'
         f'<td>{used}</td><td class="window-budget">{remaining}</td>'
         f'<td class="window-budget">{reserve}</td><td>{esc(window.get("resets_at") or "unknown")}</td>'
         f'<td class="window-forecast">{esc(runway_text)}<br><small>whole: {whole_rate}; last hour: {recent_rate}</small></td>'
@@ -683,6 +738,9 @@ section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-tra
 .card h3{margin:0;font-size:15px}
 .card h4{margin:14px 0 4px;font-size:12px;color:var(--muted);font-weight:500}
 .badge{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
+.badges{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.reset-badge{color:#10b981;border-color:#10b981;font-weight:500}
+.reset-strip{font-size:12px;color:var(--fg);background:var(--grid);padding:5px 10px;border-radius:6px;margin:4px 0 8px}
 .status-over .badge{color:var(--over);border-color:var(--over)}
 .status-under .badge{color:var(--under);border-color:var(--under)}
 .status-exhausted .badge{color:var(--warn);border-color:var(--warn)}
@@ -701,7 +759,13 @@ svg.chart:focus-visible{outline:2px solid var(--chart-series);outline-offset:2px
 .area{fill:var(--chart-series);opacity:.1}
 .used{fill:none;stroke:var(--chart-series);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
 .pace{stroke:var(--chart-axis);stroke-width:1.5;stroke-dasharray:6 5;stroke-linecap:round}
+.pace-reset{stroke:var(--chart-series);stroke-width:1.5;stroke-dasharray:4 4;stroke-linecap:round;opacity:.7}
 .proj{stroke:var(--chart-ink);stroke-width:1.5;stroke-dasharray:1.5 4;stroke-linecap:round;opacity:.75}
+.proj-reset{stroke:#10b981;stroke-width:2;stroke-dasharray:3 3;stroke-linecap:round}
+.reset-marker{fill:#10b981;stroke:var(--card);stroke-width:2}
+.reset-marker-lbl{fill:#10b981;font-size:11px;font-weight:600}
+.credit-expiry-tick{stroke:var(--warn);stroke-width:1.5}
+.credit-expiry-lbl{fill:var(--warn);font-size:10px}
 .now{stroke:var(--chart-axis);stroke-width:1}
 .reset-tick{stroke:var(--chart-axis);stroke-width:1.5}
 .reset-lbl{fill:var(--chart-muted);font-size:11px}
@@ -719,7 +783,9 @@ details.chart-table table{margin-top:4px;max-height:220px;display:block;overflow
 .legend{display:flex;gap:18px;align-items:center;font-size:12px;color:var(--muted);margin:4px 0 0;flex-wrap:wrap}
 .legend i{display:inline-block;width:22px;vertical-align:middle;margin-right:6px;border-top:2px solid var(--chart-series)}
 .legend i.k-pace{border-top:2px dashed var(--chart-axis)}
+.legend i.k-pace-reset{border-top:2px dashed var(--chart-series)}
 .legend i.k-proj{border-top:2px dotted var(--chart-ink)}
+.legend i.k-proj-reset{border-top:2px dashed #10b981}
 .legend i.k-reset{width:2px;height:10px;border-top:0;border-left:2px solid var(--chart-axis)}
 .legend i.k-now{width:1px;height:10px;border-top:0;border-left:1px solid var(--chart-axis)}
 .empty{color:var(--muted);padding:32px 0;text-align:center}
@@ -930,9 +996,57 @@ CAPACITY_SCRIPT = """
 })();
 """
 
+LIVE_SCRIPT = """
+(function(){
+  function esc(v){ var d=document.createElement('div'); d.textContent=v===undefined||v===null?'unknown':String(v); return d.innerHTML; }
+  function value(v){ return v === undefined || v === null ? 'unknown' : String(v); }
+  function count(v){ return v === undefined || v === null ? 'unknown' : Math.round(Number(v)).toLocaleString(); }
+  function panel(name, title, rows){
+    var host=document.getElementById('efficiency-' + name + '-panel'); if (!host) return;
+    var old=document.getElementById('efficiency-' + name), open=old && old.open;
+    var focused=document.activeElement === (old && old.querySelector('summary'));
+    var left=old ? old.scrollLeft : 0, top=old ? old.scrollTop : 0;
+    var body=(rows || []).slice(0,20).map(function(r){
+      var reasoning=r.reasoning_share_of_output_pct === undefined || r.reasoning_share_of_output_pct === null ? 'unknown' : r.reasoning_share_of_output_pct + '%';
+      var id=r.anchor ? ' id="' + esc(r.anchor) + '"' : '';
+      return '<tr' + id + '><td>' + esc(r.key) + '</td><td>' + count(r.uncached_input) + '</td><td>' + count(r.cached_input) + '</td><td>' + count(r.output) + '</td><td>' + reasoning + '</td><td>' + count(r.requests) + '</td><td>' + count(r.median_tokens_per_request) + '</td></tr>';
+    }).join('') || '<tr><td colspan="7">no requests in range</td></tr>';
+    host.innerHTML='<details id="efficiency-' + name + '" class="efficiency"' + (open ? ' open' : '') + '><summary>' + esc(title) + ' (last 7 days)</summary><table class="usage"><thead><tr><th>group</th><th>uncached in</th><th>cached in</th><th>output</th><th>reasoning / output</th><th>requests</th><th>median tokens/request</th></tr></thead><tbody>' + body + '</tbody></table></details>';
+    var replacement=document.getElementById('efficiency-' + name);
+    if (replacement){ replacement.scrollLeft=left; replacement.scrollTop=top; if (focused) replacement.querySelector('summary').focus(); }
+  }
+  function dailyModels(markup){
+    var host=document.getElementById('daily-models-panel');
+    if (!host || typeof markup !== 'string' || host.dataset.markup === markup) return;
+    var focused=document.activeElement, focusId=null, states={};
+    var x=window.scrollX, y=window.scrollY;
+    host.querySelectorAll('details').forEach(function(el){
+      states[el.id]={open:el.open,left:el.scrollLeft,top:el.scrollTop};
+      if (focused === el.querySelector('summary')) focusId=el.id;
+    });
+    host.innerHTML=markup; host.dataset.markup=markup;
+    host.querySelectorAll('details').forEach(function(el){
+      var old=states[el.id]; if (!old) return;
+      el.open=old.open; el.scrollLeft=old.left; el.scrollTop=old.top;
+      if (el.id === focusId) el.querySelector('summary').focus({preventScroll:true});
+    });
+    window.scrollTo(x,y);
+  }
+  function efficiency(){
+    fetch('/v1/usage', {cache:'no-store'}).then(function(r){ return r.ok ? r.json() : null; }).then(function(data){
+      if (!data) return; dailyModels(data.daily_models_html); panel('session','By session',data.by_session); panel('model','By model × effort',data.by_model_effort);
+    }).catch(function(){});
+  }
+  efficiency(); setInterval(efficiency, 30000);
+})();
+"""
+
 LEGEND_HTML = (
     '<div class="legend"><span><i class="k-used"></i>% used</span><span><i class="k-pace"></i>linear pace</span>'
-    '<span><i class="k-proj"></i>projection at current rate</span><span><i class="k-reset"></i>window reset</span>'
+    '<span><i class="k-pace-reset"></i>even pace (with resets)</span>'
+    '<span><i class="k-proj"></i>projection at current rate</span>'
+    '<span><i class="k-proj-reset"></i>projection (with resets)</span>'
+    '<span><i class="k-reset"></i>window reset</span>'
     '<span><i class="k-now"></i>now</span></div>'
 )
 
@@ -978,7 +1092,7 @@ def render_html(
     updated = to_local(now).strftime("%a %Y-%m-%d %H:%M")
     legend = LEGEND_HTML if chart_count else ""
     hover = f'<div id="chart-tooltip" role="status" aria-live="polite" hidden></div><script>{HOVER_SCRIPT}</script>' if chart_count else ""
-    capacity_script = f'<script id="capacity-script">{CAPACITY_SCRIPT}</script>' if live else ""
+    live_script = f'<script id="live-script">{LIVE_SCRIPT}</script>' if live else ""
     mode = "live dashboard" if live else f"static fallback generated {updated}"
     return "".join((
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">",
@@ -986,20 +1100,15 @@ def render_html(
         "" if live else f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">",
         f"<title>Quota Burndown</title><style>{CSS}</style></head><body>",
         f'<header class="top"><h1>Quota burndown</h1><div class="meta">{esc(mode)} · {len(samples)} historic samples in view</div></header>',
-        "<main>", banner, capacity_matrix_html(capacity, live), legend, history,
+        "<main>", banner, legend, history,
         daily_models_section_html(usage_db, now) if usage_db is not None else "",
         usage_section_html(usage_db, now) if usage_db is not None else "",
         efficiency_section_html(usage_db, now) if usage_db is not None else "", "</main>",
         f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",
-        hover, capacity_script, "</body></html>\n",
+        hover, live_script, "</body></html>\n",
     ))
 
 
 def write_html(store: Store, path: Path, **kwargs) -> Path:
-    # The collector's static page is an explicitly dated fallback.  Reuse the last
-    # atomically persisted capacity observation when no service supplied one.
-    if "capacity" not in kwargs:
-        persisted = read_json(store.paths.home / "capacity.json", None)
-        kwargs["capacity"] = persisted if isinstance(persisted, dict) else None
     atomic_write_text(path, render_html(store, **kwargs))
     return path

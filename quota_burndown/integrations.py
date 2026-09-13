@@ -180,6 +180,19 @@ def observations_from_limits(payload: Any, *, provider: str, account_scope: str,
         limits = root.get("rateLimitsByLimitId") or root.get("rate_limits_by_limit_id") or root.get("rate_limits") or root.get("rateLimits") or root
         if isinstance(limits, dict) and ("primary" in limits or "secondary" in limits):
             limits = {str(limits.get("limit_id") or limits.get("limitId") or "codex"): limits}
+    raw_credits = root.get("rateLimitResetCredits") or root.get("rate_limit_reset_credits") or {}
+    all_credits: list[dict] = []
+    if isinstance(raw_credits, dict):
+        for c in raw_credits.get("credits") or []:
+            if isinstance(c, dict) and c.get("status") in ("available", None):
+                all_credits.append({
+                    "id": str(c.get("id") or ""),
+                    "reset_type": str(c.get("resetType") or c.get("reset_type") or "codexRateLimits"),
+                    "status": str(c.get("status") or "available"),
+                    "granted_at": _parse_time(c.get("grantedAt") or c.get("granted_at")),
+                    "expires_at": _parse_time(c.get("expiresAt") or c.get("expires_at")),
+                    "title": str(c.get("title") or "Reset credit"),
+                })
     iterable = limits.items() if isinstance(limits, dict) else enumerate(limits) if isinstance(limits, list) else []
     out: list[Observation] = []
     for fallback_id, item in iterable:
@@ -202,6 +215,7 @@ def observations_from_limits(payload: Any, *, provider: str, account_scope: str,
             windows = [item]
         if isinstance(windows, dict):
             windows = windows.values()
+        matching_credits = tuple(c for c in all_credits if c.get("reset_type") in ("codexRateLimits", limit_id) or limit_id == "codex")
         for block in windows if isinstance(windows, (list, tuple)) or hasattr(windows, "__iter__") else []:
             if not isinstance(block, dict):
                 continue
@@ -216,7 +230,8 @@ def observations_from_limits(payload: Any, *, provider: str, account_scope: str,
                                    observed_at=observed_at, received_at=receipt, source=source,
                                    reset_provenance=reset_provenance, models=tuple(item_models),
                                    mapping_confidence=mapping_confidence,
-                                   observation_id=str(block.get("id") or ""), complete_snapshot=complete_snapshot)
+                                   observation_id=str(block.get("id") or ""), complete_snapshot=complete_snapshot,
+                                   reset_credits=matching_credits)
             kwargs["observation_time_provenance"] = observation_time_provenance
             out.append(Observation(**kwargs))
     return out
@@ -378,6 +393,21 @@ def _run_native(stop: threading.Event, publish: Callable[[list[Observation]], No
                                             now_received, now_received, "app-server", "unknown", complete_snapshot=True)]
                 if readings:
                     publish(readings)
+                    credits_found = [c for r in readings for c in r.reset_credits]
+                    if credits_found:
+                        try:
+                            from .config import default_home
+                            from .util import atomic_write_text, iso
+                            ser = []
+                            for c in credits_found:
+                                cd = dict(c)
+                                for k in ("granted_at", "expires_at"):
+                                    if isinstance(cd.get(k), datetime):
+                                        cd[k] = iso(cd[k])
+                                ser.append(cd)
+                            atomic_write_text(default_home() / "reset_credits.json", json.dumps({"codex": ser}, separators=(",", ":")))
+                        except Exception:
+                            pass
     finally:
         process.terminate()
         try: process.wait(timeout=1)
@@ -443,3 +473,46 @@ def run_files(stop: threading.Event, publish: Callable[[list[Observation]], None
         except (OSError, ValueError, TypeError) as exc:
             health("rollout", "degraded", exc.__class__.__name__)
         stop.wait(1.0)
+
+
+def run_antigravity(
+    stop: threading.Event,
+    publish: Callable[[list[Observation]], None],
+    health: Callable[[str, str, str | None], None],
+    active: Callable[[], bool],
+) -> None:
+    """Periodically query Antigravity's local language server for live quota limits."""
+    from .config import antigravity_ls_params
+    from .providers.antigravity_client import fetch_quota_summary, observations_from_summary
+
+    health("antigravity", "starting", None)
+    while not stop.is_set():
+        try:
+            port, token = antigravity_ls_params()
+            if not port or not token:
+                health("antigravity", "unavailable", "language server port or csrf token not found")
+                if stop.wait(30.0):
+                    return
+                continue
+
+            summary = fetch_quota_summary(port, token, timeout=5.0)
+            if not summary:
+                health("antigravity", "degraded", "failed to fetch quota summary")
+                if stop.wait(15.0):
+                    return
+                continue
+
+            observations = observations_from_summary(summary)
+            if observations:
+                publish(observations)
+                health("antigravity", "healthy", None)
+            else:
+                health("antigravity", "degraded", "empty quota summary")
+
+            poll_interval = 15.0 if active() else 60.0
+            if stop.wait(poll_interval):
+                return
+        except Exception as exc:
+            health("antigravity", "degraded", exc.__class__.__name__)
+            if stop.wait(15.0):
+                return

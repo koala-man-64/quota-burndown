@@ -66,22 +66,28 @@ def read_events(db_path: Path, since: datetime | None = None) -> list[dict]:
         conn.close()
 
 
+DEFAULT_BUCKET_MINUTES = 30
+
+
 def to_samples(
     events: list[dict],
     budget: int,
     after_ts: datetime | None = None,
     now: datetime | None = None,
+    bucket_minutes: int = DEFAULT_BUCKET_MINUTES,
 ) -> list[Sample]:
     """Convert event list into quota burndown samples.
 
     The entire event history is walked per weekly cycle so cumulative tokens
-    and resets_at are properly tracked. Only samples strictly newer than after_ts
-    are returned.
+    and resets_at are properly tracked. Periodic downsampling groups dense
+    events into time buckets (default 30 min) so charts reflect clean burndown curves.
+    Only samples strictly newer than after_ts are returned.
     """
     if not events:
         return []
     now = now or now_utc()
     samples: list[Sample] = []
+    bucket_seconds = max(60, bucket_minutes * 60)
 
     # Group events by weekly cycle_start
     cycles: dict[datetime, list[dict]] = {}
@@ -96,11 +102,22 @@ def to_samples(
             samples.append(Sample(cycle_start, PROVIDER, WINDOW, 0.0, resets_at, WINDOW_MINUTES, SOURCE))
 
         cumulative_tokens = 0
-        for ev in cycle_events:
+        cycle_samples: list[Sample] = []
+        last_bucket_idx = None
+        for ev in sorted(cycle_events, key=lambda x: x["ts"]):
             cumulative_tokens += ev["tokens"]
             used_pct = min(100.0, (cumulative_tokens / budget) * 100.0)
-            if after_ts is None or ev["ts"] > after_ts:
-                samples.append(Sample(ev["ts"], PROVIDER, WINDOW, round(used_pct, 2), resets_at, WINDOW_MINUTES, SOURCE))
+            bucket_idx = int((ev["ts"] - cycle_start).total_seconds() // bucket_seconds)
+            sample = Sample(ev["ts"], PROVIDER, WINDOW, round(used_pct, 2), resets_at, WINDOW_MINUTES, SOURCE)
+            if bucket_idx != last_bucket_idx:
+                cycle_samples.append(sample)
+                last_bucket_idx = bucket_idx
+            else:
+                cycle_samples[-1] = sample
+
+        for s in cycle_samples:
+            if after_ts is None or s.ts > after_ts:
+                samples.append(s)
 
     return samples
 

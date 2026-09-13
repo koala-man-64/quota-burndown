@@ -73,29 +73,29 @@ def test_capacity_matrix_renders_shared_pool_unknowns_and_escapes():
 
 def test_live_page_uses_sse_without_refresh_and_static_page_is_dated(store):
     live = render.render_html(store, now=NOW, capacity=snapshot(), live=True)
-    assert "EventSource('/v1/capacity/events')" in live and "fetch('/v1/policy'" in live
-    assert 'http-equiv="refresh"' not in live and "static fallback" not in live
+    assert '<section id="capacity"' not in live
     static = render.render_html(store, now=NOW, capacity=snapshot())
+    assert '<section id="capacity"' not in static
     assert 'http-equiv="refresh"' in static and "static fallback generated" in static
 
 
-def test_live_markup_polls_efficiency_and_keeps_observed_zero_remaining(store):
+def test_live_page_omits_capacity_markup_even_with_exhausted_snapshot(store):
     data = snapshot()
     data["provider_states"] = {"codex": {"state": "observed"}, "claude": {"state": "unknown"}, "antigravity": {"state": "unknown"}}
     data["pools"][0]["windows"][0]["remaining_pct"] = 0
     data["pools"][0]["windows"][0]["allowance_state"] = "exhausted"
     html = render.render_html(store, now=NOW, capacity=data, live=True)
-    assert "Provider observations: codex: observed, claude: unknown, antigravity: unknown" in html
-    assert "fetch('/v1/usage'" in html and "setInterval(efficiency, 30000)" in html
-    assert "stream disconnected · reconnecting" in html and "0%" in html
+    assert '<section id="capacity"' not in html
+    assert "Provider observations:" not in html and "stream disconnected · reconnecting" not in html
 
 
-def test_static_write_reads_the_persisted_capacity_snapshot(store, paths):
+def test_static_write_omits_the_persisted_capacity_snapshot(store, paths):
     paths.home.mkdir(parents=True, exist_ok=True)
     (paths.home / "capacity.json").write_text(json.dumps(snapshot()), encoding="utf-8")
     render.write_html(store, paths.html, now=NOW)
     html = paths.html.read_text(encoding="utf-8")
-    assert "Codex &lt;pool&gt;" in html and "static fallback generated" in html
+    assert "Codex &lt;pool&gt;" not in html and '<section id="capacity"' not in html
+    assert "static fallback generated" in html
 
 
 def test_capacity_matrix_treats_malformed_optional_content_as_unknown():

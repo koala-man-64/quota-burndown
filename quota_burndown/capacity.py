@@ -32,6 +32,7 @@ class Observation:
     observation_id: str = ""
     complete_snapshot: bool = False
     observation_time_provenance: str = "reported"
+    reset_credits: tuple[dict, ...] = ()
 
     @property
     def pool_key(self) -> str:
@@ -45,6 +46,15 @@ class Observation:
         out = asdict(self)
         for key in ("observed_at", "received_at", "resets_at"):
             out[key] = iso(out[key]) if out[key] else None
+        if self.reset_credits:
+            credits = []
+            for c in self.reset_credits:
+                item = dict(c)
+                for k in ("granted_at", "expires_at"):
+                    if isinstance(item.get(k), datetime):
+                        item[k] = iso(item[k])
+                credits.append(item)
+            out["reset_credits"] = credits
         return out
 
     @classmethod
@@ -53,6 +63,14 @@ class Observation:
         for key in ("observed_at", "received_at", "resets_at"):
             data[key] = parse_iso(data.get(key))
         data["models"] = tuple(data.get("models") or ())
+        credits = []
+        for c in (data.get("reset_credits") or ()):
+            item = dict(c)
+            for k in ("granted_at", "expires_at"):
+                if isinstance(item.get(k), str):
+                    item[k] = parse_iso(item[k])
+            credits.append(item)
+        data["reset_credits"] = tuple(credits)
         return cls(**data)
 
 
@@ -172,6 +190,7 @@ def provider_groups(pools: list[dict]) -> list[dict]:
                 "constraining_window": pool.get("constraining_window") if pool else None,
                 "window": copy.deepcopy(window), "availability_reason": reason,
                 "display_only": unavailable,
+                "reset_credits": copy.deepcopy(pool.get("reset_credits", [])) if pool else [],
             }
 
         for slot, label, limit_id, minutes in slots:
@@ -263,6 +282,19 @@ class CapacityState:
         self.snapshot: dict = {}
         self.reserve_pct = 10
         self._policy_mtime = None
+        self.reset_credits: dict[str, tuple[dict, ...]] = {}
+        saved_credits = read_json(home / "reset_credits.json", {})
+        if isinstance(saved_credits, dict):
+            for pk, cr_list in saved_credits.items():
+                if isinstance(cr_list, list):
+                    parsed_cr = []
+                    for c in cr_list:
+                        item = dict(c)
+                        for k in ("granted_at", "expires_at"):
+                            if isinstance(item.get(k), str):
+                                item[k] = parse_iso(item[k])
+                        parsed_cr.append(item)
+                    self.reset_credits[pk] = tuple(parsed_cr)
         saved = read_json(home / "capacity-state.json", {})
         if isinstance(saved, dict):
             self.active_accounts = saved.get("active_accounts", {})
@@ -308,6 +340,8 @@ class CapacityState:
                                          received_at=self.clock(), reset_provenance="unknown",
                                          observation_id="", complete_snapshot=False))
         for item in items:
+            if item.reset_credits:
+                self.reset_credits[item.pool_key] = item.reset_credits
             models = self.models.setdefault(item.pool_key, set())
             if not set(item.models).issubset(models):
                 models.update(item.models)
@@ -369,8 +403,19 @@ class CapacityState:
                 "mapping_confidence": "observed" if self.models.get(last.pool_key) else "unknown", "windows": [],
                 "account_scope_confidence": "reported" if last.provider == "codex" else "unverified_local_scope",
                 "limit_id_provenance": "reported" if last.provider == "codex" else "adapter_window_group",
+                "reset_credits": [],
             })
             pool["windows"].append(window_view(list(history), now, self.reserve_pct, self.baselines.get(key)))
+            credits = [c for c in (last.reset_credits or self.reset_credits.get(last.pool_key, ()))]
+            serialized_credits = []
+            for c in credits:
+                c_dict = dict(c)
+                for k in ("granted_at", "expires_at"):
+                    if isinstance(c_dict.get(k), datetime):
+                        c_dict[k] = iso(c_dict[k])
+                serialized_credits.append(c_dict)
+            if serialized_credits:
+                pool["reset_credits"] = serialized_credits
         if not any(p["provider"] == "antigravity" for p in pools.values()):
             pools["antigravity:local:unknown"] = {
                 "id": "antigravity:local:unknown", "provider": "antigravity", "account_scope": "local",
@@ -421,6 +466,9 @@ class CapacityState:
                        for k, h in self.history.items()]
             atomic_write_text(self.home / "capacity-state.json", json.dumps({"windows": entries, "active_accounts": self.active_accounts}, separators=(",", ":")))
             atomic_write_text(self.home / "capacity.json", json.dumps(snapshot, separators=(",", ":")))
+            if any(p.get("reset_credits") for p in pools.values()):
+                credits_by_pool = {p["id"]: p["reset_credits"] for p in pools.values() if p.get("reset_credits")}
+                atomic_write_text(self.home / "reset_credits.json", json.dumps(credits_by_pool, separators=(",", ":")))
         return snapshot
 
     def read(self) -> dict:

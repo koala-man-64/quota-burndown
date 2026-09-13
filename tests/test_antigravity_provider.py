@@ -96,3 +96,19 @@ def test_collect_reads_events_and_persists_state(tmp_path):
     assert samples2 == []
     assert stats2["new"] == 0
 
+
+def test_to_samples_bucketed_downsampling():
+    # 5 events within 10 minutes should collapse to 1 sample in a 30m bucket
+    events = [
+        {"ts": T0 + timedelta(minutes=i * 2), "tokens": 1_000_000}
+        for i in range(5)
+    ]
+    budget = 100_000_000
+    samples = antigravity.to_samples(events, budget, bucket_minutes=30)
+    # Baseline + 1 downsampled bucket sample
+    assert len(samples) == 2
+    assert samples[0].used == 0.0
+    assert samples[1].ts == T0 + timedelta(minutes=8)
+    assert samples[1].used == 5.0  # 5 * 1M / 100M = 5%
+
+

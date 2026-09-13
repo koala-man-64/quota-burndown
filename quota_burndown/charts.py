@@ -10,9 +10,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from .config import default_home
 from .model import Burndown, canonical_samples, find_instance, group_instances
 from .store import Sample
-from .util import fmt_local, to_local
+from .util import fmt_local, parse_iso, read_json, to_local
 
 TARGET_POINTS = 300
 ACTIVE_STATUSES = ("over", "under", "on-pace", "early", "exhausted")
@@ -61,6 +62,13 @@ class ChartData:
     resets: list[ResetMark] = field(default_factory=list)
     pace: Line | None = None
     projection: Line | None = None
+    reset_pace: list[Line] = field(default_factory=list)
+    reset_projections: list[Line] = field(default_factory=list)
+    reset_markers: list[tuple[datetime, float, str]] = field(default_factory=list)
+    credit_expiries: list[ResetMark] = field(default_factory=list)
+    reset_credits_count: int = 0
+    next_reset_time: datetime | None = None
+    runway_with_resets_min: float | None = None
     x_ticks: list[Tick] = field(default_factory=list)
     y_ticks: tuple[int, ...] = (0, 25, 50, 75, 100)
     span_key: str = ""
@@ -154,7 +162,57 @@ def _dedupe(samples: list[Sample]) -> list[Sample]:
     return out
 
 
-def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | None = None) -> ChartData | None:
+
+def load_credits_for(bd: Burndown, now: datetime) -> list[dict]:
+    """Retrieve and normalize unexpired reset credits applicable to this burndown."""
+    candidates = list(bd.reset_credits)
+    if not candidates:
+        try:
+            home = default_home()
+            cap = read_json(home / "capacity.json", {})
+            if isinstance(cap, dict):
+                for pool in cap.get("pools", []):
+                    if isinstance(pool, dict) and pool.get("provider") == bd.provider:
+                        limit_id = pool.get("limit_id") or ""
+                        if limit_id in bd.window or bd.provider == "codex":
+                            candidates = list(pool.get("reset_credits", []))
+                            if candidates:
+                                break
+            if not candidates:
+                res_cr = read_json(home / "reset_credits.json", {})
+                if isinstance(res_cr, dict):
+                    raw = res_cr.get(bd.provider) or res_cr.get(f"{bd.provider}:{bd.window}") or []
+                    if isinstance(raw, list):
+                        candidates = list(raw)
+            if not candidates:
+                pol = read_json(home / "capacity-policy.json", {})
+                if isinstance(pol, dict):
+                    raw = pol.get("reset_credits", {}).get(bd.provider, [])
+                    if isinstance(raw, list):
+                        candidates = list(raw)
+        except Exception:
+            pass
+
+    out: list[dict] = []
+    for item in candidates:
+        if not isinstance(item, dict):
+            continue
+        c = dict(item)
+        if c.get("status") not in (None, "available"):
+            continue
+        exp = c.get("expires_at")
+        if isinstance(exp, str):
+            exp = parse_iso(exp)
+            c["expires_at"] = exp
+        if exp is not None and exp <= now:
+            continue
+        out.append(c)
+
+    out.sort(key=lambda c: (c.get("expires_at") is None, c.get("expires_at")))
+    return out
+
+
+def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | None = None, credits: list[dict] | None = None) -> ChartData | None:
     """Chart data for one window from its burndown and its sample history (the burndown's
     own samples are merged in). Legacy `span_key` arguments cannot override the fixed
     two-cycle domain. None when the interval is unknown or there is nothing to draw."""
@@ -207,8 +265,46 @@ def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | No
         return None
 
     pace = projection = None
+    reset_pace: list[Line] = []
+    reset_projections: list[Line] = []
+    reset_markers: list[tuple[datetime, float, str]] = []
+    credit_expiries: list[ResetMark] = []
+    next_reset_time: datetime | None = None
+    runway_with_resets_min: float | None = None
+
+    if credits is None:
+        credits = load_credits_for(bd, now)
+    else:
+        parsed = []
+        for c in credits:
+            cd = dict(c)
+            if isinstance(cd.get("expires_at"), str):
+                cd["expires_at"] = parse_iso(cd["expires_at"])
+            parsed.append(cd)
+        credits = sorted(parsed, key=lambda c: (c.get("expires_at") is None, c.get("expires_at")))
+
+    k = len(credits)
+    for c in credits:
+        exp = c.get("expires_at")
+        if exp is not None and span_start <= exp <= span_end:
+            credit_expiries.append(ResetMark(exp, False))
+
     if active:
         pace = Line((bd.start, 0.0), (bd.resets_at, 100.0))
+        if k > 0 and bd.start is not None and bd.resets_at is not None:
+            duration = bd.resets_at - bd.start
+            dt = duration / (k + 1)
+            t_cur = bd.start
+            for i in range(k):
+                t_next = bd.start + (i + 1) * dt
+                exp = credits[i].get("expires_at")
+                if exp is not None and t_next > exp:
+                    t_next = max(t_cur + timedelta(minutes=1), exp)
+                reset_pace.append(Line((t_cur, 0.0), (t_next, 100.0)))
+                reset_pace.append(Line((t_next, 100.0), (t_next, 0.0)))
+                t_cur = t_next
+            reset_pace.append(Line((t_cur, 0.0), (bd.resets_at, 100.0)))
+
         if bd.status in PROJECTED_STATUSES and bd.rate_per_hour > 0:
             if bd.exhausts_before_reset and bd.exhaust_at is not None:
                 end = (bd.exhaust_at, 100.0)
@@ -216,10 +312,71 @@ def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | No
                 end = (bd.resets_at, min(bd.projected_end, 100.0))
             projection = Line((now, bd.used), end)
 
+            if k > 0:
+                r = bd.rate_per_hour
+                points_avail = (100.0 - bd.used) + k * 100.0
+                runway_with_resets_min = (points_avail / r) * 60.0
+
+                t_cur = now
+                u_cur = bd.used
+                rem_credits = list(credits)
+                credit_idx = 1
+
+                while t_cur < bd.resets_at:
+                    h_to_100 = (100.0 - u_cur) / r
+                    t_exhaust = t_cur + timedelta(hours=h_to_100)
+
+                    if t_exhaust < bd.resets_at and rem_credits:
+                        c = rem_credits.pop(0)
+                        exp = c.get("expires_at")
+                        if exp is not None and t_exhaust > exp:
+                            t_use = max(t_cur, exp)
+                            u_use = min(100.0, u_cur + (t_use - t_cur).total_seconds() / 3600.0 * r)
+                            reset_projections.append(Line((t_cur, u_cur), (t_use, u_use)))
+                            reset_projections.append(Line((t_use, u_use), (t_use, 0.0)))
+                            label = f"Reset {credit_idx} ({u_use:.0f}% pre-expiry)"
+                            reset_markers.append((t_use, u_use, label))
+                            if next_reset_time is None:
+                                next_reset_time = t_use
+                            t_cur, u_cur = t_use, 0.0
+                        else:
+                            reset_projections.append(Line((t_cur, u_cur), (t_exhaust, 100.0)))
+                            reset_projections.append(Line((t_exhaust, 100.0), (t_exhaust, 0.0)))
+                            label = f"Reset {credit_idx} (100% capacity)"
+                            reset_markers.append((t_exhaust, 100.0, label))
+                            if next_reset_time is None:
+                                next_reset_time = t_exhaust
+                            t_cur, u_cur = t_exhaust, 0.0
+                        credit_idx += 1
+                    else:
+                        if rem_credits:
+                            c = rem_credits[0]
+                            exp = c.get("expires_at")
+                            if exp is not None and t_cur < exp < bd.resets_at:
+                                rem_credits.pop(0)
+                                t_use = exp
+                                u_use = min(100.0, u_cur + (t_use - t_cur).total_seconds() / 3600.0 * r)
+                                reset_projections.append(Line((t_cur, u_cur), (t_use, u_use)))
+                                reset_projections.append(Line((t_use, u_use), (t_use, 0.0)))
+                                label = f"Reset {credit_idx} ({u_use:.0f}% pre-expiry)"
+                                reset_markers.append((t_use, u_use, label))
+                                if next_reset_time is None:
+                                    next_reset_time = t_use
+                                t_cur, u_cur = t_use, 0.0
+                                credit_idx += 1
+                                continue
+                        u_end = min(100.0, u_cur + (bd.resets_at - t_cur).total_seconds() / 3600.0 * r)
+                        reset_projections.append(Line((t_cur, u_cur), (bd.resets_at, u_end)))
+                        break
+
     return ChartData(
         key=bd.key, provider=bd.provider, window=bd.window,
         span_start=span_start, span_end=span_end, now=now,
         segments=segments, resets=resets, pace=pace, projection=projection,
+        reset_pace=reset_pace, reset_projections=reset_projections,
+        reset_markers=reset_markers, credit_expiries=credit_expiries,
+        reset_credits_count=k, next_reset_time=next_reset_time,
+        runway_with_resets_min=runway_with_resets_min,
         x_ticks=x_ticks(span_start, span_end, span),
         span_key=span_key, span_label=f"two cycles ({span_key})",
     )

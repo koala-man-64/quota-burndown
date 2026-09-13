@@ -123,7 +123,7 @@ def antigravity_home() -> Path:
     return Path(os.environ.get("QUOTA_BURNDOWN_ANTIGRAVITY_HOME") or (Path.home() / ".gemini" / "antigravity"))
 
 
-DEFAULT_ANTIGRAVITY_WEEKLY_TOKENS = 50_000_000
+DEFAULT_ANTIGRAVITY_WEEKLY_TOKENS = 2_000_000_000
 
 
 def antigravity_weekly_token_budget() -> int:
@@ -141,3 +141,52 @@ def antigravity_weekly_token_budget() -> int:
 def project_root() -> Path:
     """Directory that holds the launcher script; doubles as the Claude plugin root."""
     return Path(__file__).resolve().parent.parent
+
+
+def antigravity_log_candidates() -> list[Path]:
+    override = os.environ.get("QUOTA_BURNDOWN_ANTIGRAVITY_LOG")
+    if override:
+        return [Path(override).expanduser()]
+    if os.name == "nt":
+        roaming = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
+        return [roaming / "Antigravity" / "logs" / "main.log"]
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
+    mac = Path.home() / "Library" / "Application Support"
+    return [
+        xdg / "Antigravity" / "logs" / "main.log",
+        mac / "Antigravity" / "logs" / "main.log",
+    ]
+
+
+def antigravity_ls_params(candidates: list[Path] | None = None) -> tuple[int | None, str | None]:
+    """Return (port, csrf_token) for the active Antigravity language server."""
+    import re
+    env_port = os.environ.get("QUOTA_BURNDOWN_ANTIGRAVITY_PORT")
+    env_token = os.environ.get("QUOTA_BURNDOWN_ANTIGRAVITY_CSRF_TOKEN")
+    port = int(env_port) if env_port and env_port.isdigit() else None
+    token = env_token.strip() if env_token else None
+    if port and token:
+        return port, token
+
+    search_paths = candidates if candidates is not None else antigravity_log_candidates()
+    for path in search_paths:
+        if not path.is_file():
+            continue
+        try:
+            found_port, found_token = None, None
+            with open(path, "r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    if "Spawning:" in line and "--csrf_token" in line:
+                        m_token = re.search(r"--csrf_token\s+(\S+)", line)
+                        if m_token:
+                            found_token = m_token.group(1)
+                    m_port = re.search(r"Local:\s+https?://127\.0\.0\.1:(\d+)/?", line)
+                    if m_port:
+                        found_port = int(m_port.group(1))
+            port = port or found_port
+            token = token or found_token
+            if port and token:
+                break
+        except OSError:
+            continue
+    return port, token

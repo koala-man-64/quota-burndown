@@ -194,3 +194,80 @@ def test_domain_clips_samples_and_keeps_reset_marks_at_both_boundaries():
     assert data.segments[0].points[0] == charts.Point(start, 5)
     assert all(start <= point.ts <= end and point.used != 90 for segment in data.segments for point in segment.points)
     assert all_readings == history + [future]  # Domain clipping never edits stored history.
+
+
+def test_reset_pace_and_projections_with_credits():
+    start = NOW - timedelta(days=1)
+    reset = NOW + timedelta(days=6)
+    history = [
+        Sample(start, "codex", "7d", 10.0, reset, 10080, "app-server"),
+        Sample(NOW, "codex", "7d", 70.0, reset, 10080, "app-server"),
+    ]
+    bd = burndown_for(history, "codex:7d")
+    credits = [
+        {"id": "c1", "expires_at": reset + timedelta(days=10)},
+        {"id": "c2", "expires_at": reset + timedelta(days=11)},
+    ]
+    data = charts.build(bd, history, NOW, credits=credits)
+    assert data.reset_credits_count == 2
+    # 2 credits = 3 legs (k+1 = 3)
+    # Lines: (up, drop, up, drop, up) -> 5 lines
+    assert len(data.reset_pace) == 5
+    assert data.reset_pace[0].start == (start, 0.0)
+    assert data.reset_pace[0].end[1] == 100.0
+    assert data.reset_pace[1].start == data.reset_pace[0].end
+    assert data.reset_pace[1].end == (data.reset_pace[0].end[0], 0.0)
+    assert data.reset_pace[-1].end == (reset, 100.0)
+
+    # Multi-stage projection
+    # Burning 60% in 24 hours = 2.5%/hr.
+    # From NOW (70%), 30% left to 100% = 12 hours -> exhaust 1 at NOW + 12h.
+    assert len(data.reset_projections) >= 4
+    assert data.reset_projections[0].start == (NOW, 70.0)
+    assert data.reset_projections[0].end[1] == 100.0
+    t_ex1 = data.reset_projections[0].end[0]
+    assert t_ex1 == bd.exhaust_at
+    assert data.next_reset_time == t_ex1
+    assert len(data.reset_markers) >= 2
+    assert data.reset_markers[0][0] == t_ex1
+    assert "Reset 1" in data.reset_markers[0][2]
+    expected_runway = ((100.0 - bd.used) + 2 * 100.0) / bd.rate_per_hour * 60.0
+    assert abs(data.runway_with_resets_min - expected_runway) < 0.001
+
+
+def test_reset_projection_pre_expiry_when_credit_expires_before_exhaustion():
+    start = NOW - timedelta(days=2)
+    reset = NOW + timedelta(days=5)
+    history = [
+        Sample(start, "codex", "7d", 10.0, reset, 10080, "app-server"),
+        Sample(NOW, "codex", "7d", 20.0, reset, 10080, "app-server"),
+    ]
+    bd = burndown_for(history, "codex:7d")
+    # Rate = 10% / 48h = 0.20833%/hr. At this rate, 80% to 100% would take 384 hours (> 5 days reset).
+    # Credit expires in 24 hours (within the window).
+    c_exp = NOW + timedelta(hours=24)
+    credits = [{"id": "c1", "expires_at": c_exp}]
+    data = charts.build(bd, history, NOW, credits=credits)
+    assert data.reset_credits_count == 1
+    assert len(data.credit_expiries) == 1
+    assert data.credit_expiries[0].ts == c_exp
+    # Should trigger pre-expiry reset at c_exp
+    assert any(m[0] == c_exp and "pre-expiry" in m[2] for m in data.reset_markers)
+    assert data.next_reset_time == c_exp
+
+
+def test_no_reset_pace_when_zero_credits():
+    start = NOW - timedelta(days=1)
+    reset = NOW + timedelta(days=6)
+    history = [
+        Sample(start, "codex", "7d", 10.0, reset, 10080, "app-server"),
+        Sample(NOW, "codex", "7d", 70.0, reset, 10080, "app-server"),
+    ]
+    bd = burndown_for(history, "codex:7d")
+    data = charts.build(bd, history, NOW, credits=[])
+    assert data.reset_credits_count == 0
+    assert data.reset_pace == []
+    assert data.reset_projections == []
+    assert data.reset_markers == []
+    assert data.credit_expiries == []
+
