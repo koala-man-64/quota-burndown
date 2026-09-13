@@ -10,7 +10,6 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from . import __version__, charts, ledger, usage_report
-from .capacity import FABLE_WEEKLY_UNAVAILABLE
 from .charts import ChartData
 from .ledger import Totals
 from .model import Burndown, canonical_samples, current
@@ -21,7 +20,6 @@ STALE_MIN = 20
 PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex", "codex-spark": "Codex Spark", "antigravity": "Antigravity"}
 WINDOW_TITLES = {"5h": "5-hour session", "7d": "7-day (all models)"}
 FAMILY_TITLES = {"gpt": "GPT", "spark": "Spark", "fable": "Fable", "opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku", "gemini": "Gemini"}
-FABLE_WINDOW = "7d:fable"  # fixed chart slot beside the Claude all-models weekly chart
 STATUS_TEXT = {
     "over": "over pace",
     "under": "under pace",
@@ -296,19 +294,6 @@ def history_group(bd: Burndown) -> str:
     if bd.provider == "codex" and bd.window.partition(":")[2].lower() == "spark":
         return "codex-spark"
     return bd.provider
-
-
-def unavailable_card_html(window: str, reason: str) -> str:
-    """A fixed chart slot with no readings keeps the grid's shape and says why it is empty."""
-    stats = "".join(f'<div><b>—</b><span>{label}</span></div>' for label in ("used", "pace", "time left", "projection"))
-    return (
-        '<article class="card unavailable">'
-        f'<header><h3>{esc(window_title(window))}</h3><span class="badge">no readings</span></header>'
-        f'<div class="stats">{stats}</div>'
-        f'<p class="empty">{esc(reason)}</p>'
-        '<div class="foot">last sample never · 0 samples</div>'
-        "</article>"
-    )
 
 
 # -- usage section -------------------------------------------------------------------
@@ -715,7 +700,7 @@ header.top h1{margin:0;font-size:20px}
 .meta{color:var(--muted);font-size:12px}
 main{padding:8px 24px 24px;max-width:1900px;margin:0 auto}
 section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
-.history-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px;align-items:start}
+.history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:start}
 .history-grid section.provider{min-width:0}
 .history-grid .cards{grid-template-columns:minmax(0,1fr)}
 .model-token-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:20px}
@@ -733,7 +718,6 @@ section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-tra
 .card.status-exhausted{border-top-color:var(--warn)}
 .card.status-on-pace{border-top-color:var(--actual)}
 .card.stale{opacity:.7}
-.card.unavailable{opacity:.8}
 .card header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
 .card h3{margin:0;font-size:15px}
 .card h4{margin:14px 0 4px;font-size:12px;color:var(--muted);font-weight:500}
@@ -1065,15 +1049,10 @@ def render_html(
     for sample in samples:
         by_key.setdefault(sample.key, []).append(sample)
 
-    # One grid cell per weekly chart, so five charts fill two rows of three.
+    # One grid cell per weekly chart
     weekly = [bd for bd in burndowns if bd.window_min != 300]
     cells = [(history_group(bd), card_html(bd, by_key.get(bd.key, []), now, f"c{index}")) for index, bd in enumerate(weekly, 1)]
     chart_count = len(weekly)
-    claude_cells = [index for index, (group, _) in enumerate(cells) if group == "claude"]
-    if claude_cells and not any(bd.provider == "claude" and bd.window == FABLE_WINDOW for bd in weekly):
-        # Fable weekly is a fixed slot beside the all-models chart: the grid keeps its shape
-        # whether or not a Claude source has ever reported a Fable reading.
-        cells.insert(claude_cells[-1] + 1, ("claude", unavailable_card_html(FABLE_WINDOW, FABLE_WEEKLY_UNAVAILABLE)))
     stamp = esc(to_local(now).strftime("%Y-%m-%d %H:%M"))
     sections = [
         f'<section class="provider"><h2>Historic readings as of {stamp} · {esc(PROVIDER_TITLES.get(group, group))}</h2>'
