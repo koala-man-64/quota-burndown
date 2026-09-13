@@ -173,3 +173,15 @@ def test_claude_same_timestamp_retains_distinct_historical_reset_boundaries():
         result = current(history, {s.key: s for s in ordered}, now)
         assert len(result) == 1 and result[0].used == 20
         assert result[0].resets_at == new.resets_at
+
+
+def test_antigravity_prefers_app_server_over_synthetic_ledger():
+    now = START + timedelta(minutes=60)
+    ledger_sample = Sample(now, "antigravity", "7d:gemini", 94.0, RESET, 10080, "ledger")
+    app_sample = Sample(now - timedelta(minutes=1), "antigravity", "10080m:gemini", 27.0, RESET + timedelta(days=2), 10080, "app-server")
+    for ordered in ([ledger_sample, app_sample], [app_sample, ledger_sample]):
+        result = current(ordered, {s.key: s for s in ordered}, now)
+        ag = [bd for bd in result if bd.provider == "antigravity"]
+        assert len(ag) == 1
+        assert ag[0].used == 27.0
+        assert ag[0].source == "app-server"

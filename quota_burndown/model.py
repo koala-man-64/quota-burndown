@@ -10,7 +10,16 @@ ON_PACE_BAND = 2.0          # percentage points either side of pace that still c
 TOO_EARLY_FRACTION = 0.03   # projections need at least this fraction of the window elapsed
 RESET_TOLERANCE_S = 180     # readings whose reset times differ by less than this describe the same window
 HIDE_EXPIRED_AFTER_MIN = 1440  # drop windows that ended more than a day ago from the current view
-PROVIDER_ORDER = {"claude": 0, "codex": 1}
+PROVIDER_ORDER = {"claude": 0, "codex": 1, "antigravity": 2}
+SOURCE_RANK = {
+    "api": 4,
+    "statusline": 4,
+    "app-server": 4,
+    "rollout": 3,
+    "desktop": 2,
+    "desktop-history": 1,
+    "ledger": 0,
+}
 
 
 def same_window(a: datetime, b: datetime) -> bool:
@@ -53,6 +62,7 @@ class Burndown:
     sample_ts: datetime | None = None
     source: str = ""
     samples: list[Sample] = field(default_factory=list)
+    reset_credits: list[dict] = field(default_factory=list)
 
     @property
     def key(self) -> str:
@@ -91,6 +101,13 @@ def canonical_sample(sample: Sample) -> Sample | None:
         if alias and sample.window_min == alias[1]:
             return replace(sample, window=alias[0])
         return sample
+    if sample.provider == "antigravity":
+        aliases = {"300m": ("5h:gemini", 300), "300m:gemini": ("5h:gemini", 300),
+                   "10080m": ("7d:gemini", 10080), "10080m:gemini": ("7d:gemini", 10080)}
+        alias = aliases.get(sample.window.lower())
+        if alias and sample.window_min == alias[1]:
+            return replace(sample, window=alias[0])
+        return sample
     if sample.provider != "codex":
         return sample
     base, separator, scope = sample.window.partition(":")
@@ -125,7 +142,7 @@ def _is_spark_idle_placeholder(sample: Sample) -> bool:
 
 
 def canonical_samples(samples: list[Sample], *, preserve_resets: bool = True) -> list[Sample]:
-    """Merge Claude alias observations without rewriting storage.
+    """Merge Claude and Antigravity alias observations without rewriting storage.
 
     At equal timestamps prefer direct readings, then canonical keys. This keeps an
     alias from adding a second, potentially conflicting point to the same timeline.
@@ -133,22 +150,21 @@ def canonical_samples(samples: list[Sample], *, preserve_resets: bool = True) ->
     Model-specific Claude limits and other providers retain their existing history.
     """
     out = []
-    claude = {}
-    source_rank = {"api": 4, "statusline": 4, "app-server": 4,
-                   "desktop": 1, "desktop-history": 1}
+    merged = {}
     for raw in samples:
         sample = canonical_sample(raw)
         if sample is None:
             continue
-        if sample.provider != "claude" or sample.window not in ("5h", "7d"):
-            out.append(sample)
+        if (sample.provider == "claude" and sample.window in ("5h", "7d")) or \
+           (sample.provider == "antigravity" and sample.window in ("5h:gemini", "7d:gemini")):
+            key = sample.key, sample.ts, sample.resets_at if preserve_resets else None
+            priority = SOURCE_RANK.get(raw.source, 0), raw.window == sample.window
+            prior = merged.get(key)
+            if prior is None or priority > prior[0]:
+                merged[key] = priority, sample
             continue
-        key = sample.key, sample.ts, sample.resets_at if preserve_resets else None
-        priority = source_rank.get(raw.source, 0), raw.window == sample.window
-        prior = claude.get(key)
-        if prior is None or priority > prior[0]:
-            claude[key] = priority, sample
-    out.extend(record[1] for record in claude.values())
+        out.append(sample)
+    out.extend(record[1] for record in merged.values())
     # Repeated native Spark polls emit the same idle sentinel. Keep the newest one
     # for diagnostic visibility without making hundreds of false historical readings.
     idle_spark = {}
@@ -255,7 +271,13 @@ def current(samples: list[Sample], latest: dict[str, Sample], now: datetime) -> 
     canonical_latest: dict[str, Sample] = {}
     for sample in canonical_samples(list(latest.values()), preserve_resets=False):
         prior = canonical_latest.get(sample.key)
-        if prior is None or sample.ts >= prior.ts:
+        if prior is None:
+            canonical_latest[sample.key] = sample
+        elif sample.source == "ledger" and prior.source != "ledger":
+            continue
+        elif prior.source == "ledger" and sample.source != "ledger":
+            canonical_latest[sample.key] = sample
+        elif sample.ts >= prior.ts:
             canonical_latest[sample.key] = sample
     latest = canonical_latest
     grouped = group_instances(samples)
@@ -271,7 +293,10 @@ def current(samples: list[Sample], latest: dict[str, Sample], now: datetime) -> 
             inst = WindowInstance(key, last.provider, last.window, last.window_min, last.resets_at, [last])
         elif inst.samples[-1].ts < last.ts:
             inst.samples.append(last)
-        elif last.provider == "claude" and last.window in ("5h", "7d") and inst.samples[-1].ts == last.ts:
+        elif (
+            (last.provider == "claude" and last.window in ("5h", "7d"))
+            or (last.provider == "antigravity" and last.window in ("5h:gemini", "7d:gemini"))
+        ) and inst.samples[-1].ts == last.ts:
             # Nearby reset boundaries can cluster into one instance. Keep the
             # selected latest reading authoritative when their timestamps tie.
             inst.samples = [s for s in inst.samples if s.ts != last.ts] + [last]

@@ -370,3 +370,51 @@ def test_cli_usage_round_trip(paths, monkeypatch, tmp_path, capsys):
 
     with pytest.raises(SystemExit):
         cli.main(["--home", str(paths.home), "usage", "--by", "bogus"])
+
+
+def test_render_html_with_reset_credits(store, monkeypatch):
+    weekly_reset = NOW + timedelta(days=5)
+    store.append([
+        Sample(NOW - timedelta(days=2), "codex", "7d", 20.0, weekly_reset, 10080, "app-server"),
+        Sample(NOW, "codex", "7d", 80.0, weekly_reset, 10080, "app-server"),
+    ])
+    reset_file = store.paths.home / "reset_credits.json"
+    reset_file.write_text(json.dumps({
+        "codex": [
+            {"id": "c1", "expires_at": (weekly_reset + timedelta(days=2)).isoformat()},
+            {"id": "c2", "expires_at": (weekly_reset + timedelta(days=3)).isoformat()},
+        ]
+    }), encoding="utf-8")
+    monkeypatch.setenv("QUOTA_BURNDOWN_HOME", str(store.paths.home))
+
+    capacity = {
+        "provider_groups": [{
+            "provider": "codex",
+            "label": "Codex",
+            "limits": [{
+                "id": "codex:primary",
+                "label": "Codex 7d",
+                "pool_id": "codex-pool",
+                "models": ["gpt-5.6-sol"],
+                "reset_credits": [{"id": "c1", "expires_at": (weekly_reset + timedelta(days=2)).isoformat()}],
+                "window": {
+                    "used_pct": 80,
+                    "remaining_pct": 20,
+                    "usable_pct": 10,
+                    "resets_at": weekly_reset.isoformat(),
+                    "freshness": "fresh",
+                }
+            }]
+        }]
+    }
+
+    html = render.render_html(store, now=NOW, capacity=capacity)
+    assert 'class="pace-reset"' in html
+    assert 'class="proj-reset"' in html
+    assert 'class="reset-marker"' in html
+    assert 'class="reset-strip"' in html
+    assert 'class="badge reset-badge"' in html
+    assert "reset credit" in html
+    assert "even pace (with resets)" in html
+    assert "projection (with resets)" in html
+
