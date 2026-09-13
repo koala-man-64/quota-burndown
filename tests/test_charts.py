@@ -211,13 +211,14 @@ def test_reset_pace_and_projections_with_credits():
     data = charts.build(bd, history, NOW, credits=credits)
     assert data.reset_credits_count == 2
     # 2 credits = 3 legs (k+1 = 3)
-    # Lines: (up, drop, up, drop, up) -> 5 lines
-    assert len(data.reset_pace) == 5
+    # Lines: (up, drop, up, drop, up, drop) -> 6 lines
+    assert len(data.reset_pace) == 6
     assert data.reset_pace[0].start == (start, 0.0)
     assert data.reset_pace[0].end[1] == 100.0
     assert data.reset_pace[1].start == data.reset_pace[0].end
     assert data.reset_pace[1].end == (data.reset_pace[0].end[0], 0.0)
-    assert data.reset_pace[-1].end == (reset, 100.0)
+    assert data.reset_pace[-1].start == (reset, 100.0)
+    assert data.reset_pace[-1].end == (reset, 0.0)
 
     # Multi-stage projection
     # Burning 60% in 24 hours = 2.5%/hr.
@@ -228,6 +229,7 @@ def test_reset_pace_and_projections_with_credits():
     t_ex1 = data.reset_projections[0].end[0]
     assert t_ex1 == bd.exhaust_at
     assert data.next_reset_time == t_ex1
+    assert data.reset_projections[-1].end == (reset, 0.0)
     assert len(data.reset_markers) >= 2
     assert data.reset_markers[0][0] == t_ex1
     assert "Reset 1" in data.reset_markers[0][2]
@@ -254,6 +256,8 @@ def test_reset_projection_pre_expiry_when_credit_expires_before_exhaustion():
     # Should trigger pre-expiry reset at c_exp
     assert any(m[0] == c_exp and "pre-expiry" in m[2] for m in data.reset_markers)
     assert data.next_reset_time == c_exp
+    assert data.reset_pace[-1].end == (reset, 0.0)
+    assert data.reset_projections[-1].end == (reset, 0.0)
 
 
 def test_no_reset_pace_when_zero_credits():

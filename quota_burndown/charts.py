@@ -304,6 +304,7 @@ def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | No
                 reset_pace.append(Line((t_next, 100.0), (t_next, 0.0)))
                 t_cur = t_next
             reset_pace.append(Line((t_cur, 0.0), (bd.resets_at, 100.0)))
+            reset_pace.append(Line((bd.resets_at, 100.0), (bd.resets_at, 0.0)))
 
         if bd.status in PROJECTED_STATUSES and bd.rate_per_hour > 0:
             if bd.exhausts_before_reset and bd.exhaust_at is not None:
@@ -367,6 +368,8 @@ def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | No
                                 continue
                         u_end = min(100.0, u_cur + (bd.resets_at - t_cur).total_seconds() / 3600.0 * r)
                         reset_projections.append(Line((t_cur, u_cur), (bd.resets_at, u_end)))
+                        if u_end > 0.0:
+                            reset_projections.append(Line((bd.resets_at, u_end), (bd.resets_at, 0.0)))
                         break
 
     return ChartData(
