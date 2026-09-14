@@ -12,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from . import ledger, render, usage, usage_report
+from . import ledger, render, request_text, usage, usage_report
 from .capacity import CapacityState
 from .model import current
 from .store import Sample, Store
@@ -66,6 +66,8 @@ class CapacityService:
         self._last_read = 0.0
         self._consumer_lock = threading.Lock()
         self._page = b""
+        self._recent_page = (b"", {})
+        self._text_slots = threading.BoundedSemaphore(2)
         self._usage = b"{}"
         self._efficiency = b"{}"
         self._legacy_status = b"[]"
@@ -222,10 +224,13 @@ class CapacityService:
                     efficiency = usage_report.efficiency_payload(conn, now)
                     efficiency["daily_models_html"] = render.daily_models_html(efficiency["daily_models"])
                     self._efficiency = json.dumps(efficiency).encode()
+                    recent = ledger.recent_requests(conn, 25)
                 finally:
                     conn.close()
-                self._page = render.render_html(self.store, now=now, usage_db=self.paths.usage_db,
-                                               capacity=self.state.read(), live=True).encode("utf-8")
+                page = render.render_html(self.store, now=now, usage_db=self.paths.usage_db,
+                                          capacity=self.state.read(), live=True, recent_rows=recent).encode("utf-8")
+                self._recent_page = (page, {request_text.row_id(row): dict(row) for row in recent})
+                self._page = page
                 self._cache_legacy()
                 self.health("ledger", "healthy")
             except Exception as exc:
@@ -292,14 +297,27 @@ def make_server(service: CapacityService, host="127.0.0.1", port=8787):
                 self._events()
             elif path in ("/", "/index.html"):
                 service.touch()
-                if service._page:
-                    self._send(200, "text/html; charset=utf-8", service._page)
+                page = service._recent_page[0] or service._page
+                if page:
+                    self._send(200, "text/html; charset=utf-8", page)
                 else:
                     self._send(503, "text/html; charset=utf-8", b'<!doctype html><meta http-equiv="refresh" content="2"><p>Preparing the dashboard. Capacity API is available now.</p>')
             elif path == "/usage.json":
                 self._send(200, "application/json", service._usage)
             elif path == "/v1/usage":
                 self._send(200, "application/json", service._efficiency)
+            elif path.startswith('/v1/recent-text/'):
+                row = service._recent_page[1].get(path.removeprefix('/v1/recent-text/'))
+                if row is None:
+                    self._send(404, 'application/json', b'{"status":"unavailable","note":"This request is no longer in the displayed recent list. Reload the dashboard."}')
+                elif not service._text_slots.acquire(blocking=False):
+                    self._send(503, 'application/json', b'{"status":"unavailable","note":"Text viewer is busy. Close and reopen to retry."}')
+                else:
+                    try:
+                        result = request_text.read_request(row)
+                        self._send(200, 'application/json; charset=utf-8', json.dumps(result).encode())
+                    finally:
+                        service._text_slots.release()
             elif path == "/latest.json":
                 self._send(200, "application/json", service._legacy_latest)
             elif path == "/status.json":

@@ -9,7 +9,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import __version__, charts, ledger, usage_report
+from . import __version__, charts, ledger, request_text, usage_report
 from .charts import ChartData
 from .ledger import Totals
 from .model import Burndown, canonical_samples, current
@@ -346,7 +346,7 @@ def usage_card_html(provider: str, periods: dict[str, Totals], top: list[tuple[s
     return f'<article class="card usage-card"><header><h3>{esc(title)}</h3><span class="badge">{esc(badge)}</span></header>{table}{top_html}{note}</article>'
 
 
-def recent_table_html(rows: list[sqlite3.Row]) -> str:
+def recent_table_html(rows: list[sqlite3.Row], *, live: bool = False) -> str:
     if not rows:
         return ""
     body: list[str] = []
@@ -359,13 +359,18 @@ def recent_table_html(rows: list[sqlite3.Row]) -> str:
             cells += [_n(int(row[c] or 0)) for c in ("input_tokens", "cache_read_tokens", "cache_write_tokens", "output_tokens", "total_tokens")]
         css = ' class="inferred"' if inferred else ""
         body.append(f"<tr{css}>" + "".join(f"<td>{esc(c)}</td>" for c in cells) + "</tr>")
+        if live:
+            body.append('<tr><td colspan="8"><details class="request-text" data-request-id="' + request_text.row_id(row) + '">'
+                        '<summary>View raw text</summary><p class="text-status" role="status">Open to load this request’s recorded text.</p>'
+                        '<div class="text-content" hidden><h4>Recorded user prompt</h4><pre class="request-input"></pre>'
+                        '<h4>Recorded response</h4><pre class="request-output"></pre></div></details></td></tr>')
     return (
         '<div class="recent"><h3>Recent requests</h3><table class="usage"><thead><tr><th>time</th><th>provider</th><th>model @ effort</th>'
         f'<th>input</th><th>cache r</th><th>cache w</th><th>output</th><th>total</th></tr></thead><tbody>{"".join(body)}</tbody></table></div>'
     )
 
 
-def usage_section_html(usage_db: Path, now: datetime) -> str:
+def usage_section_html(usage_db: Path, now: datetime, *, live: bool = False, recent_rows=None) -> str:
     try:
         conn = ledger.connect(usage_db)
     except sqlite3.Error as exc:
@@ -373,7 +378,7 @@ def usage_section_html(usage_db: Path, now: datetime) -> str:
     try:
         summary = usage_report.summary(conn, now)
         week = ledger.rows(conn, since=now - timedelta(days=7), kind=ledger.REQUEST)
-        recent = ledger.recent_requests(conn, 25)
+        recent = ledger.recent_requests(conn, 25) if recent_rows is None else recent_rows
     finally:
         conn.close()
     cards = []
@@ -383,7 +388,7 @@ def usage_section_html(usage_db: Path, now: datetime) -> str:
         cards.append(usage_card_html(provider, summary[provider], top))
     return (
         f'<section class="usage"><h2>Token usage</h2><div class="cards">{"".join(cards)}</div>'
-        f'{recent_table_html(recent)}<div class="note">{esc(USAGE_FOOTNOTE)}</div></section>'
+        f'{recent_table_html(recent, live=live)}<div class="note">{esc(USAGE_FOOTNOTE)}</div></section>'
     )
 
 
@@ -784,6 +789,9 @@ table.usage tr.inferred td{color:var(--muted);font-style:italic}
 .card.usage-card.muted{border-top-color:var(--ideal);opacity:.8}
 .recent{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-top:16px;overflow-x:auto}
 .recent h3{margin:0 0 8px;font-size:15px}
+.request-text{text-align:left;white-space:normal}.request-text summary{cursor:pointer;color:var(--chart-series)}
+.request-text pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:24rem;overflow:auto;max-width:85vw;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;font-size:12px}
+.request-text h4{margin:12px 0 6px}.text-status{color:var(--muted);font-size:12px}
 .note{font-size:11px;color:var(--muted);margin-top:8px}
 section.capacity{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:8px 0 18px;border-top:4px solid var(--actual)}
 section.capacity header{display:flex;justify-content:space-between;gap:8px;align-items:center}section.capacity h2,.efficiency-section h2{font-size:15px;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
@@ -982,6 +990,27 @@ CAPACITY_SCRIPT = """
 
 LIVE_SCRIPT = """
 (function(){
+  document.querySelectorAll('.request-text').forEach(function(panel){
+    panel.addEventListener('toggle', function(){
+      if (!panel.open || panel.dataset.loaded || panel.dataset.loading) return;
+      panel.dataset.loading='true';
+      var status=panel.querySelector('.text-status');
+      status.textContent='Loading recorded text…';
+      fetch('/v1/recent-text/' + encodeURIComponent(panel.dataset.requestId), {cache:'no-store'})
+        .then(function(r){ return r.json().then(function(data){ return {ok:r.ok,data:data}; }); })
+        .then(function(result){
+          var data=result.data;
+          status.textContent=data.note || 'Text unavailable.';
+          if (result.ok && (data.status === 'available' || data.status === 'partial')) {
+            panel.querySelector('.request-input').textContent=data.request || 'No user prompt text could be matched to this call.';
+            panel.querySelector('.request-output').textContent=data.response || 'No response text could be matched to this call.';
+            panel.querySelector('.text-content').hidden=false;
+            panel.dataset.loaded='true';
+          }
+        }).catch(function(){ status.textContent='Could not load text. Close and reopen to retry.'; })
+        .finally(function(){ delete panel.dataset.loading; });
+    });
+  });
   function esc(v){ var d=document.createElement('div'); d.textContent=v===undefined||v===null?'unknown':String(v); return d.innerHTML; }
   function value(v){ return v === undefined || v === null ? 'unknown' : String(v); }
   function count(v){ return v === undefined || v === null ? 'unknown' : Math.round(Number(v)).toLocaleString(); }
@@ -1039,6 +1068,7 @@ def render_html(
     store: Store, now: datetime | None = None, days: int = 7,
     warnings: list[str] | None = None, refresh_s: int = 120,
     usage_db: Path | None = None, capacity: dict | None = None, live: bool = False,
+    recent_rows=None,
 ) -> str:
     """The whole page. Weekly history renders as exact two-window-cycle charts."""
     now = now or now_utc()
@@ -1081,7 +1111,7 @@ def render_html(
         f'<header class="top"><h1>Quota burndown</h1><div class="meta">{esc(mode)} · {len(samples)} historic samples in view</div></header>',
         "<main>", banner, legend, history,
         daily_models_section_html(usage_db, now) if usage_db is not None else "",
-        usage_section_html(usage_db, now) if usage_db is not None else "",
+        usage_section_html(usage_db, now, live=live, recent_rows=recent_rows) if usage_db is not None else "",
         efficiency_section_html(usage_db, now) if usage_db is not None else "", "</main>",
         f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",
         hover, live_script, "</body></html>\n",
