@@ -224,7 +224,7 @@ class CapacityService:
                     efficiency = usage_report.efficiency_payload(conn, now)
                     efficiency["daily_models_html"] = render.daily_models_html(efficiency["daily_models"])
                     self._efficiency = json.dumps(efficiency).encode()
-                    recent = ledger.recent_requests(conn, 25)
+                    recent = ledger.recent_requests(conn)
                 finally:
                     conn.close()
                 page = render.render_html(self.store, now=now, usage_db=self.paths.usage_db,

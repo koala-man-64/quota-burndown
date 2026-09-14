@@ -131,8 +131,8 @@ def test_endpoint_only_accepts_displayed_rows_and_keeps_text_out_of_page(paths, 
     conn.close()
     service = CapacityService(paths, collectors=False)
     publish(service, monkeypatch)
-    assert len(service._recent_page[1]) == 25
-    assert service._page.count(b'<summary>View raw text</summary>') == 25
+    assert len(service._recent_page[1]) == 26
+    assert service._page.count(b'<summary>View raw text</summary>') == 26
     secret = '</pre><script>window.injected=true</script>'
     reads = []
     monkeypatch.setattr(request_text, 'read_request', lambda r: reads.append(r) or request_text._result(secret, 'answer'))
@@ -147,9 +147,11 @@ def test_endpoint_only_accepts_displayed_rows_and_keeps_text_out_of_page(paths, 
         client.close()
         return status, body, cache
     try:
+        for event in events[:5]:
+            rid = request_text.row_id(row(event))
+            assert get('/v1/recent-text/' + rid)[0] == 200
         selected = next(iter(service._recent_page[1]))
-        excluded = next(request_text.row_id(row(e)) for e in events if request_text.row_id(row(e)) not in service._recent_page[1])
-        for invalid in (excluded, '../../secret', 'unknown'):
+        for invalid in ('../../secret', 'unknown'):
             assert get('/v1/recent-text/' + invalid)[0] == 404
         assert reads == []
         assert get('/v1/recent-text/' + selected, {'Origin': 'https://attacker.example'})[0] == 403

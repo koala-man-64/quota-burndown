@@ -182,7 +182,9 @@ def rows(
     return conn.execute(sql, args).fetchall()
 
 
-def recent_requests(conn: sqlite3.Connection, limit: int = 25) -> list[sqlite3.Row]:
+def recent_requests(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
+    if limit is None:
+        return conn.execute("SELECT * FROM events WHERE kind = ? ORDER BY ts DESC", (REQUEST,)).fetchall()
     return conn.execute("SELECT * FROM events WHERE kind = ? ORDER BY ts DESC LIMIT ?", (REQUEST, limit)).fetchall()
 
 

@@ -378,7 +378,7 @@ def usage_section_html(usage_db: Path, now: datetime, *, live: bool = False, rec
     try:
         summary = usage_report.summary(conn, now)
         week = ledger.rows(conn, since=now - timedelta(days=7), kind=ledger.REQUEST)
-        recent = ledger.recent_requests(conn, 25) if recent_rows is None else recent_rows
+        recent = ledger.recent_requests(conn) if recent_rows is None else recent_rows
     finally:
         conn.close()
     cards = []
