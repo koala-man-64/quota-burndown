@@ -330,6 +330,15 @@ def test_render_usage_section(store, paths):
     assert "Token usage" not in render.render_html(store, now=NOW)
 
 
+def test_token_slots_follow_model_names_and_fold_the_smallest_past_the_palette():
+    few = {"b": 1, "a": 5, "c": 3}
+    assert render.token_slots(few) == {"a": 1, "b": 2, "c": 3}
+    many = {f"m{i}": 100 + i for i in range(render.TOKEN_SLOTS)} | {"m-tiny": 1, "z-big": 10_000}
+    slots = render.token_slots(many)
+    assert slots["m-tiny"] == 0 and slots["m0"] == 0 and slots["z-big"] == render.TOKEN_SLOTS - 1
+    assert sorted(v for v in slots.values() if v) == list(range(1, render.TOKEN_SLOTS))
+
+
 def test_render_usage_bars_on_secondary_axis(store, paths):
     from quota_burndown import ledger
     from quota_burndown.ledger import Event
@@ -337,7 +346,8 @@ def test_render_usage_bars_on_secondary_axis(store, paths):
     seed(store)
     conn = ledger.connect(paths.usage_db)
     ledger.upsert(conn, [
-        Event("claude", "claude-code", ledger.REQUEST, "r1", NOW, model="claude-opus-5", total_tokens=1_500_000),
+        Event("claude", "claude-code", ledger.REQUEST, "r1", NOW, model="claude-opus-5", total_tokens=1_000_000),
+        Event("claude", "claude-code", ledger.REQUEST, "r3", NOW, model="claude-sonnet-5", total_tokens=500_000),
         Event("claude", "claude-code", ledger.REQUEST, "r2", NOW - timedelta(minutes=20), model="gpt-oss-20b-48k", total_tokens=9_000_000),
         Event("antigravity", "antigravity", ledger.REQUEST, "a1", NOW - timedelta(minutes=10), model="gemini-3.8-flash", input_tokens_inferred=5),
     ])
@@ -346,13 +356,21 @@ def test_render_usage_bars_on_secondary_axis(store, paths):
     html = render.render_html(store, now=NOW, usage_db=paths.usage_db)
 
     claude_card, codex_card = html.split("<article")[1:3]
-    assert claude_card.count('class="tok-bar"') == 1 and "<title>1.5M tokens, " in claude_card and "<td>1,500,000</td>" in claude_card
+    rects = re.findall(r'<rect class="tok-bar (tok-\w+)"[^>]*><title>([^<]*)</title>', claude_card)
+    assert rects == [
+        ("tok-s1", f"claude-opus-5: 1.0M of 1.5M tokens, {rects[0][1].split(', ', 1)[1]}"),
+        ("tok-s2", f"claude-sonnet-5: 500K of 1.5M tokens, {rects[0][1].split(', ', 1)[1]}"),
+    ]
+    assert "<td>1,500,000</td><td>claude-opus-5 1,000,000, claude-sonnet-5 500,000</td>" in claude_card
+    assert '<li><i class="tok-s1"></i>claude-opus-5 · 1.0M</li><li><i class="tok-s2"></i>claude-sonnet-5 · 500K</li>' in claude_card
+    assert ".tok-s1{fill:var(--tok-1)}" in html and html.count("--tok-7:") == 2  # light and dark palette
     assert 'class="lbl tok-lbl"' in claude_card and ">2M</text>" in claude_card and ">500K</text>" in claude_card
     assert "bars: tokens per 6h (right axis)" in claude_card and "<summary>tokens per 6h</summary>" in claude_card
-    assert 'class="tok-bar"' not in codex_card and "tok-lbl" not in codex_card and "bars: tokens" not in codex_card
+    assert 'class="tok-bar"' not in codex_card and "tok-lbl" not in codex_card and "bars: tokens" not in codex_card and "tok-legend" not in codex_card
     payload = json.loads(re.search(r'class="chart-data" data-for="c1">(.*?)</script>', html).group(1))
-    assert payload["points"][-1]["k"].startswith("1.5M tokens ")
-    assert "tokens per interval (right axis)" in html
+    hover = payload["points"][-1]["k"]
+    assert hover.startswith("1.5M tokens ") and hover.endswith("(claude-opus-5 1.0M, claude-sonnet-5 500K)")
+    assert "tokens per interval by model (right axis)" in html
     assert 'class="tok-bar"' not in render.render_html(store, now=NOW)
 
 

@@ -60,6 +60,7 @@ class TokenBar:
     start: datetime
     end: datetime
     tokens: int
+    by_model: tuple[tuple[str, int], ...] = ()  # (model, tokens), stacked in model-name order
 
 
 @dataclass
@@ -204,19 +205,24 @@ def token_bars(
 ) -> tuple[list[TokenBar], timedelta]:
     """Recorded tokens of the window's pool summed per interval. Intervals are aligned to
     local midnight so bars line up with the day ticks; the first bar may start before the
-    domain and is clipped when drawn. Empty intervals are omitted."""
+    domain and is clipped when drawn. Empty intervals are omitted. Each bar keeps its
+    per-model split so it can be drawn stacked."""
     step = token_step(span_end - span_start)
     local_start = to_local(span_start)
     origin = local_start.replace(hour=0, minute=0, second=0, microsecond=0)
     origin += step * int((local_start - origin) / step)
     member = pool_member(provider, window)
-    sums: dict[int, int] = {}
+    sums: dict[int, dict[str, int]] = {}
     for ts, model, tokens in usage:
-        if not tokens or ts < origin or ts >= span_end or not member(model or ""):
+        model = model or ""
+        if not tokens or ts < origin or ts >= span_end or not member(model):
             continue
-        slot = int((ts - origin) / step)
-        sums[slot] = sums.get(slot, 0) + int(tokens)
-    bars = [TokenBar(origin + slot * step, origin + (slot + 1) * step, total) for slot, total in sorted(sums.items())]
+        models = sums.setdefault(int((ts - origin) / step), {})
+        models[model] = models.get(model, 0) + int(tokens)
+    bars = [
+        TokenBar(origin + slot * step, origin + (slot + 1) * step, sum(models.values()), tuple(sorted(models.items())))
+        for slot, models in sorted(sums.items())
+    ]
     return bars, step
 
 

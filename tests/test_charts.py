@@ -308,6 +308,15 @@ def test_token_bars_sum_pool_usage_per_local_aligned_interval():
         local = to_local(bar.start)
         assert bar.end - bar.start == step and local.minute == 0 and local.hour % 6 == 0
         assert bar.start < NOW <= bar.end or bar.start <= NOW - timedelta(hours=1) < bar.end
+        assert bar.tokens == sum(tokens for _, tokens in bar.by_model)
+    assert sorted(pair for bar in bars for pair in bar.by_model) == [("claude-opus-5", 100), ("claude-sonnet-5", 50)]
+
+
+def test_token_bars_split_one_interval_by_model_in_name_order():
+    at = NOW - timedelta(minutes=5)
+    usage = [(at, "claude-sonnet-5", 20), (at, "claude-opus-5", 5), (at, "claude-sonnet-5", 10)]
+    [bar], _ = charts.token_bars(usage, "claude", "7d", NOW - timedelta(days=14), NOW)
+    assert bar.tokens == 35 and bar.by_model == (("claude-opus-5", 5), ("claude-sonnet-5", 30))
 
 
 def test_build_attaches_token_bars_only_when_usage_given():
