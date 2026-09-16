@@ -80,6 +80,9 @@ class ChartData:
     reset_markers: list[tuple[datetime, float, str]] = field(default_factory=list)
     credit_expiries: list[ResetMark] = field(default_factory=list)
     reset_credits_count: int = 0
+    # True when the credit count is a report rather than an absence of data, so a
+    # zero can be shown as "none left" instead of being silently omitted.
+    reset_credits_known: bool = False
     next_reset_time: datetime | None = None
     runway_with_resets_min: float | None = None
     x_ticks: list[Tick] = field(default_factory=list)
@@ -241,7 +244,19 @@ def _dedupe(samples: list[Sample]) -> list[Sample]:
 
 def load_credits_for(bd: Burndown, now: datetime) -> list[dict]:
     """Retrieve and normalize unexpired reset credits applicable to this burndown."""
+    return load_credit_state(bd, now)[0]
+
+
+def load_credit_state(bd: Burndown, now: datetime) -> tuple[list[dict], bool]:
+    """Unexpired reset credits for this burndown, and whether that list is known.
+
+    Sources are tried in order, but a source that *reports* a state ends the search
+    even when it reports zero. The previous chain treated every empty result as
+    "look further", so a live report of no credits fell through to a stale file
+    that still listed one.
+    """
     candidates = list(bd.reset_credits)
+    known = bool(candidates)
     if not candidates:
         try:
             home = default_home()
@@ -252,15 +267,16 @@ def load_credits_for(bd: Burndown, now: datetime) -> list[dict]:
                         limit_id = pool.get("limit_id") or ""
                         if limit_id in bd.window or bd.provider == "codex":
                             candidates = list(pool.get("reset_credits", []))
-                            if candidates:
+                            if candidates or pool.get("reset_credits_known"):
+                                known = True
                                 break
-            if not candidates:
+            if not candidates and not known:
                 res_cr = read_json(home / "reset_credits.json", {})
                 if isinstance(res_cr, dict):
                     raw = res_cr.get(bd.provider) or res_cr.get(f"{bd.provider}:{bd.window}") or []
                     if isinstance(raw, list):
                         candidates = list(raw)
-            if not candidates:
+            if not candidates and not known:
                 pol = read_json(home / "capacity-policy.json", {})
                 if isinstance(pol, dict):
                     raw = pol.get("reset_credits", {}).get(bd.provider, [])
@@ -285,7 +301,7 @@ def load_credits_for(bd: Burndown, now: datetime) -> list[dict]:
         out.append(c)
 
     out.sort(key=lambda c: (c.get("expires_at") is None, c.get("expires_at")))
-    return out
+    return out, known
 
 
 def build(
@@ -353,8 +369,9 @@ def build(
     next_reset_time: datetime | None = None
     runway_with_resets_min: float | None = None
 
+    credits_known = credits is not None
     if credits is None:
-        credits = load_credits_for(bd, now)
+        credits, credits_known = load_credit_state(bd, now)
     else:
         parsed = []
         for c in credits:
@@ -464,7 +481,7 @@ def build(
         segments=segments, resets=resets, pace=pace, projection=projection,
         reset_pace=reset_pace, reset_projections=reset_projections,
         reset_markers=reset_markers, credit_expiries=credit_expiries,
-        reset_credits_count=k, next_reset_time=next_reset_time,
+        reset_credits_count=k, reset_credits_known=credits_known, next_reset_time=next_reset_time,
         runway_with_resets_min=runway_with_resets_min,
         x_ticks=x_ticks(span_start, span_end, span),
         span_key=span_key, span_label=f"two cycles ({span_key})",

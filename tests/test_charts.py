@@ -335,3 +335,26 @@ def test_build_attaches_token_bars_only_when_usage_given():
     empty = charts.build(bd, history, NOW, credits=[], usage=[])
     assert empty.token_bars == [] and empty.token_step is None
 
+def test_reported_zero_credits_are_not_replaced_by_a_stale_file(tmp_path, monkeypatch):
+    """Every empty source used to mean "look further", so a live report of zero
+    fell through to a reset_credits.json that still listed a used credit."""
+    import json
+
+    monkeypatch.setenv("QUOTA_BURNDOWN_HOME", str(tmp_path))
+    (tmp_path / "capacity.json").write_text(json.dumps({"pools": [
+        {"provider": "codex", "limit_id": "codex", "reset_credits": [], "reset_credits_known": True},
+    ]}), encoding="utf-8")
+    (tmp_path / "reset_credits.json").write_text(json.dumps({"codex": [
+        {"id": "stale", "status": "available", "expires_at": (NOW + timedelta(days=9)).isoformat()},
+    ]}), encoding="utf-8")
+    reset = NOW + timedelta(days=6)
+    history = [
+        Sample(NOW - timedelta(days=1), "codex", "7d", 10.0, reset, 10080, "app-server"),
+        Sample(NOW, "codex", "7d", 70.0, reset, 10080, "app-server"),
+    ]
+    bd = burndown_for(history, "codex:7d")
+    credits, known = charts.load_credit_state(bd, NOW)
+    assert credits == [] and known
+    data = charts.build(bd, history, NOW)
+    assert data.reset_credits_count == 0
+    assert data.reset_credits_known is True

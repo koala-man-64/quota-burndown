@@ -153,3 +153,55 @@ def test_equal_reset_provenance_sources_still_take_over_by_recency(tmp_path):
     assert state.ingest([reading(source="rollout", used_pct=41, observed_at=NOW + timedelta(seconds=5),
                                  received_at=NOW + timedelta(seconds=5))]) is True
     assert pool(state)["windows"][0]["source"] == "rollout"
+
+import json as _json
+
+CREDIT = {"id": "c1", "reset_type": "codexRateLimits", "status": "available",
+          "granted_at": NOW - timedelta(days=5), "expires_at": NOW + timedelta(days=20), "title": "Full reset"}
+
+
+def test_a_used_credit_disappears_instead_of_lingering(tmp_path):
+    """The regression: the Codex app-server reported availableCount 0 and the
+    dashboard kept showing one credit available, because an empty report never
+    replaced the cached list."""
+    clock = [NOW]
+    state = CapacityState(tmp_path, clock=lambda: clock[0])
+    state.ingest([reading(reset_credits=(CREDIT,), reset_credits_reported=True)])
+    assert len(pool(state)["reset_credits"]) == 1
+    clock[0] += timedelta(minutes=1)
+    state.ingest([reading(observed_at=clock[0], received_at=clock[0], used_pct=0,
+                          reset_credits=(), reset_credits_reported=True)])
+    actual = pool(state)
+    assert actual["reset_credits"] == []
+    assert actual["reset_credits_known"] is True
+
+
+def test_a_notification_without_credits_keeps_the_last_report(tmp_path):
+    clock = [NOW]
+    state = CapacityState(tmp_path, clock=lambda: clock[0])
+    state.ingest([reading(reset_credits=(CREDIT,), reset_credits_reported=True)])
+    clock[0] += timedelta(minutes=1)
+    state.ingest([reading(observed_at=clock[0], received_at=clock[0], used_pct=41)])
+    assert len(pool(state)["reset_credits"]) == 1
+
+
+def test_known_empty_credits_survive_a_restart(tmp_path):
+    """Persisting only non-empty pools left the used credit on disk, and every
+    restart reloaded it."""
+    clock = [NOW]
+    state = CapacityState(tmp_path, clock=lambda: clock[0])
+    state.ingest([reading(reset_credits=(CREDIT,), reset_credits_reported=True)])
+    state.publish(persist=True)
+    clock[0] += timedelta(minutes=1)
+    state.ingest([reading(observed_at=clock[0], received_at=clock[0], used_pct=0,
+                          reset_credits=(), reset_credits_reported=True)])
+    state.publish(persist=True)
+    saved = _json.loads((tmp_path / "reset_credits.json").read_text(encoding="utf-8"))
+    assert saved and all(value == [] for value in saved.values())
+
+    clock[0] += timedelta(minutes=1)
+    reborn = CapacityState(tmp_path, clock=lambda: clock[0])
+    reborn.ingest([reading(observed_at=clock[0], received_at=clock[0], used_pct=1)])
+    actual = pool(reborn)
+    assert actual["reset_credits"] == []
+    assert actual["reset_credits_known"] is True

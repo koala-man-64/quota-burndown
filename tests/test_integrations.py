@@ -184,3 +184,30 @@ def test_observations_from_limits_extracts_rate_limit_reset_credits():
     assert codex_item.reset_credits[0]["reset_type"] == "codexRateLimits"
     assert codex_item.reset_credits[0]["expires_at"] == datetime.fromtimestamp(1791080604, tz=timezone.utc)
 
+def test_reported_zero_credits_is_a_report_not_an_absence():
+    """rateLimits/read with availableCount 0 must say "none left", not "no news"."""
+    payload = {
+        "rateLimitsByLimitId": {"codex": {"primary": {"used_percent": 60, "window_minutes": 10080}}},
+        "rateLimitResetCredits": {"availableCount": 0, "credits": []},
+    }
+    items = observations_from_limits(payload, provider="codex", account_scope="acct", source="app-server", observed_at=T0)
+    assert items
+    assert all(item.reset_credits == () and item.reset_credits_reported for item in items)
+
+
+def test_update_notifications_without_credits_are_not_reports():
+    payload = {"rateLimitsByLimitId": {"codex": {"primary": {"used_percent": 61, "window_minutes": 10080}}}}
+    items = observations_from_limits(payload, provider="codex", account_scope="acct", source="app-server", observed_at=T0)
+    assert items
+    assert not any(item.reset_credits_reported for item in items)
+
+
+def test_available_count_zero_outranks_a_credit_still_listed():
+    payload = {
+        "rateLimitsByLimitId": {"codex": {"primary": {"used_percent": 60, "window_minutes": 10080}}},
+        "rateLimitResetCredits": {"availableCount": 0, "credits": [
+            {"id": "leftover", "status": "available", "resetType": "codexRateLimits", "expiresAt": 1791080604},
+        ]},
+    }
+    items = observations_from_limits(payload, provider="codex", account_scope="acct", source="app-server", observed_at=T0)
+    assert all(item.reset_credits == () for item in items)
