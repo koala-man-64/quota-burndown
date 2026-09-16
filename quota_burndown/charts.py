@@ -9,15 +9,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Callable, Iterable
 
 from .config import default_home
 from .model import Burndown, canonical_samples, find_instance, group_instances
+from .providers.codex import model_family
 from .store import Sample
 from .util import fmt_local, parse_iso, read_json, to_local
 
 TARGET_POINTS = 300
 ACTIVE_STATUSES = ("over", "under", "on-pace", "early", "exhausted")
 PROJECTED_STATUSES = ("over", "under", "on-pace")
+MAX_TOKEN_BARS = 60
+TOKEN_BAR_STEPS = tuple(timedelta(minutes=m) for m in (5, 10, 15, 30, 60, 120, 180, 360, 720, 1440))
+TOKEN_SCALE_STEPS = (1, 2, 4, 5, 8, 10)
 
 
 @dataclass(frozen=True)
@@ -50,6 +55,13 @@ class Tick:
     label: str
 
 
+@dataclass(frozen=True)
+class TokenBar:
+    start: datetime
+    end: datetime
+    tokens: int
+
+
 @dataclass
 class ChartData:
     key: str
@@ -71,6 +83,9 @@ class ChartData:
     runway_with_resets_min: float | None = None
     x_ticks: list[Tick] = field(default_factory=list)
     y_ticks: tuple[int, ...] = (0, 25, 50, 75, 100)
+    token_bars: list[TokenBar] = field(default_factory=list)
+    token_step: timedelta | None = None
+    token_max: int = 0
     span_key: str = ""
     span_label: str = ""
 
@@ -150,6 +165,61 @@ def x_ticks(span_start: datetime, span_end: datetime, span: timedelta) -> list[T
     return ticks
 
 
+def pool_member(provider: str, window: str) -> Callable[[str], bool]:
+    """Whether a ledger model's tokens count against this window's allowance pool. Claude
+    windows cover Claude models only (not local models routed through Claude Code), Codex
+    windows follow the collector's pool mapping (numeric GPTs share `codex`, Spark is its own),
+    and any other scope matches models containing it."""
+    scope = window.partition(":")[2].lower()
+    if provider == "claude":
+        if scope in ("", "claude"):
+            return lambda model: model.lower().startswith("claude")
+        return lambda model: model.lower().startswith("claude") and scope in model.lower()
+    if provider == "codex":
+        return lambda model: bool(model) and model_family(model) == scope
+    return lambda model: bool(scope) and scope in model.lower()
+
+
+def token_step(span: timedelta) -> timedelta:
+    """The shortest clock-friendly interval that keeps the domain within MAX_TOKEN_BARS bars."""
+    for step in TOKEN_BAR_STEPS:
+        if span / step <= MAX_TOKEN_BARS:
+            return step
+    return TOKEN_BAR_STEPS[-1]
+
+
+def token_scale(peak: int) -> int:
+    """A round axis maximum at or above `peak` whose quarters are readable (1, 2, 4, 5, 8 x 10^k)."""
+    if peak <= 0:
+        return 0
+    magnitude = 1
+    while magnitude * 10 < peak:
+        magnitude *= 10
+    return next(step * magnitude for step in TOKEN_SCALE_STEPS if step * magnitude >= peak)
+
+
+def token_bars(
+    usage: Iterable[tuple[datetime, str, int]], provider: str, window: str,
+    span_start: datetime, span_end: datetime,
+) -> tuple[list[TokenBar], timedelta]:
+    """Recorded tokens of the window's pool summed per interval. Intervals are aligned to
+    local midnight so bars line up with the day ticks; the first bar may start before the
+    domain and is clipped when drawn. Empty intervals are omitted."""
+    step = token_step(span_end - span_start)
+    local_start = to_local(span_start)
+    origin = local_start.replace(hour=0, minute=0, second=0, microsecond=0)
+    origin += step * int((local_start - origin) / step)
+    member = pool_member(provider, window)
+    sums: dict[int, int] = {}
+    for ts, model, tokens in usage:
+        if not tokens or ts < origin or ts >= span_end or not member(model or ""):
+            continue
+        slot = int((ts - origin) / step)
+        sums[slot] = sums.get(slot, 0) + int(tokens)
+    bars = [TokenBar(origin + slot * step, origin + (slot + 1) * step, total) for slot, total in sorted(sums.items())]
+    return bars, step
+
+
 def _dedupe(samples: list[Sample]) -> list[Sample]:
     seen: set[tuple] = set()
     out: list[Sample] = []
@@ -212,10 +282,15 @@ def load_credits_for(bd: Burndown, now: datetime) -> list[dict]:
     return out
 
 
-def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | None = None, credits: list[dict] | None = None) -> ChartData | None:
+def build(
+    bd: Burndown, samples: list[Sample], now: datetime, span_key: str | None = None,
+    credits: list[dict] | None = None, usage: Iterable[tuple[datetime, str, int]] | None = None,
+) -> ChartData | None:
     """Chart data for one window from its burndown and its sample history (the burndown's
     own samples are merged in). Legacy `span_key` arguments cannot override the fixed
-    two-cycle domain. None when the interval is unknown or there is nothing to draw."""
+    two-cycle domain. `usage` is (ts, model, total tokens) per recorded request; when given,
+    tokens per interval become bars. None when the interval is unknown or there is nothing
+    to draw."""
     if bd.window_min <= 0:
         return None
     span_key = default_span_key(bd.window_min)
@@ -372,6 +447,11 @@ def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | No
                             reset_projections.append(Line((bd.resets_at, u_end), (bd.resets_at, 0.0)))
                         break
 
+    bars: list[TokenBar] = []
+    step: timedelta | None = None
+    if usage is not None:
+        bars, step = token_bars(usage, bd.provider, bd.window, span_start, span_end)
+
     return ChartData(
         key=bd.key, provider=bd.provider, window=bd.window,
         span_start=span_start, span_end=span_end, now=now,
@@ -382,6 +462,8 @@ def build(bd: Burndown, samples: list[Sample], now: datetime, span_key: str | No
         runway_with_resets_min=runway_with_resets_min,
         x_ticks=x_ticks(span_start, span_end, span),
         span_key=span_key, span_label=f"two cycles ({span_key})",
+        token_bars=bars, token_step=step if bars else None,
+        token_max=token_scale(max((bar.tokens for bar in bars), default=0)),
     )
 
 

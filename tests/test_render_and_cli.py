@@ -330,6 +330,32 @@ def test_render_usage_section(store, paths):
     assert "Token usage" not in render.render_html(store, now=NOW)
 
 
+def test_render_usage_bars_on_secondary_axis(store, paths):
+    from quota_burndown import ledger
+    from quota_burndown.ledger import Event
+
+    seed(store)
+    conn = ledger.connect(paths.usage_db)
+    ledger.upsert(conn, [
+        Event("claude", "claude-code", ledger.REQUEST, "r1", NOW, model="claude-opus-5", total_tokens=1_500_000),
+        Event("claude", "claude-code", ledger.REQUEST, "r2", NOW - timedelta(minutes=20), model="gpt-oss-20b-48k", total_tokens=9_000_000),
+        Event("antigravity", "antigravity", ledger.REQUEST, "a1", NOW - timedelta(minutes=10), model="gemini-3.8-flash", input_tokens_inferred=5),
+    ])
+    conn.close()
+
+    html = render.render_html(store, now=NOW, usage_db=paths.usage_db)
+
+    claude_card, codex_card = html.split("<article")[1:3]
+    assert claude_card.count('class="tok-bar"') == 1 and "<title>1.5M tokens, " in claude_card and "<td>1,500,000</td>" in claude_card
+    assert 'class="lbl tok-lbl"' in claude_card and ">2M</text>" in claude_card and ">500K</text>" in claude_card
+    assert "bars: tokens per 6h (right axis)" in claude_card and "<summary>tokens per 6h</summary>" in claude_card
+    assert 'class="tok-bar"' not in codex_card and "tok-lbl" not in codex_card and "bars: tokens" not in codex_card
+    payload = json.loads(re.search(r'class="chart-data" data-for="c1">(.*?)</script>', html).group(1))
+    assert payload["points"][-1]["k"].startswith("1.5M tokens ")
+    assert "tokens per interval (right axis)" in html
+    assert 'class="tok-bar"' not in render.render_html(store, now=NOW)
+
+
 def test_render_antigravity_weekly_chart(store):
     from quota_burndown.providers.antigravity import weekly_cycle_bounds
     start, reset = weekly_cycle_bounds(NOW)

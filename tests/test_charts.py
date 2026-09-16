@@ -275,3 +275,54 @@ def test_no_reset_pace_when_zero_credits():
     assert data.reset_markers == []
     assert data.credit_expiries == []
 
+
+def test_pool_member_follows_allowance_pools():
+    claude_all, claude_opus = charts.pool_member("claude", "7d"), charts.pool_member("claude", "7d:opus")
+    assert claude_all("claude-opus-5") and claude_all("claude-haiku-4-5-20251001") and not claude_all("gpt-oss-20b-48k")
+    assert claude_opus("claude-opus-5") and not claude_opus("claude-sonnet-5")
+    codex, spark = charts.pool_member("codex", "7d:codex"), charts.pool_member("codex", "7d:spark")
+    assert codex("gpt-5.6-terra") and codex("gpt-6-astra") and not codex("gpt-5.3-codex-spark") and not codex("")
+    assert spark("gpt-5.3-codex-spark") and not spark("gpt-6-astra")
+
+
+def test_token_step_and_scale():
+    assert charts.token_step(timedelta(days=14)) == timedelta(hours=6)
+    assert charts.token_step(timedelta(hours=10)) == timedelta(minutes=10)
+    assert charts.token_step(timedelta(days=400)) == timedelta(days=1)
+    assert [charts.token_scale(v) for v in (0, 1, 3, 9, 11, 45_000_000, 1_000_000_001)] == [0, 1, 4, 10, 20, 50_000_000, 2_000_000_000]
+
+
+def test_token_bars_sum_pool_usage_per_local_aligned_interval():
+    step = timedelta(hours=6)
+    usage = [
+        (NOW - timedelta(hours=1), "claude-opus-5", 100),
+        (NOW - timedelta(minutes=30), "claude-sonnet-5", 50),
+        (NOW - timedelta(minutes=20), "gpt-oss-20b-48k", 9_999),  # local model: not in the pool
+        (NOW - timedelta(days=20), "claude-opus-5", 9_999),        # before the domain
+        (NOW + timedelta(minutes=1), "claude-opus-5", 9_999),      # after the domain
+    ]
+    bars, got_step = charts.token_bars(usage, "claude", "7d", NOW - timedelta(days=14), NOW)
+    assert got_step == step
+    assert sum(bar.tokens for bar in bars) == 150
+    for bar in bars:
+        local = to_local(bar.start)
+        assert bar.end - bar.start == step and local.minute == 0 and local.hour % 6 == 0
+        assert bar.start < NOW <= bar.end or bar.start <= NOW - timedelta(hours=1) < bar.end
+
+
+def test_build_attaches_token_bars_only_when_usage_given():
+    reset = NOW + timedelta(days=3)
+    history = [
+        Sample(NOW - timedelta(days=2), "codex", "7d:codex", 10.0, reset, 10080, "rollout"),
+        Sample(NOW, "codex", "7d:codex", 30.0, reset, 10080, "rollout"),
+    ]
+    bd = burndown_for(history, "codex:7d:codex")
+    plain = charts.build(bd, history, NOW, credits=[])
+    assert plain.token_bars == [] and plain.token_step is None and plain.token_max == 0
+    usage = [(NOW - timedelta(hours=2), "gpt-6-astra", 3_000_000), (NOW - timedelta(hours=2), "gpt-5.3-codex-spark", 7)]
+    data = charts.build(bd, history, NOW, credits=[], usage=usage)
+    assert [bar.tokens for bar in data.token_bars] == [3_000_000]
+    assert data.token_step == timedelta(hours=6) and data.token_max == 4_000_000
+    empty = charts.build(bd, history, NOW, credits=[], usage=[])
+    assert empty.token_bars == [] and empty.token_step is None
+
