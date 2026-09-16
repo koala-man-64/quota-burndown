@@ -14,7 +14,7 @@ from .charts import ChartData
 from .ledger import Totals
 from .model import Burndown, canonical_samples, current
 from .store import Sample, Store
-from .util import atomic_write_text, fmt_local, fmt_minutes, now_utc, read_json, to_local
+from .util import atomic_write_text, fmt_local, fmt_minutes, iso, now_utc, read_json, to_local
 
 STALE_MIN = 20
 PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex", "codex-spark": "Codex Spark", "antigravity": "Antigravity"}
@@ -30,7 +30,8 @@ STATUS_TEXT = {
     "idle": "no active window",
 }
 CHART_W, CHART_H = 800, 320
-PAD_L, PAD_R, PAD_T, PAD_B = 48, 16, 30, 30
+PAD_L, PAD_R, PAD_T, PAD_B = 48, 56, 30, 30
+TOKEN_SLOTS = 7  # categorical palette slots 2-8; slot 1 (blue) is the % used line
 
 
 def esc(value) -> str:
@@ -65,6 +66,33 @@ def _y_of(used: float) -> float:
     return PAD_T + (CHART_H - PAD_T - PAD_B) * (1 - min(max(used, 0.0), 100.0) / 100)
 
 
+def axis_tokens(value: int) -> str:
+    """Compact token count for axis labels: 1.25B, 250M, 40K."""
+    for unit, suffix in ((1_000_000_000, "B"), (1_000_000, "M"), (1_000, "K")):
+        if value >= unit:
+            return f"{value / unit:.2f}".rstrip("0").rstrip(".") + suffix
+    return str(value)
+
+
+def step_label(step: timedelta) -> str:
+    minutes = int(step.total_seconds() // 60)
+    if minutes % 1440 == 0:
+        return "day" if minutes == 1440 else f"{minutes // 1440} days"
+    if minutes % 60 == 0:
+        return "hour" if minutes == 60 else f"{minutes // 60}h"
+    return f"{minutes} min"
+
+
+def _token_y(data: ChartData, tokens: int) -> float:
+    if not data.token_max:
+        return _y_of(0)
+    return PAD_T + (CHART_H - PAD_T - PAD_B) * (1 - min(tokens / data.token_max, 1.0))
+
+
+def _bar_at(data: ChartData, ts: datetime) -> charts.TokenBar | None:
+    return next((bar for bar in data.token_bars if bar.start <= ts < bar.end), None)
+
+
 def _clip(data: ChartData, line: charts.Line) -> tuple[float, float, float, float] | None:
     """Pixel endpoints of a line clipped to the plotted time span."""
     (t0, v0), (t1, v1) = line.start, line.end
@@ -89,7 +117,13 @@ def chart_points(data: ChartData) -> list[dict]:
     out = []
     for segment in data.segments:
         for point in segment.points:
-            out.append({"x": round(_x_of(data, point.ts), 1), "y": round(_y_of(point.used), 1), "t": charts.local_label(point.ts), "v": f"{point.used:.0f}%"})
+            item = {"x": round(_x_of(data, point.ts), 1), "y": round(_y_of(point.used), 1), "t": charts.local_label(point.ts), "v": f"{point.used:.0f}%"}
+            bar = _bar_at(data, point.ts)
+            if bar is not None:
+                top = sorted(bar.by_model, key=lambda pair: -pair[1])
+                split = ", ".join(f"{model} {_n(tokens)}" for model, tokens in top[:3]) + (", …" if len(top) > 3 else "")
+                item["k"] = f"{_n(bar.tokens)} tokens {charts.local_label(bar.start)} to {charts.local_label(bar.end)} ({split})"
+            out.append(item)
     return out
 
 
@@ -100,6 +134,9 @@ def chart_svg(data: ChartData, chart_id: str, title: str) -> str:
         y = _y_of(value)
         parts.append(f'<line class="grid" x1="{PAD_L}" y1="{y:.1f}" x2="{CHART_W - PAD_R}" y2="{y:.1f}"/>')
         parts.append(f'<text class="lbl" x="{PAD_L - 8}" y="{y + 4:.1f}" text-anchor="end">{value}%</text>')
+        if data.token_max:
+            tokens = round(data.token_max * value / 100)
+            parts.append(f'<text class="lbl tok-lbl" x="{CHART_W - PAD_R + 8}" y="{y + 4:.1f}" text-anchor="start">{esc(axis_tokens(tokens))}</text>')
     if data.active and data.now < data.span_end:
         x_now, x_end = _x_of(data, data.now), _x_of(data, data.span_end)
         parts.append(f'<rect class="future" x="{x_now:.1f}" y="{PAD_T}" width="{x_end - x_now:.1f}" height="{plot_bottom - PAD_T:.1f}"/>')
@@ -108,6 +145,22 @@ def chart_svg(data: ChartData, chart_id: str, title: str) -> str:
         parts.append(f'<line class="axis" x1="{x:.1f}" y1="{plot_bottom:.1f}" x2="{x:.1f}" y2="{plot_bottom + 5:.1f}"/>')
         parts.append(f'<text class="lbl" x="{x:.1f}" y="{CHART_H - 8}" text-anchor="middle">{esc(tick.label)}</text>')
     parts.append(f'<line class="axis" x1="{PAD_L}" y1="{plot_bottom:.1f}" x2="{CHART_W - PAD_R}" y2="{plot_bottom:.1f}"/>')
+
+    slots = token_slots(_token_totals(data))
+    for bar in data.token_bars:
+        if bar.end <= data.span_start or bar.start >= data.span_end:
+            continue
+        x0, x1 = _x_of(data, bar.start), _x_of(data, bar.end)
+        width = max(x1 - x0 - 1.0, 1.0)
+        when = f"{charts.local_label(bar.start)} to {charts.local_label(bar.end)}"
+        stacked = 0
+        for slot, (label, tokens) in sorted(_bar_segments(bar, slots).items(), key=lambda item: item[0] or TOKEN_SLOTS + 1):
+            y_top, y_base = _token_y(data, stacked + tokens), _token_y(data, stacked)
+            stacked += tokens
+            parts.append(
+                f'<rect class="tok-bar {_slot_class(slot)}" x="{x0 + 0.5:.1f}" y="{y_top:.1f}" width="{width:.1f}" height="{y_base - y_top:.1f}">'
+                f'<title>{esc(label)}: {esc(_n(tokens))} of {esc(_n(bar.tokens))} tokens, {esc(when)}</title></rect>'
+            )
 
     for segment in data.segments:
         coords = [(_x_of(data, p.ts), _y_of(p.used)) for p in segment.points]
@@ -175,6 +228,72 @@ def chart_svg(data: ChartData, chart_id: str, title: str) -> str:
     )
 
 
+def _visible_bars(data: ChartData) -> list[charts.TokenBar]:
+    return [bar for bar in data.token_bars if bar.end > data.span_start and bar.start < data.span_end]
+
+
+def _token_totals(data: ChartData) -> dict[str, int]:
+    totals: dict[str, int] = {}
+    for bar in _visible_bars(data):
+        for model, tokens in bar.by_model:
+            totals[model] = totals.get(model, 0) + tokens
+    return totals
+
+
+def token_slots(totals: dict[str, int]) -> dict[str, int]:
+    """Categorical color slot (1..TOKEN_SLOTS) per model, assigned in model-name order so a
+    model keeps its color as intervals change. Past TOKEN_SLOTS models, the largest
+    TOKEN_SLOTS - 1 by tokens keep a color and the rest fold into slot 0, "other models"."""
+    keep = sorted(totals)
+    if len(keep) > TOKEN_SLOTS:
+        keep = sorted(sorted(totals, key=lambda model: (-totals[model], model))[:TOKEN_SLOTS - 1])
+    slots = {model: index for index, model in enumerate(keep, 1)}
+    return {model: slots.get(model, 0) for model in totals}
+
+
+def _slot_class(slot: int) -> str:
+    return f"tok-s{slot}" if slot else "tok-other"
+
+
+def _bar_segments(bar: charts.TokenBar, slots: dict[str, int]) -> dict[int, tuple[str, int]]:
+    """(label, tokens) per color slot within one bar; folded models share slot 0."""
+    out: dict[int, tuple[str, int]] = {}
+    for model, tokens in bar.by_model:
+        slot = slots.get(model, 0)
+        prior = out.get(slot, ("other models", 0))[1]
+        out[slot] = ("other models" if slot == 0 else model, prior + tokens)
+    return out
+
+
+def token_legend_html(data: ChartData) -> str:
+    """The models behind this chart's bars, in stacking order, with their tokens across the
+    plotted domain."""
+    totals = _token_totals(data)
+    if not totals:
+        return ""
+    slots = token_slots(totals)
+    entries = sorted((slots[model], model, tokens) for model, tokens in totals.items() if slots[model])
+    other = [model for model in totals if not slots[model]]
+    items = "".join(f'<li><i class="{_slot_class(slot)}"></i>{esc(model)} · {esc(_n(tokens))}</li>' for slot, model, tokens in entries)
+    if other:
+        items += f'<li><i class="tok-other"></i>{len(other)} other models · {esc(_n(sum(totals[model] for model in other)))}</li>'
+    return f'<ul class="model-token-legend tok-legend">{items}</ul>'
+
+
+def token_table_html(data: ChartData) -> str:
+    if data.token_step is None:
+        return ""
+    rows = "".join(
+        f"<tr><td>{esc(charts.local_label(bar.start))}</td><td>{bar.tokens:,}</td>"
+        f"<td>{esc(', '.join(f'{model} {tokens:,}' for model, tokens in bar.by_model))}</td></tr>"
+        for bar in _visible_bars(data)
+    )
+    return (
+        f'<details class="chart-table"><summary>tokens per {esc(step_label(data.token_step))}</summary>'
+        f'<table class="usage"><thead><tr><th>interval start</th><th>tokens</th><th>by model</th></tr></thead><tbody>{rows}</tbody></table></details>'
+    )
+
+
 def chart_table_html(points: list[dict]) -> str:
     rows = "".join(f"<tr><td>{esc(p['t'])}</td><td>{esc(p['v'])}</td></tr>" for p in points)
     return (
@@ -188,17 +307,20 @@ def chart_figure_html(data: ChartData, chart_id: str, title: str) -> str:
     points = chart_points(data)
     reset = next((f"resets {fmt_local(m.ts)}" for m in data.resets if m.current), None)
     payload = json.dumps({"points": points, "reset": reset}, separators=(",", ":")).replace("</", "<\\/")
+    heading = f"% used, {data.span_label}"
+    if data.token_step is not None:
+        heading += f" · bars: tokens per {step_label(data.token_step)} (right axis)"
     return (
         f'<figure class="chart-figure" data-span="{esc(data.span_key)}" '
         f'data-domain-start="{esc(data.span_start.isoformat())}" data-domain-end="{esc(data.span_end.isoformat())}">'
-        f'<h4>% used, {esc(data.span_label)}</h4>{chart_svg(data, chart_id, title)}'
+        f'<h4>{esc(heading)}</h4>{chart_svg(data, chart_id, title)}'
         f'<script type="application/json" class="chart-data" data-for="{esc(chart_id)}">{payload}</script>'
-        f"{chart_table_html(points)}</figure>"
+        f"{token_legend_html(data)}{chart_table_html(points)}{token_table_html(data)}</figure>"
     )
 
 
-def card_figures_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str, title: str) -> str:
-    data = charts.build(bd, history, now)
+def card_figures_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str, title: str, usage=None) -> str:
+    data = charts.build(bd, history, now, usage=usage)
     if data is None:
         return '<div class="note">No readings in the two-cycle domain.</div>'
     return chart_figure_html(data, chart_id, title)
@@ -226,7 +348,7 @@ def projection_text(bd: Burndown) -> tuple[str, str]:
     return f"{min(bd.projected_end, 999):.0f}%", "projected use at reset, at this rate"
 
 
-def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str) -> str:
+def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str, usage=None) -> str:
     stale = bd.age_min is not None and bd.age_min > STALE_MIN
     classes = f"card status-{bd.status}" + (" stale" if stale else "")
     proj_value, proj_label = projection_text(bd)
@@ -256,7 +378,7 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str)
             f'<div><b>{esc(fmt_minutes(bd.remaining_min))}</b><span>left · resets {esc(resets)}</span></div>'
             f'<div><b>{esc(proj_value)}</b><span>{esc(proj_label)}</span></div>'
         )
-    data = charts.build(bd, history, now)
+    data = charts.build(bd, history, now, usage=usage)
     if data is None:
         figure = '<div class="note">No readings in the two-cycle domain.</div>'
     else:
@@ -695,9 +817,11 @@ def capacity_matrix_html(capacity: dict | None, live: bool = False) -> str:
 
 CSS = """
 :root{--bg:#f6f7f9;--card:#ffffff;--fg:#1c1e21;--muted:#6b7280;--line:#e5e7eb;--grid:#eef0f3;--ideal:#9ca3af;--actual:#2563eb;--over:#dc2626;--under:#16a34a;--warn:#d97706;--now:#111827;
---chart-series:#2a78d6;--chart-grid:#e1e0d9;--chart-axis:#c3c2b7;--chart-muted:#898781;--chart-ink:#0b0b0b}
+--chart-series:#2a78d6;--chart-grid:#e1e0d9;--chart-axis:#c3c2b7;--chart-muted:#898781;--chart-ink:#0b0b0b;
+--tok-1:#eb6834;--tok-2:#1baf7a;--tok-3:#eda100;--tok-4:#e87ba4;--tok-5:#008300;--tok-6:#4a3aa7;--tok-7:#e34948}
 @media (prefers-color-scheme: dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e6e8eb;--muted:#9aa3ad;--line:#2a2f3a;--grid:#232834;--ideal:#6b7280;--actual:#60a5fa;--over:#f87171;--under:#4ade80;--warn:#fbbf24;--now:#e6e8eb;
---chart-series:#3987e5;--chart-grid:#2c2c2a;--chart-axis:#383835;--chart-muted:#898781;--chart-ink:#ffffff}}
+--chart-series:#3987e5;--chart-grid:#2c2c2a;--chart-axis:#383835;--chart-muted:#898781;--chart-ink:#ffffff;
+--tok-1:#d95926;--tok-2:#199e70;--tok-3:#c98500;--tok-4:#d55181;--tok-5:#008300;--tok-6:#9085e9;--tok-7:#e66767}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,"Segoe UI",Roboto,sans-serif}
 header.top{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:18px 24px 6px;flex-wrap:wrap}
@@ -762,6 +886,16 @@ svg.chart:focus-visible{outline:2px solid var(--chart-series);outline-offset:2px
 .end-dot{fill:var(--chart-series)}
 .end-lbl{fill:var(--chart-ink);font-size:13px;font-weight:600}
 .crosshair{stroke:var(--chart-ink);stroke-width:1;opacity:0;pointer-events:none}
+.tok-bar{stroke:var(--card);stroke-width:1;opacity:.7}
+.tok-s1{fill:var(--tok-1)}.tok-legend i.tok-s1{background:var(--tok-1)}
+.tok-s2{fill:var(--tok-2)}.tok-legend i.tok-s2{background:var(--tok-2)}
+.tok-s3{fill:var(--tok-3)}.tok-legend i.tok-s3{background:var(--tok-3)}
+.tok-s4{fill:var(--tok-4)}.tok-legend i.tok-s4{background:var(--tok-4)}
+.tok-s5{fill:var(--tok-5)}.tok-legend i.tok-s5{background:var(--tok-5)}
+.tok-s6{fill:var(--tok-6)}.tok-legend i.tok-s6{background:var(--tok-6)}
+.tok-s7{fill:var(--tok-7)}.tok-legend i.tok-s7{background:var(--tok-7)}
+.tok-other{fill:var(--chart-muted)}.tok-legend i.tok-other{background:var(--chart-muted)}
+.tok-legend{margin:6px 0 0;color:var(--muted)}
 .hover-dot{fill:var(--chart-series);stroke:var(--card);stroke-width:2;opacity:0;pointer-events:none}
 #chart-tooltip{position:absolute;z-index:5;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);pointer-events:none;white-space:nowrap}
 #chart-tooltip b{font-size:14px;margin-right:6px}
@@ -776,6 +910,7 @@ details.chart-table table{margin-top:4px;max-height:220px;display:block;overflow
 .legend i.k-proj{border-top:2px dotted var(--chart-ink)}
 .legend i.k-proj-reset{border-top:2px dashed #10b981}
 .legend i.k-reset{width:2px;height:10px;border-top:0;border-left:2px solid var(--chart-axis)}
+.legend i.k-tokens{width:10px;height:10px;border-top:0;background:linear-gradient(var(--tok-1) 50%,var(--tok-2) 50%)}
 .legend i.k-now{width:1px;height:10px;border-top:0;border-left:1px solid var(--chart-axis)}
 .empty{color:var(--muted);padding:32px 0;text-align:center}
 footer{color:var(--muted);font-size:11px;padding:8px 24px 24px;max-width:1900px;margin:0 auto}
@@ -830,7 +965,7 @@ HOVER_SCRIPT = """
       dot.setAttribute('cx', p.x); dot.setAttribute('cy', p.y); dot.style.opacity = 1;
       while (tip.firstChild) tip.removeChild(tip.firstChild);
       var v = document.createElement('b'); v.textContent = p.v; tip.appendChild(v);
-      tip.appendChild(document.createTextNode('used ' + p.t + (data.reset ? ' \\u00b7 ' + data.reset : '')));
+      tip.appendChild(document.createTextNode('used ' + p.t + (data.reset ? ' \\u00b7 ' + data.reset : '') + (p.k ? ' \\u00b7 ' + p.k : '')));
       tip.hidden = false;
       var r = svg.getBoundingClientRect();
       var sx = r.left + window.scrollX + p.x / vw * r.width, sy = r.top + window.scrollY + p.y / vh * r.height;
@@ -1059,9 +1194,27 @@ LEGEND_HTML = (
     '<span><i class="k-pace-reset"></i>even pace (with resets)</span>'
     '<span><i class="k-proj"></i>projection at current rate</span>'
     '<span><i class="k-proj-reset"></i>projection (with resets)</span>'
+    '<span><i class="k-tokens"></i>tokens per interval by model (right axis)</span>'
     '<span><i class="k-reset"></i>window reset</span>'
     '<span><i class="k-now"></i>now</span></div>'
 )
+
+
+def chart_usage(usage_db: Path | None, now: datetime, burndowns: list[Burndown]) -> list[tuple[datetime, str, int]] | None:
+    """(ts, model, total tokens) for every exact-count request a chart domain can show; None
+    without a ledger, so charts then render without bars instead of with empty ones."""
+    if usage_db is None or not usage_db.exists() or not burndowns:
+        return None
+    since = now - timedelta(minutes=2 * max(bd.window_min for bd in burndowns) + 1440)
+    conn = ledger.connect(usage_db)
+    try:
+        rows = conn.execute(
+            "SELECT ts, model, total_tokens FROM events WHERE kind = ? AND total_tokens IS NOT NULL AND ts >= ?",
+            (ledger.REQUEST, iso(since)),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [(ledger.row_ts(row), row["model"] or "", int(row["total_tokens"])) for row in rows]
 
 
 def render_html(
@@ -1081,7 +1234,8 @@ def render_html(
 
     # One grid cell per weekly chart
     weekly = [bd for bd in burndowns if bd.window_min != 300]
-    cells = [(history_group(bd), card_html(bd, by_key.get(bd.key, []), now, f"c{index}")) for index, bd in enumerate(weekly, 1)]
+    usage = chart_usage(usage_db, now, weekly)
+    cells = [(history_group(bd), card_html(bd, by_key.get(bd.key, []), now, f"c{index}", usage)) for index, bd in enumerate(weekly, 1)]
     chart_count = len(weekly)
     stamp = esc(to_local(now).strftime("%Y-%m-%d %H:%M"))
     sections = [
