@@ -180,7 +180,10 @@ def observations_from_limits(payload: Any, *, provider: str, account_scope: str,
         limits = root.get("rateLimitsByLimitId") or root.get("rate_limits_by_limit_id") or root.get("rate_limits") or root.get("rateLimits") or root
         if isinstance(limits, dict) and ("primary" in limits or "secondary" in limits):
             limits = {str(limits.get("limit_id") or limits.get("limitId") or "codex"): limits}
-    raw_credits = root.get("rateLimitResetCredits") or root.get("rate_limit_reset_credits") or {}
+    credits_key = next((k for k in ("rateLimitResetCredits", "rate_limit_reset_credits") if k in root), None)
+    raw_credits = root.get(credits_key) if credits_key else None
+    # Present-and-a-dict is a report, even when it lists nothing.
+    credits_reported = isinstance(raw_credits, dict)
     all_credits: list[dict] = []
     if isinstance(raw_credits, dict):
         for c in raw_credits.get("credits") or []:
@@ -193,6 +196,10 @@ def observations_from_limits(payload: Any, *, provider: str, account_scope: str,
                     "expires_at": _parse_time(c.get("expiresAt") or c.get("expires_at")),
                     "title": str(c.get("title") or "Reset credit"),
                 })
+        available_count = raw_credits.get("availableCount", raw_credits.get("available_count"))
+        if available_count == 0:
+            # The provider's own count outranks any credit record it still lists.
+            all_credits = []
     iterable = limits.items() if isinstance(limits, dict) else enumerate(limits) if isinstance(limits, list) else []
     out: list[Observation] = []
     for fallback_id, item in iterable:
@@ -231,7 +238,8 @@ def observations_from_limits(payload: Any, *, provider: str, account_scope: str,
                                    reset_provenance=reset_provenance, models=tuple(item_models),
                                    mapping_confidence=mapping_confidence,
                                    observation_id=str(block.get("id") or ""), complete_snapshot=complete_snapshot,
-                                   reset_credits=matching_credits)
+                                   reset_credits=matching_credits,
+                                   reset_credits_reported=credits_reported)
             kwargs["observation_time_provenance"] = observation_time_provenance
             out.append(Observation(**kwargs))
     return out
@@ -392,22 +400,10 @@ def _run_native(stop: threading.Event, publish: Callable[[list[Observation]], No
                     readings = [Observation("codex", scope, "unreported", "unknown", 1, None, None,
                                             now_received, now_received, "app-server", "unknown", complete_snapshot=True)]
                 if readings:
+                    # Credits are persisted by CapacityState, per pool and including
+                    # known-empty pools. A second writer here only ever wrote non-empty
+                    # lists, under a provider key, over the same file.
                     publish(readings)
-                    credits_found = [c for r in readings for c in r.reset_credits]
-                    if credits_found:
-                        try:
-                            from .config import default_home
-                            from .util import atomic_write_text, iso
-                            ser = []
-                            for c in credits_found:
-                                cd = dict(c)
-                                for k in ("granted_at", "expires_at"):
-                                    if isinstance(cd.get(k), datetime):
-                                        cd[k] = iso(cd[k])
-                                ser.append(cd)
-                            atomic_write_text(default_home() / "reset_credits.json", json.dumps({"codex": ser}, separators=(",", ":")))
-                        except Exception:
-                            pass
     finally:
         process.terminate()
         try: process.wait(timeout=1)

@@ -458,3 +458,28 @@ def test_render_html_with_reset_credits(store, monkeypatch):
     assert "even pace (with resets)" in html
     assert "projection (with resets)" in html
 
+def test_render_says_when_no_reset_credits_are_left(store, monkeypatch):
+    """A reported zero has to be visible; omitting it is how a used credit went unnoticed."""
+    weekly_reset = NOW + timedelta(days=5)
+    store.append([
+        Sample(NOW - timedelta(days=2), "codex", "7d", 20.0, weekly_reset, 10080, "app-server"),
+        Sample(NOW, "codex", "7d", 80.0, weekly_reset, 10080, "app-server"),
+    ])
+    home = store.paths.home
+    monkeypatch.setenv("QUOTA_BURNDOWN_HOME", str(home))
+    (home / "capacity.json").write_text(json.dumps({"pools": [
+        {"provider": "codex", "limit_id": "codex", "reset_credits": [], "reset_credits_known": True},
+    ]}), encoding="utf-8")
+    (home / "reset_credits.json").write_text(json.dumps({"codex": [
+        {"id": "stale", "expires_at": (weekly_reset + timedelta(days=2)).isoformat()},
+    ]}), encoding="utf-8")
+    capacity = {"provider_groups": [{"provider": "codex", "label": "Codex", "limits": [{
+        "id": "codex:primary", "label": "Codex 7d", "pool_id": "codex-pool", "models": ["gpt-6"],
+        "reset_credits": [], "reset_credits_known": True,
+        "window": {"used_pct": 80, "remaining_pct": 20, "usable_pct": 10,
+                   "resets_at": weekly_reset.isoformat(), "freshness": "fresh"},
+    }]}]}
+    html = render.render_html(store, now=NOW, capacity=capacity)
+    assert "no reset credits left" in html
+    assert "reset credit available" not in html
+    assert 'class="proj-reset"' not in html

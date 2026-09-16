@@ -395,6 +395,11 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str,
         if data.runway_with_resets_min is not None:
             strip_parts.append(f"runway with resets: <b>{esc(fmt_minutes(data.runway_with_resets_min))}</b>")
         reset_strip = f'<div class="reset-strip">{" · ".join(strip_parts)}</div>'
+    elif data is not None and data.reset_credits_known and bd.provider == "codex":
+        # A reported zero has to be visible. Omitting the badge made "no credits
+        # left" indistinguishable from "credits not reported", which is how a used
+        # credit went unnoticed.
+        reset_badge = '<span class="badge reset-badge none">no reset credits left</span>'
     header_badge = f'<div class="badges"><span class="badge">{esc(badge_text(bd))}</span>{reset_badge}</div>' if reset_badge else f'<span class="badge">{esc(badge_text(bd))}</span>'
     age = f"{bd.age_min:.0f} min ago" if bd.age_min is not None else "never"
     foot = f"last sample {esc(age)} via {esc(bd.source or '?')} · {len(bd.samples)} samples this window"
@@ -705,6 +710,8 @@ def _group_limit_row(limit: dict) -> str:
             except Exception:
                 pass
         credits_html = f'<br><span class="badge reset-badge">{credits_count} reset credit{"s" if credits_count != 1 else ""}{exp_txt}</span>'
+    elif limit.get("reset_credits_known"):
+        credits_html = '<br><span class="badge reset-badge none">no reset credits left</span>'
     return (
         f'<tr data-reset="{esc(window.get("resets_at") or "")}">'
         f'<th scope="row">{esc(limit.get("label") or limit.get("id") or "limit")}{availability}</th>'
@@ -853,6 +860,7 @@ section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-tra
 .badge{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
 .badges{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .reset-badge{color:#10b981;border-color:#10b981;font-weight:500}
+.reset-badge.none{color:#d97706;border-color:#d97706}
 .reset-strip{font-size:12px;color:var(--fg);background:var(--grid);padding:5px 10px;border-radius:6px;margin:4px 0 8px}
 .status-over .badge{color:var(--over);border-color:var(--over)}
 .status-under .badge{color:var(--under);border-color:var(--under)}

@@ -33,6 +33,12 @@ class Observation:
     complete_snapshot: bool = False
     observation_time_provenance: str = "reported"
     reset_credits: tuple[dict, ...] = ()
+    # Whether this observation actually carried a credit report. An empty
+    # `reset_credits` is ambiguous without it: rateLimits/updated notifications
+    # omit credits entirely ("no news"), while a rateLimits/read that returns
+    # availableCount 0 means there are none left. Treating both as "no news" is
+    # how a used credit stayed on the dashboard as available.
+    reset_credits_reported: bool = False
 
     @property
     def pool_key(self) -> str:
@@ -191,6 +197,7 @@ def provider_groups(pools: list[dict]) -> list[dict]:
                 "window": copy.deepcopy(window), "availability_reason": reason,
                 "display_only": unavailable,
                 "reset_credits": copy.deepcopy(pool.get("reset_credits", [])) if pool else [],
+                "reset_credits_known": bool(pool.get("reset_credits_known")) if pool else False,
             }
 
         for slot, label, limit_id, minutes in slots:
@@ -340,7 +347,8 @@ class CapacityState:
                                          received_at=self.clock(), reset_provenance="unknown",
                                          observation_id="", complete_snapshot=False))
         for item in items:
-            if item.reset_credits:
+            if item.reset_credits_reported:
+                # A reported empty list replaces the cache: zero is a fact.
                 self.reset_credits[item.pool_key] = item.reset_credits
             models = self.models.setdefault(item.pool_key, set())
             if not set(item.models).issubset(models):
@@ -404,9 +412,15 @@ class CapacityState:
                 "account_scope_confidence": "reported" if last.provider == "codex" else "unverified_local_scope",
                 "limit_id_provenance": "reported" if last.provider == "codex" else "adapter_window_group",
                 "reset_credits": [],
+                "reset_credits_known": False,
             })
             pool["windows"].append(window_view(list(history), now, self.reserve_pct, self.baselines.get(key)))
-            credits = [c for c in (last.reset_credits or self.reset_credits.get(last.pool_key, ()))]
+            if last.reset_credits_reported:
+                credits = list(last.reset_credits)
+            else:
+                credits = list(self.reset_credits.get(last.pool_key, ()))
+            if last.reset_credits_reported or last.pool_key in self.reset_credits:
+                pool["reset_credits_known"] = True
             serialized_credits = []
             for c in credits:
                 c_dict = dict(c)
@@ -466,8 +480,11 @@ class CapacityState:
                        for k, h in self.history.items()]
             atomic_write_text(self.home / "capacity-state.json", json.dumps({"windows": entries, "active_accounts": self.active_accounts}, separators=(",", ":")))
             atomic_write_text(self.home / "capacity.json", json.dumps(snapshot, separators=(",", ":")))
-            if any(p.get("reset_credits") for p in pools.values()):
-                credits_by_pool = {p["id"]: p["reset_credits"] for p in pools.values() if p.get("reset_credits")}
+            # Persist every pool whose credit state is known, including known-empty
+            # ones. Writing only non-empty pools left the last available credit on
+            # disk after it was used, and every restart reloaded it.
+            credits_by_pool = {p["id"]: p["reset_credits"] for p in pools.values() if p.get("reset_credits_known")}
+            if credits_by_pool:
                 atomic_write_text(self.home / "reset_credits.json", json.dumps(credits_by_pool, separators=(",", ":")))
         return snapshot
 
