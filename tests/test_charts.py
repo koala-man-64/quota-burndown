@@ -332,6 +332,9 @@ def test_build_attaches_token_bars_only_when_usage_given():
     data = charts.build(bd, history, NOW, credits=[], usage=usage)
     assert [bar.tokens for bar in data.token_bars] == [3_000_000]
     assert data.token_step == timedelta(hours=6) and data.token_max == 4_000_000
+    assert data.token_efficiency.tokens_per_point == 150_000
+    generated = charts.build(bd, history, NOW, credits=[], usage=iter(usage))
+    assert generated.token_efficiency == data.token_efficiency
     empty = charts.build(bd, history, NOW, credits=[], usage=[])
     assert empty.token_bars == [] and empty.token_step is None
 
@@ -358,3 +361,48 @@ def test_reported_zero_credits_are_not_replaced_by_a_stale_file(tmp_path, monkey
     data = charts.build(bd, history, NOW)
     assert data.reset_credits_count == 0
     assert data.reset_credits_known is True
+
+
+def test_token_efficiency_includes_plateaus_and_excludes_other_pools_and_boundaries():
+    reset = NOW + timedelta(hours=1)
+    start = NOW - timedelta(hours=2)
+    history = [sample(start, 10, reset), sample(start + timedelta(hours=1), 10, reset), sample(NOW, 12, reset)]
+    usage = [(start, "claude-opus", 999), (start + timedelta(minutes=30), "claude-opus", 200),
+             (NOW, "claude-opus", 100), (NOW, "gpt-6-astra", 999),
+             (NOW + timedelta(seconds=1), "claude-opus", 999)]
+    result = charts.token_efficiency(history, usage, "claude", "5h")
+    assert result.tokens == 300
+    assert result.tokens_per_point == 150
+
+
+def test_token_efficiency_restarts_after_downward_correction():
+    reset = NOW + timedelta(hours=1)
+    history = [sample(NOW - timedelta(hours=3-i), used, reset) for i, used in enumerate([10, 30, 5, 10])]
+    usage = [(NOW - timedelta(hours=2), "claude-opus", 10000), (NOW, "claude-opus", 500)]
+    result = charts.token_efficiency(history, usage, "claude", "5h")
+    assert result.start == NOW - timedelta(hours=1)
+    assert result.tokens_per_point == 100
+    assert charts.token_efficiency(history[:-1], usage, "claude", "5h") is None
+
+
+def test_token_efficiency_does_not_cross_reset():
+    old_reset = NOW - timedelta(hours=1)
+    new_reset = NOW + timedelta(hours=4)
+    history = [sample(NOW - timedelta(hours=2), 50, old_reset), sample(NOW, 10, new_reset)]
+    data = charts.build(burndown_for(history), history, NOW, credits=[], usage=[(NOW, "claude-opus", 500)])
+    assert data.token_efficiency is None
+
+
+def test_token_efficiency_rendered_with_calculation_or_unavailable():
+    from quota_burndown.render import chart_figure_html
+
+    reset = NOW + timedelta(hours=1)
+    history = [sample(NOW - timedelta(hours=2), 10, reset), sample(NOW, 12, reset)]
+    bd = burndown_for(history)
+    data = charts.build(bd, history, NOW, credits=[], usage=[(NOW, "claude-opus", 300000)])
+    html = chart_figure_html(data, "efficiency-test", "Claude")
+    assert '150,000 recorded tokens per 1 percentage point used' in html
+    assert '300,000 tokens ÷ 2 percentage points' in html
+    assert '(estimate)' in html
+    data = charts.build(bd, history, NOW, credits=[], usage=[])
+    assert 'unavailable' in chart_figure_html(data, "efficiency-test", "Claude")

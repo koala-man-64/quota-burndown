@@ -310,10 +310,20 @@ def chart_figure_html(data: ChartData, chart_id: str, title: str) -> str:
     heading = f"% used, {data.span_label}"
     if data.token_step is not None:
         heading += f" · bars: tokens per {step_label(data.token_step)} (right axis)"
+    efficiency = data.token_efficiency
+    if efficiency is None:
+        metric = '<p class="note token-efficiency">Recorded tokens per 1 percentage point used: unavailable — needs a measured increase and matching recorded tokens.</p>'
+    else:
+        metric = (
+            f'<p class="note token-efficiency"><strong>{efficiency.tokens_per_point:,.0f} recorded tokens per 1 percentage point used</strong> (estimate)<br>'
+            f'{efficiency.tokens:,} tokens ÷ {efficiency.percentage_points:g} percentage points · '
+            f'{esc(fmt_local(efficiency.start))} – {esc(fmt_local(efficiency.end))}. '
+            'Latest observed window; local recordings may be incomplete and quota reporting may lag.</p>'
+        )
     return (
         f'<figure class="chart-figure" data-span="{esc(data.span_key)}" '
         f'data-domain-start="{esc(data.span_start.isoformat())}" data-domain-end="{esc(data.span_end.isoformat())}">'
-        f'<h4>{esc(heading)}</h4>{chart_svg(data, chart_id, title)}'
+        f'<h4>{esc(heading)}</h4>{metric}{chart_svg(data, chart_id, title)}'
         f'<script type="application/json" class="chart-data" data-for="{esc(chart_id)}">{payload}</script>'
         f"{token_legend_html(data)}{chart_table_html(points)}{token_table_html(data)}</figure>"
     )

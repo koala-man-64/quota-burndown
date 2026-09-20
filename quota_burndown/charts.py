@@ -63,6 +63,18 @@ class TokenBar:
     by_model: tuple[tuple[str, int], ...] = ()  # (model, tokens), stacked in model-name order
 
 
+@dataclass(frozen=True)
+class TokenEfficiency:
+    start: datetime
+    end: datetime
+    tokens: int
+    percentage_points: float
+
+    @property
+    def tokens_per_point(self) -> float:
+        return self.tokens / self.percentage_points
+
+
 @dataclass
 class ChartData:
     key: str
@@ -90,6 +102,7 @@ class ChartData:
     token_bars: list[TokenBar] = field(default_factory=list)
     token_step: timedelta | None = None
     token_max: int = 0
+    token_efficiency: TokenEfficiency | None = None
     span_key: str = ""
     span_label: str = ""
 
@@ -190,6 +203,35 @@ def token_step(span: timedelta) -> timedelta:
         if span / step <= MAX_TOKEN_BARS:
             return step
     return TOKEN_BAR_STEPS[-1]
+
+
+def token_efficiency(
+    samples: list[Sample], usage: Iterable[tuple[datetime, str, int]],
+    provider: str, window: str,
+) -> TokenEfficiency | None:
+    """Estimate from one window's latest monotonic run of actual quota readings.
+
+    Include flat readings so rounded percentages do not discard recorded tokens.
+    A downward correction starts a new baseline. Request timestamps use (start, end].
+    Missing local tokens cannot establish a zero-token conversion rate.
+    """
+    points = sorted(samples, key=lambda s: s.ts)
+    if len(points) < 2:
+        return None
+    start = points[0]
+    previous = start
+    for point in points[1:]:
+        if point.used < previous.used or point.ts == previous.ts:
+            start = point
+        previous = point
+    end = points[-1]
+    delta = end.used - start.used
+    if end.ts <= start.ts or delta <= 0:
+        return None
+    member = pool_member(provider, window)
+    tokens = sum(int(n) for ts, model, n in usage
+                 if start.ts < ts <= end.ts and n > 0 and member(model or ""))
+    return TokenEfficiency(start.ts, end.ts, tokens, delta) if tokens else None
 
 
 def token_scale(peak: int) -> int:
@@ -472,8 +514,14 @@ def build(
 
     bars: list[TokenBar] = []
     step: timedelta | None = None
+    efficiency = None
     if usage is not None:
+        usage = list(usage)
         bars, step = token_bars(usage, bd.provider, bd.window, span_start, span_end)
+        latest_inst = current_inst or max(instances, key=lambda inst: inst.samples[-1].ts, default=None)
+        if latest_inst is not None:
+            observed = [s for s in latest_inst.samples if span_start <= s.ts <= min(now, span_end)]
+            efficiency = token_efficiency(observed, usage, bd.provider, bd.window)
 
     return ChartData(
         key=bd.key, provider=bd.provider, window=bd.window,
@@ -487,6 +535,7 @@ def build(
         span_key=span_key, span_label=f"two cycles ({span_key})",
         token_bars=bars, token_step=step if bars else None,
         token_max=token_scale(max((bar.tokens for bar in bars), default=0)),
+        token_efficiency=efficiency,
     )
 
 
