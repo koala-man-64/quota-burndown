@@ -150,6 +150,8 @@ def test_endpoint_only_accepts_displayed_rows_and_keeps_text_out_of_page(paths, 
         for event in events[:5]:
             rid = request_text.row_id(row(event))
             assert get('/v1/recent-text/' + rid)[0] == 200
+        assert len(reads) == 5
+        reads.clear()
         selected = next(iter(service._recent_page[1]))
         for invalid in ('../../secret', 'unknown'):
             assert get('/v1/recent-text/' + invalid)[0] == 404
