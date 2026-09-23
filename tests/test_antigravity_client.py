@@ -1,11 +1,9 @@
-import io
 import json
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import pytest
 
 from quota_burndown.config import antigravity_ls_params
 from quota_burndown.integrations import run_antigravity

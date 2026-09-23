@@ -3,7 +3,6 @@ import io
 import json
 import threading
 import pytest
-from pathlib import Path
 
 from quota_burndown import integrations
 from quota_burndown.integrations import missing_windows, observations_from_limits
