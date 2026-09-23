@@ -310,7 +310,6 @@ def _run_native(stop: threading.Event, publish: Callable[[list[Observation]], No
     threading.Thread(target=reader, daemon=True).start()
     sequence = 0
     scope = _scope("local")
-    previous: dict[tuple[str, str, str, str], Observation] = {}
     def send(method: str, params: dict[str, Any] | None = None, notification: bool = False) -> int | None:
         nonlocal sequence
         assert process.stdin is not None

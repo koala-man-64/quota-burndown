@@ -14,7 +14,7 @@ from .charts import ChartData
 from .ledger import Totals
 from .model import Burndown, canonical_samples, current
 from .store import Sample, Store
-from .util import atomic_write_text, fmt_local, fmt_minutes, iso, now_utc, read_json, to_local
+from .util import atomic_write_text, fmt_local, fmt_minutes, iso, now_utc, parse_iso, to_local
 
 STALE_MIN = 20
 PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex", "codex-spark": "Codex Spark", "antigravity": "Antigravity"}
@@ -654,7 +654,6 @@ def _capacity_window_html(window: dict) -> str:
         window = {}
     remaining = window.get("remaining_pct")
     usable = window.get("usable_pct")
-    state = window.get("allowance_state") or "unknown"
     freshness = window.get("freshness") or "unknown"
     remaining_text = "unknown" if remaining is None else f"{float(remaining):.0f}%"
     budget = "unknown" if usable is None else f"{float(usable):.0f}%"
@@ -712,13 +711,9 @@ def _group_limit_row(limit: dict) -> str:
     if credits:
         credits_count = len(credits)
         first_exp = credits[0].get("expires_at")
-        exp_txt = ""
-        if first_exp:
-            try:
-                dt = parse_iso(first_exp) if isinstance(first_exp, str) else first_exp
-                exp_txt = f" (expires {fmt_local(dt)})"
-            except Exception:
-                pass
+        if isinstance(first_exp, str):
+            first_exp = parse_iso(first_exp)
+        exp_txt = f" (expires {fmt_local(first_exp)})" if isinstance(first_exp, datetime) else ""
         credits_html = f'<br><span class="badge reset-badge">{credits_count} reset credit{"s" if credits_count != 1 else ""}{exp_txt}</span>'
     elif limit.get("reset_credits_known"):
         credits_html = '<br><span class="badge reset-badge none">no reset credits left</span>'

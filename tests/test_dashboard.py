@@ -128,3 +128,14 @@ def test_capacity_matrix_renders_all_requested_slots_from_capacity_state(tmp_pat
     assert "Configured Antigravity sources report activity" in html
     assert "Supported Claude status-line and desktop history sources do not report Fable" in html
     assert "data-freshness-deadline=" in html and "reset: reported; observation: reported" in html
+
+def test_reset_credit_badge_shows_first_expiry():
+    limit = {"pool_id": "claude", "window": {}, "reset_credits": [{"expires_at": "2026-09-10T12:00:00Z"}]}
+    row = render._group_limit_row(limit)
+    assert "1 reset credit (expires " in row
+
+
+def test_reset_credit_badge_tolerates_unparseable_expiry():
+    limit = {"pool_id": "claude", "window": {}, "reset_credits": [{"expires_at": "soon"}, {}]}
+    row = render._group_limit_row(limit)
+    assert "2 reset credits</span>" in row

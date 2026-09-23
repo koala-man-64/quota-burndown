@@ -158,7 +158,6 @@ def test_later_observation_persists_for_restart(live):
 
 
 def test_writer_lease_released_on_process_death(paths):
-    import os
     import subprocess
     import sys
     code = "import sys,time; from pathlib import Path; from quota_burndown.service import WriterLease; lease=WriterLease(Path(sys.argv[1])); lease.__enter__(); print('locked',flush=True); time.sleep(30)"

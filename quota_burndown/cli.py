@@ -5,11 +5,8 @@ import argparse
 import json
 import sqlite3
 import sys
-import threading
-import time
 from datetime import timedelta
 from pathlib import Path
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import __version__, install, ledger, render, statusline, usage, usage_report
 from .config import DEFAULT_PORT, get_paths
