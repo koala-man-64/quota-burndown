@@ -101,6 +101,39 @@ def test_antigravity_ls_params_from_log(tmp_path, monkeypatch):
     assert token == "active-token-abc"
 
 
+def test_antigravity_ls_params_from_language_server_log(tmp_path, monkeypatch):
+    monkeypatch.delenv("QUOTA_BURNDOWN_ANTIGRAVITY_PORT", raising=False)
+    monkeypatch.delenv("QUOTA_BURNDOWN_ANTIGRAVITY_CSRF_TOKEN", raising=False)
+
+    ls_log = tmp_path / "language_server.log"
+    ls_log.write_text(
+        "I0924 08:12:18.074539 1 server.go:624] Language server listening on random port at 54863 for HTTPS (gRPC)\n"
+        "I0924 08:12:18.074539 1 server.go:632] Language server listening on random port at 54864 for HTTP\n",
+        encoding="utf-8",
+    )
+
+    port, token = antigravity_ls_params([ls_log])
+    assert port == 54863
+    assert token is None
+
+
+def test_antigravity_ls_params_from_process(tmp_path, monkeypatch):
+    monkeypatch.delenv("QUOTA_BURNDOWN_ANTIGRAVITY_PORT", raising=False)
+    monkeypatch.delenv("QUOTA_BURNDOWN_ANTIGRAVITY_CSRF_TOKEN", raising=False)
+
+    ls_log = tmp_path / "language_server.log"
+    ls_log.write_text(
+        "Language server listening on random port at 54863 for HTTPS (gRPC)\n",
+        encoding="utf-8",
+    )
+
+    with patch("quota_burndown.config.antigravity_ls_process_params", return_value=(None, "proc-token-xyz")):
+        with patch("quota_burndown.config.antigravity_log_candidates", return_value=[ls_log]):
+            port, token = antigravity_ls_params()
+            assert port == 54863
+            assert token == "proc-token-xyz"
+
+
 def test_antigravity_ls_params_missing_log():
     port, token = antigravity_ls_params([Path("non_existent_file.log")])
     assert port is None

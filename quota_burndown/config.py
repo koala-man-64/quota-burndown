@@ -149,13 +149,72 @@ def antigravity_log_candidates() -> list[Path]:
         return [Path(override).expanduser()]
     if os.name == "nt":
         roaming = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
-        return [roaming / "Antigravity" / "logs" / "main.log"]
+        return [
+            roaming / "Antigravity" / "logs" / "language_server.log",
+            roaming / "Antigravity" / "logs" / "main.log",
+        ]
     xdg = Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config"))
     mac = Path.home() / "Library" / "Application Support"
     return [
+        xdg / "Antigravity" / "logs" / "language_server.log",
         xdg / "Antigravity" / "logs" / "main.log",
+        mac / "Antigravity" / "logs" / "language_server.log",
         mac / "Antigravity" / "logs" / "main.log",
     ]
+
+
+def antigravity_ls_process_params() -> tuple[int | None, str | None]:
+    """Inspect running language_server processes for active --csrf_token and port."""
+    import re
+    import subprocess
+    token, port = None, None
+    try:
+        if os.name == "nt":
+            flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            res = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "Get-CimInstance Win32_Process -Filter \"Name LIKE '%language_server%'\" | Select-Object -ExpandProperty CommandLine",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                creationflags=flags,
+            )
+            if res.returncode == 0 and res.stdout:
+                m_token = re.search(r"--csrf_token\s+([a-zA-Z0-9-]+)", res.stdout)
+                if m_token:
+                    token = m_token.group(1)
+        elif sys.platform == "linux":
+            proc = Path("/proc")
+            if proc.is_dir():
+                for p in proc.iterdir():
+                    if not p.name.isdigit():
+                        continue
+                    try:
+                        cmdline = (p / "cmdline").read_bytes().replace(b"\x00", b" ").decode("utf-8", errors="replace")
+                        if "language_server" in cmdline and "--csrf_token" in cmdline:
+                            m_token = re.search(r"--csrf_token\s+([a-zA-Z0-9-]+)", cmdline)
+                            if m_token:
+                                token = m_token.group(1)
+                                break
+                    except (OSError, PermissionError):
+                        continue
+        else:  # macOS / Unix
+            res = subprocess.run(["ps", "-ww", "-eo", "command"], capture_output=True, text=True, timeout=3)
+            if res.returncode == 0 and res.stdout:
+                for line in res.stdout.splitlines():
+                    if "language_server" in line and "--csrf_token" in line:
+                        m_token = re.search(r"--csrf_token\s+([a-zA-Z0-9-]+)", line)
+                        if m_token:
+                            token = m_token.group(1)
+                            break
+    except Exception:
+        pass
+    return port, token
 
 
 def antigravity_ls_params(candidates: list[Path] | None = None) -> tuple[int | None, str | None]:
@@ -167,6 +226,11 @@ def antigravity_ls_params(candidates: list[Path] | None = None) -> tuple[int | N
     token = env_token.strip() if env_token else None
     if port and token:
         return port, token
+
+    if candidates is None:
+        proc_port, proc_token = antigravity_ls_process_params()
+        port = port or proc_port
+        token = token or proc_token
 
     search_paths = candidates if candidates is not None else antigravity_log_candidates()
     for path in search_paths:
@@ -180,7 +244,9 @@ def antigravity_ls_params(candidates: list[Path] | None = None) -> tuple[int | N
                         m_token = re.search(r"--csrf_token\s+(\S+)", line)
                         if m_token:
                             found_token = m_token.group(1)
-                    m_port = re.search(r"Local:\s+https?://127\.0\.0\.1:(\d+)/?", line)
+                    m_port = re.search(r"Language server listening on random port at (\d+) for HTTPS", line)
+                    if not m_port:
+                        m_port = re.search(r"Local:\s+https?://127\.0\.0\.1:(\d+)/?", line)
                     if m_port:
                         found_port = int(m_port.group(1))
             port = port or found_port
