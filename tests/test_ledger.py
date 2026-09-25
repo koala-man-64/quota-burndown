@@ -135,3 +135,18 @@ def test_event_helpers():
     assert not e.inferred
     assert e.with_model("m", "e").model == "m" and e.with_model("", "").model == ""
     assert e.to_row()[ledger.COLUMNS.index("ts")] == "2026-09-03T12:00:00Z"
+
+
+def test_recent_requests_default_and_explicit_limits(paths):
+    conn = ledger.connect(paths.usage_db)
+    events = [req(f"r{i}", minutes=i) for i in range(60)]
+    ledger.upsert(conn, events)
+
+    # Defaults to DEFAULT_RECENT (50)
+    assert len(ledger.recent_requests(conn)) == 50
+    # Explicit limit
+    assert len(ledger.recent_requests(conn, limit=10)) == 10
+    # Explicit None returns all
+    assert len(ledger.recent_requests(conn, limit=None)) == 60
+    conn.close()
+
