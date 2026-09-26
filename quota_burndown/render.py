@@ -358,12 +358,71 @@ def projection_text(bd: Burndown) -> tuple[str, str]:
     return f"{min(bd.projected_end, 999):.0f}%", "projected use at reset, at this rate"
 
 
+def target_bar_html(target_date: datetime | str | None = None, now: datetime | None = None) -> str:
+    now = now or now_utc()
+    checked = ""
+    target_dt: datetime | None = None
+    if isinstance(target_date, str) and target_date.strip():
+        try:
+            target_dt = parse_iso(target_date.strip())
+        except Exception:
+            pass
+    elif isinstance(target_date, datetime):
+        target_dt = target_date
+
+    local_now = to_local(now)
+    if target_dt is not None:
+        checked = " checked"
+        initial_val = to_local(target_dt).strftime("%Y-%m-%dT%H:%M")
+        diff_s = (target_dt - now).total_seconds()
+        if diff_s > 0:
+            left_txt = fmt_minutes(diff_s / 60)
+            initial_summary = f'<span class="target-active">Targeting 100% quota by <b>{esc(fmt_local(target_dt))}</b> ({esc(left_txt)} left) · all models paced to reach 100% at target.</span>'
+        else:
+            initial_summary = '<span class="target-error">Target date is in the past · select a future date to pace your burndown.</span>'
+    else:
+        days_ahead = (4 - local_now.weekday()) % 7  # 4 is Friday
+        if days_ahead == 0 and local_now.hour >= 17:
+            days_ahead = 7
+        default_target = (local_now + timedelta(days=days_ahead)).replace(hour=17, minute=0, second=0, microsecond=0)
+        initial_val = default_target.strftime("%Y-%m-%dT%H:%M")
+        initial_summary = '<span class="target-inactive">Standard reset pace active · each model paces to reach 100% by its regular reset.</span>'
+
+    return (
+        '<section class="target-bar" id="target-bar" aria-label="Target completion date">'
+        '<div class="target-controls">'
+        '<div class="target-toggle-group">'
+        '<label class="target-switch" title="Toggle target date burndown mode">'
+        f'<input type="checkbox" id="target-date-toggle"{checked}>'
+        '<span class="target-slider"></span>'
+        '</label>'
+        '<span class="target-title">Target 100% by</span>'
+        '</div>'
+        '<div class="target-input-group">'
+        f'<input type="datetime-local" id="target-date-input" value="{esc(initial_val)}" aria-label="Target date and time">'
+        '</div>'
+        '<div class="target-presets" role="group" aria-label="Target date presets">'
+        '<button type="button" class="target-preset" data-days="1">+1d</button>'
+        '<button type="button" class="target-preset" data-days="2">+2d</button>'
+        '<button type="button" class="target-preset" data-days="3">+3d</button>'
+        '<button type="button" class="target-preset" data-days="5">+5d</button>'
+        '<button type="button" class="target-preset" data-preset="friday">Fri 17:00</button>'
+        '<button type="button" class="target-preset" data-preset="monday">Mon 09:00</button>'
+        '</div>'
+        '<button type="button" id="target-date-clear" class="target-clear-btn" title="Reset to standard provider reset pace">Standard reset</button>'
+        '</div>'
+        f'<div id="target-summary" class="target-summary" role="status" aria-live="polite">{initial_summary}</div>'
+        '</section>'
+    )
+
+
 def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str, usage=None) -> str:
     stale = bd.age_min is not None and bd.age_min > STALE_MIN
     classes = f"card status-{bd.status}" + (" stale" if stale else "")
     proj_value, proj_label = projection_text(bd)
     title = window_title(bd.window)
     if bd.status == "idle":
+        left_value, left_label = "—", "time left"
         stats = (
             f'<div><b>{bd.used:.0f}%</b><span>used</span></div>'
             f'<div><b>—</b><span>pace</span></div>'
@@ -374,6 +433,7 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str,
         # The window has reset but no reading for the new one has arrived: say so rather than
         # showing the old window's final figure as if it were current.
         ended = fmt_local(bd.resets_at) if bd.resets_at else "?"
+        left_value, left_label = ended, "previous window ended"
         stats = (
             f'<div><b>—</b><span>no reading for the new window yet</span></div>'
             f'<div><b>—</b><span>pace</span></div>'
@@ -382,6 +442,7 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str,
         )
     else:
         resets = fmt_local(bd.resets_at) if bd.resets_at else "?"
+        left_value, left_label = fmt_minutes(bd.remaining_min), f"left · resets {resets}"
         stats = (
             f'<div><b>{bd.used:.0f}%</b><span>used · {bd.remaining_pct:.0f}% left</span></div>'
             f'<div><b>{bd.pace:.0f}%</b><span>linear pace</span></div>'
@@ -410,13 +471,29 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str,
         # left" indistinguishable from "credits not reported", which is how a used
         # credit went unnoticed.
         reset_badge = '<span class="badge reset-badge none">no reset credits left</span>'
-    header_badge = f'<div class="badges"><span class="badge">{esc(badge_text(bd))}</span>{reset_badge}</div>' if reset_badge else f'<span class="badge">{esc(badge_text(bd))}</span>'
+    header_badge = f'<div class="badges"><span class="badge status-badge">{esc(badge_text(bd))}</span>{reset_badge}</div>' if reset_badge else f'<span class="badge status-badge">{esc(badge_text(bd))}</span>'
     age = f"{bd.age_min:.0f} min ago" if bd.age_min is not None else "never"
     foot = f"last sample {esc(age)} via {esc(bd.source or '?')} · {len(bd.samples)} samples this window"
     if stale:
         foot += " · <b>stale</b>: collector has not run recently"
+    efficiency_val = f"{data.token_efficiency.tokens_per_point:.1f}" if data and data.token_efficiency else ""
     return (
-        f'<article class="{classes}">'
+        f'<article class="{classes}" data-card-id="{esc(chart_id)}" '
+        f'data-provider="{esc(bd.provider)}" '
+        f'data-window="{esc(bd.window)}" '
+        f'data-used="{bd.used:.2f}" '
+        f'data-start="{bd.start.isoformat() if bd.start else ""}" '
+        f'data-resets="{bd.resets_at.isoformat() if bd.resets_at else ""}" '
+        f'data-rate="{bd.rate_per_hour:.4f}" '
+        f'data-stale="{"true" if stale else "false"}" '
+        f'data-std-pace="{bd.pace:.2f}" '
+        f'data-std-status="{bd.status}" '
+        f'data-std-badge="{esc(badge_text(bd))}" '
+        f'data-std-left-val="{esc(left_value)}" '
+        f'data-std-left-lbl="{esc(left_label)}" '
+        f'data-std-proj-val="{esc(proj_value)}" '
+        f'data-std-proj-lbl="{esc(proj_label)}" '
+        f'data-tokens-per-pt="{efficiency_val}">'
         f'<header><h3>{esc(title)}</h3>{header_badge}</header>'
         f'<div class="stats">{stats}</div>'
         f"{reset_strip}"
@@ -946,6 +1023,42 @@ section.capacity header{display:flex;justify-content:space-between;gap:8px;align
 .reserve{display:flex;gap:5px;align-items:center;margin:10px 0;font-size:12px}.reserve button{font:inherit;font-size:12px;padding:2px 9px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;cursor:pointer}.reserve button.on{border-color:var(--chart-series);color:var(--chart-series);font-weight:600}.reserve button:focus-visible{outline:2px solid var(--chart-series);outline-offset:1px}
 .capacity-scroll{overflow-x:auto}.capacity-table small{color:var(--muted);font-weight:400}.efficiency-section{margin-top:18px}.efficiency{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:8px;overflow-x:auto}.efficiency summary{cursor:pointer;font-weight:600}.efficiency table{margin-top:8px}
 .capacity-provider{margin:16px 0}.capacity-provider h3{font-size:14px;margin:0 0 6px}.capacity-extras{margin-top:8px;font-size:12px}.capacity-extras summary{cursor:pointer;color:var(--muted)}
+.target-bar{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin:8px 0 16px;display:flex;flex-direction:column;gap:8px}
+.target-bar.active{border-color:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,0.2)}
+.target-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.target-toggle-group{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.target-switch{position:relative;display:inline-block;width:38px;height:22px;margin:0}
+.target-switch input{opacity:0;width:0;height:0}
+.target-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:var(--grid);border:1px solid var(--line);transition:.2s;border-radius:22px}
+.target-slider:before{position:absolute;content:"";height:16px;width:16px;left:2px;bottom:2px;background-color:var(--muted);transition:.2s;border-radius:50%}
+.target-switch input:checked + .target-slider{background-color:#f59e0b;border-color:#f59e0b}
+.target-switch input:checked + .target-slider:before{transform:translateX(16px);background-color:#ffffff}
+.target-switch input:focus-visible + .target-slider{outline:2px solid #f59e0b;outline-offset:2px}
+.target-title{font-weight:600;font-size:13px;color:var(--fg)}
+.target-input-group{display:flex;align-items:center}
+.target-date-input{font:inherit;font-size:13px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:3px 8px;outline:none}
+.target-date-input:focus{border-color:#f59e0b;box-shadow:0 0 0 1px #f59e0b}
+.target-presets{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.target-preset{font:inherit;font-size:11px;padding:2px 8px;border:1px solid var(--line);background:var(--grid);color:var(--fg);border-radius:999px;cursor:pointer;transition:border-color .15s}
+.target-preset:hover{border-color:#f59e0b;color:#f59e0b}
+.target-preset:focus-visible{outline:2px solid #f59e0b;outline-offset:1px}
+.target-clear-btn{font:inherit;font-size:11px;padding:2px 10px;border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:999px;cursor:pointer;margin-left:auto}
+.target-clear-btn:hover{color:var(--fg);border-color:var(--fg)}
+.target-summary{font-size:12px;color:var(--muted);line-height:1.4}
+.target-summary .target-active{color:var(--fg)}
+.target-summary .target-active b{color:#f59e0b}
+.target-summary .target-error{color:var(--over);font-weight:500}
+.target-summary .target-inactive{color:var(--muted)}
+.pace-target{stroke:#f59e0b;stroke-width:2;stroke-dasharray:6 3;stroke-linecap:round;pointer-events:none}
+.target-tick{stroke:#f59e0b;stroke-width:1.5;stroke-dasharray:3 3;pointer-events:none}
+.target-lbl{fill:#f59e0b;font-size:11px;font-weight:600;pointer-events:none}
+.target-dot{fill:#f59e0b;stroke:var(--card);stroke-width:2;pointer-events:none}
+.legend i.k-target{border-top:2px dashed #f59e0b}
+.target-rate-badge{display:inline-block;font-size:10px;padding:1px 5px;background:rgba(245,158,11,0.15);color:#d97706;border:1px solid #f59e0b;border-radius:4px;margin-top:2px}
+.stats span small{opacity:.8;margin-left:4px}
+@media (prefers-color-scheme: dark){
+  .target-rate-badge{color:#fbbf24}
+}
 """
 
 HOVER_SCRIPT = """
@@ -1207,10 +1320,316 @@ LEGEND_HTML = (
     '<span><i class="k-pace-reset"></i>even pace (with resets)</span>'
     '<span><i class="k-proj"></i>projection at current rate</span>'
     '<span><i class="k-proj-reset"></i>projection (with resets)</span>'
+    '<span id="legend-target-item" hidden><i class="k-target"></i>target pace</span>'
     '<span><i class="k-tokens"></i>tokens per interval by model (right axis)</span>'
     '<span><i class="k-reset"></i>window reset</span>'
     '<span><i class="k-now"></i>now</span></div>'
 )
+
+
+TARGET_SCRIPT = """
+(function(){
+  var bar = document.getElementById('target-bar');
+  if (!bar) return;
+  var toggle = document.getElementById('target-date-toggle');
+  var input = document.getElementById('target-date-input');
+  var summary = document.getElementById('target-summary');
+  var clearBtn = document.getElementById('target-date-clear');
+  var legendItem = document.getElementById('legend-target-item');
+
+  function pad(n){ return n < 10 ? '0' + n : String(n); }
+  function formatIso(d){
+    return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + 'T' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function formatDisplay(d){
+    var days = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    var months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return days[d.getDay()] + ' ' + months[d.getMonth()] + ' ' + d.getDate() + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+  function formatDuration(mins){
+    if (mins <= 0) return '0 min';
+    var d = Math.floor(mins / 1440);
+    var h = Math.floor((mins % 1440) / 60);
+    var m = Math.floor(mins % 60);
+    if (d > 0) return d + 'd ' + h + 'h';
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + ' min';
+  }
+  function formatCompact(num){
+    if (num >= 1e9) return (num / 1e9).toFixed(1).replace(/\\.0$/, '') + 'B';
+    if (num >= 1e6) return (num / 1e6).toFixed(1).replace(/\\.0$/, '') + 'M';
+    if (num >= 1e3) return (num / 1e3).toFixed(1).replace(/\\.0$/, '') + 'K';
+    return String(num);
+  }
+
+  function getCards(){
+    return Array.prototype.slice.call(document.querySelectorAll('.history-grid article.card[data-card-id]'));
+  }
+
+  function revertCard(card){
+    var stdStatus = card.getAttribute('data-std-status') || 'idle';
+    var isStale = card.getAttribute('data-stale') === 'true';
+    card.className = 'card status-' + stdStatus + (isStale ? ' stale' : '');
+
+    var badge = card.querySelector('.status-badge');
+    if (badge && card.hasAttribute('data-std-badge')) {
+      badge.textContent = card.getAttribute('data-std-badge');
+    }
+
+    var statsDivs = card.querySelectorAll('.stats > div');
+    var paceEl = statsDivs[1];
+    if (paceEl && card.hasAttribute('data-std-pace')) {
+      var stdPace = parseFloat(card.getAttribute('data-std-pace'));
+      paceEl.innerHTML = '<b>' + (isNaN(stdPace) ? '—' : Math.round(stdPace) + '%') + '</b><span>linear pace</span>';
+    }
+
+    var leftEl = statsDivs[2];
+    if (leftEl) {
+      if (card.hasAttribute('data-std-left-val')) {
+        leftEl.innerHTML = '<b>' + card.getAttribute('data-std-left-val') + '</b><span>' + (card.getAttribute('data-std-left-lbl') || '') + '</span>';
+      }
+    }
+
+    var projEl = statsDivs[3];
+    if (projEl && card.hasAttribute('data-std-proj-val')) {
+      projEl.innerHTML = '<b>' + card.getAttribute('data-std-proj-val') + '</b><span>' + (card.getAttribute('data-std-proj-lbl') || '') + '</span>';
+    }
+
+    var svg = card.querySelector('svg.chart');
+    if (svg) {
+      Array.prototype.forEach.call(svg.querySelectorAll('.pace-target, .target-tick, .target-lbl, .target-dot'), function(el){
+        el.parentNode.removeChild(el);
+      });
+    }
+  }
+
+  function applyTargetToCard(card, targetDate, now){
+    var used = parseFloat(card.getAttribute('data-used')) || 0;
+    var startStr = card.getAttribute('data-start');
+    var start = startStr ? new Date(startStr) : null;
+    var resetsStr = card.getAttribute('data-resets');
+    var resets = resetsStr ? new Date(resetsStr) : null;
+    var rate = parseFloat(card.getAttribute('data-rate')) || 0;
+    var tokensPerPt = parseFloat(card.getAttribute('data-tokens-per-pt')) || 0;
+    var stdPace = parseFloat(card.getAttribute('data-std-pace')) || 0;
+    var stdStatus = card.getAttribute('data-std-status');
+    var isStale = card.getAttribute('data-stale') === 'true';
+
+    if (stdStatus === 'idle' || !start) return;
+
+    var totalTargetMs = targetDate.getTime() - start.getTime();
+    var elapsedMs = now.getTime() - start.getTime();
+    var targetPace = totalTargetMs > 0 ? 100.0 * Math.min(1.0, Math.max(0.0, elapsedMs / totalTargetMs)) : 100.0;
+    var delta = used - targetPace;
+
+    var status = 'on-pace';
+    if (used >= 100) status = 'exhausted';
+    else if (delta > 2.0) status = 'over';
+    else if (delta < -2.0) status = 'under';
+
+    var badgeText = 'on target pace';
+    if (status === 'exhausted') badgeText = 'budget exhausted';
+    else if (status === 'over') badgeText = '▲ ' + Math.round(Math.abs(delta)) + ' pts over target pace';
+    else if (status === 'under') badgeText = '▼ ' + Math.round(Math.abs(delta)) + ' pts under target pace';
+
+    card.className = 'card status-' + status + (isStale ? ' stale' : '');
+    var badge = card.querySelector('.status-badge');
+    if (badge) badge.textContent = badgeText;
+
+    var statsDivs = card.querySelectorAll('.stats > div');
+    var paceEl = statsDivs[1];
+    if (paceEl) {
+      paceEl.innerHTML = '<b>' + Math.round(targetPace) + '%</b><span>target pace <small>(std: ' + Math.round(stdPace) + '%)</small></span>';
+    }
+
+    var msLeft = targetDate.getTime() - now.getTime();
+    var minLeft = msLeft / 60000;
+    var hoursLeft = msLeft / 3600000;
+    var leftEl = statsDivs[2];
+    if (leftEl) {
+      var resetsTxt = resets ? ' · resets ' + formatDisplay(resets) : '';
+      leftEl.innerHTML = '<b>' + formatDuration(minLeft) + '</b><span>until target<small>' + resetsTxt + '</small></span>';
+    }
+
+    var projEl = statsDivs[3];
+    if (projEl) {
+      var remPct = Math.max(0, 100 - used);
+      var reqRate = hoursLeft > 0 ? (remPct / hoursLeft) : 0;
+      var projEnd = Math.min(999, used + rate * hoursLeft);
+
+      if (rate > 0 && remPct > 0 && (remPct / rate) < hoursLeft) {
+        var exhaustTime = new Date(now.getTime() + (remPct / rate) * 3600000);
+        var beforeTargetMin = (hoursLeft - (remPct / rate)) * 60;
+        projEl.innerHTML = '<b>hits 100% ' + formatDisplay(exhaustTime) + '</b><span>' + formatDuration(beforeTargetMin) + ' before target date</span>';
+      } else if (hoursLeft > 0) {
+        var tokRate = tokensPerPt > 0 ? ' (~' + formatCompact(Math.round(reqRate * tokensPerPt)) + ' tok/h)' : '';
+        projEl.innerHTML = '<b>' + reqRate.toFixed(2) + ' pp/h</b><span>needed for 100% at target (curr: ' + rate.toFixed(2) + ' pp/h' + tokRate + ')</span>';
+      } else {
+        projEl.innerHTML = '<b>—</b><span>target date reached</span>';
+      }
+    }
+
+    var fig = card.querySelector('figure.chart-figure');
+    var svg = card.querySelector('svg.chart');
+    if (fig && svg && fig.getAttribute('data-domain-start') && fig.getAttribute('data-domain-end')) {
+      var dStart = new Date(fig.getAttribute('data-domain-start'));
+      var dEnd = new Date(fig.getAttribute('data-domain-end'));
+      var spanMs = dEnd.getTime() - dStart.getTime();
+      var PAD_L = 48, PAD_R = 56, PAD_T = 30, PAD_B = 30, CHART_W = 800, CHART_H = 320;
+      var plotBottom = CHART_H - PAD_B;
+
+      function xOf(d){ var f = (d.getTime() - dStart.getTime()) / spanMs; return PAD_L + (CHART_W - PAD_L - PAD_R) * Math.min(Math.max(f, 0), 1); }
+      function yOf(u){ return PAD_T + (CHART_H - PAD_T - PAD_B) * (1 - Math.min(Math.max(u, 0), 100) / 100); }
+
+      Array.prototype.forEach.call(svg.querySelectorAll('.pace-target, .target-tick, .target-lbl, .target-dot'), function(el){
+        el.parentNode.removeChild(el);
+      });
+
+      if (targetDate.getTime() > start.getTime()) {
+        var t0 = Math.max(start.getTime(), dStart.getTime());
+        var t1 = Math.min(targetDate.getTime(), dEnd.getTime());
+        if (t1 > t0) {
+          var slope = 100.0 / (targetDate.getTime() - start.getTime());
+          var u0 = slope * (t0 - start.getTime());
+          var u1 = slope * (t1 - start.getTime());
+          var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          line.setAttribute('class', 'pace-target');
+          line.setAttribute('x1', xOf(new Date(t0)).toFixed(1));
+          line.setAttribute('y1', yOf(u0).toFixed(1));
+          line.setAttribute('x2', xOf(new Date(t1)).toFixed(1));
+          line.setAttribute('y2', yOf(u1).toFixed(1));
+          svg.appendChild(line);
+        }
+
+        if (targetDate.getTime() >= dStart.getTime() && targetDate.getTime() <= dEnd.getTime()) {
+          var xt = xOf(targetDate);
+          var tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+          tick.setAttribute('class', 'target-tick');
+          tick.setAttribute('x1', xt.toFixed(1));
+          tick.setAttribute('y1', (PAD_T - 10).toFixed(1));
+          tick.setAttribute('x2', xt.toFixed(1));
+          tick.setAttribute('y2', plotBottom.toFixed(1));
+          svg.appendChild(tick);
+
+          var anchor = xt > CHART_W * 0.7 ? 'end' : 'start';
+          var dx = anchor === 'end' ? -6 : 6;
+          var lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          lbl.setAttribute('class', 'target-lbl');
+          lbl.setAttribute('x', (xt + dx).toFixed(1));
+          lbl.setAttribute('y', (PAD_T - 14).toFixed(1));
+          lbl.setAttribute('text-anchor', anchor);
+          lbl.textContent = 'target 100% (' + formatDisplay(targetDate) + ')';
+          svg.appendChild(lbl);
+
+          var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          dot.setAttribute('class', 'target-dot');
+          dot.setAttribute('cx', xt.toFixed(1));
+          dot.setAttribute('cy', PAD_T.toFixed(1));
+          dot.setAttribute('r', '4.5');
+          svg.appendChild(dot);
+        }
+      }
+    }
+  }
+
+  function update(){
+    var isTarget = toggle.checked;
+    try {
+      localStorage.setItem('qb_target_enabled', isTarget ? 'true' : 'false');
+      if (input.value) localStorage.setItem('qb_target_date', input.value);
+    } catch (e) {}
+
+    if (legendItem) legendItem.hidden = !isTarget;
+
+    var cards = getCards();
+    if (!isTarget) {
+      bar.classList.remove('active');
+      summary.innerHTML = '<span class="target-inactive">Standard reset pace active · each model paces to reach 100% by its regular reset.</span>';
+      cards.forEach(revertCard);
+      return;
+    }
+
+    bar.classList.add('active');
+    var targetDate = new Date(input.value);
+    if (isNaN(targetDate.getTime())) {
+      summary.innerHTML = '<span class="target-error">Please select a valid target date and time.</span>';
+      cards.forEach(revertCard);
+      return;
+    }
+
+    var now = new Date();
+    var msLeft = targetDate.getTime() - now.getTime();
+    if (msLeft <= 0) {
+      summary.innerHTML = '<span class="target-error">Target date is in the past · select a future date to pace your burndown.</span>';
+      cards.forEach(revertCard);
+      return;
+    }
+
+    var minLeft = msLeft / 60000;
+    summary.innerHTML = '<span class="target-active">Targeting 100% quota by <b>' + formatDisplay(targetDate) + '</b> (' + formatDuration(minLeft) + ' left) · all models paced to reach 100% at target.</span>';
+
+    cards.forEach(function(card){
+      applyTargetToCard(card, targetDate, now);
+    });
+  }
+
+  try {
+    var storedDate = localStorage.getItem('qb_target_date');
+    if (storedDate) input.value = storedDate;
+    var storedEnabled = localStorage.getItem('qb_target_enabled');
+    if (storedEnabled === 'true') toggle.checked = true;
+  } catch (e) {}
+
+  Array.prototype.forEach.call(bar.querySelectorAll('.target-preset'), function(btn){
+    btn.addEventListener('click', function(){
+      var target = new Date();
+      target.setMinutes(0, 0, 0);
+      var days = btn.getAttribute('data-days');
+      var preset = btn.getAttribute('data-preset');
+      if (days) {
+        target.setDate(target.getDate() + parseInt(days, 10));
+      } else if (preset === 'friday') {
+        var day = target.getDay();
+        var diff = (5 - day + 7) % 7;
+        if (diff === 0 && target.getHours() >= 17) diff = 7;
+        target.setDate(target.getDate() + diff);
+        target.setHours(17, 0, 0, 0);
+      } else if (preset === 'monday') {
+        var day = target.getDay();
+        var diff = (1 - day + 7) % 7;
+        if (diff === 0 && target.getHours() >= 9) diff = 7;
+        target.setDate(target.getDate() + diff);
+        target.setHours(9, 0, 0, 0);
+      }
+      input.value = formatIso(target);
+      toggle.checked = true;
+      update();
+    });
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener('click', function(){
+      toggle.checked = false;
+      update();
+    });
+  }
+
+  toggle.addEventListener('change', update);
+  input.addEventListener('change', function(){
+    if (!toggle.checked) toggle.checked = true;
+    update();
+  });
+  input.addEventListener('input', function(){
+    if (toggle.checked) update();
+  });
+
+  setInterval(function(){
+    if (toggle.checked) update();
+  }, 10000);
+
+  update();
+})();
+"""
 
 
 def chart_usage(usage_db: Path | None, now: datetime, burndowns: list[Burndown]) -> list[tuple[datetime, str, int]] | None:
@@ -1234,7 +1653,7 @@ def render_html(
     store: Store, now: datetime | None = None, days: int = 7,
     warnings: list[str] | None = None, refresh_s: int = 120,
     usage_db: Path | None = None, capacity: dict | None = None, live: bool = False,
-    recent_rows=None,
+    recent_rows=None, target_date: datetime | str | None = None,
 ) -> str:
     """The whole page. Weekly history renders as exact two-window-cycle charts."""
     now = now or now_utc()
@@ -1267,8 +1686,10 @@ def render_html(
         banner = '<div class="banner">' + "<br>".join(esc(w) for w in warnings) + "</div>"
     updated = to_local(now).strftime("%a %Y-%m-%d %H:%M")
     legend = LEGEND_HTML if chart_count else ""
+    target_bar = target_bar_html(target_date=target_date, now=now)
     hover = f'<div id="chart-tooltip" role="status" aria-live="polite" hidden></div><script>{HOVER_SCRIPT}</script>' if chart_count else ""
     live_script = f'<script id="live-script">{LIVE_SCRIPT}</script>' if live else ""
+    target_script = f'<script id="target-script">{TARGET_SCRIPT}</script>'
     mode = "live dashboard" if live else f"static fallback generated {updated}"
     return "".join((
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">",
@@ -1276,12 +1697,12 @@ def render_html(
         "" if live else f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">",
         f"<title>Quota Burndown</title><style>{CSS}</style></head><body>",
         f'<header class="top"><h1>Quota burndown</h1><div class="meta">{esc(mode)} · {len(samples)} historic samples in view</div></header>',
-        "<main>", banner, legend, history,
+        "<main>", banner, target_bar, legend, history,
         daily_models_section_html(usage_db, now) if usage_db is not None else "",
         usage_section_html(usage_db, now, live=live, recent_rows=recent_rows) if usage_db is not None else "",
         efficiency_section_html(usage_db, now) if usage_db is not None else "", "</main>",
         f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",
-        hover, live_script, "</body></html>\n",
+        hover, live_script, target_script, "</body></html>\n",
     ))
 
 

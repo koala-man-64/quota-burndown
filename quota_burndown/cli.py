@@ -177,7 +177,14 @@ def cmd_backfill(args) -> int:
 
 def cmd_render(args) -> int:
     paths = get_paths(args.home)
-    out = render.write_html(Store(paths), Path(args.out) if args.out else paths.html, days=args.days, usage_db=paths.usage_db)
+    target = getattr(args, "target", None)
+    out = render.write_html(
+        Store(paths),
+        Path(args.out) if args.out else paths.html,
+        days=args.days,
+        usage_db=paths.usage_db,
+        target_date=target,
+    )
     print(out)
     return 0
 
@@ -357,6 +364,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("render", help="write the HTML page")
     p.add_argument("--out")
     p.add_argument("--days", type=int, default=7)
+    p.add_argument("--target", help="target date for 100%% burndown (YYYY-MM-DD[THH:MM] or ISO)")
     p.set_defaults(func=cmd_render)
 
     p = sub.add_parser("status", help="print the current burndown and today's usage as text")
