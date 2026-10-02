@@ -205,3 +205,15 @@ def test_known_empty_credits_survive_a_restart(tmp_path):
     actual = pool(reborn)
     assert actual["reset_credits"] == []
     assert actual["reset_credits_known"] is True
+
+
+def test_same_reading_with_corrected_reset_replaces_but_identical_does_not(tmp_path):
+    state = CapacityState(tmp_path, clock=lambda: NOW)
+    first = reading(source="desktop-history", window="10080m", window_min=10080, used_pct=98,
+                    resets_at=NOW + timedelta(hours=8), reset_provenance="inferred")
+    assert state.ingest([first])
+    assert not state.ingest([replace(first, received_at=NOW)])
+    corrected = replace(first, resets_at=NOW + timedelta(hours=3))
+    assert state.ingest([corrected])
+    assert pool(state)["windows"][0]["resets_at"] == corrected.to_dict()["resets_at"]
+    assert not state.ingest([replace(first, source="unranked", resets_at=NOW + timedelta(hours=1))])  # weaker source
