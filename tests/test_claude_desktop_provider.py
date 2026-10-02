@@ -104,3 +104,81 @@ def test_collect_is_incremental(tmp_path):
     write_history(path, [])
     samples, warnings, stats = claude_desktop.collect(tmp_path / "s2.json", path)
     assert samples == [] and "no readings" in warnings[0]
+
+
+# The weekly window resets on a fixed schedule; T0 (Thursday 12:00Z) is five hours after it.
+SCHEDULED = T0 - timedelta(hours=5)
+
+
+def items_of(readings):
+    return [{"t": r["t"], "ts": datetime.fromtimestamp(r["t"] / 1000, tz=UTC), "org": r["org"],
+             "values": {"7d": float(r["u"]["sd"])}} for r in readings]
+
+
+def write_handoff(home, observed, resets_at, name="acct-x-1.json"):
+    directory = home / "quota-burndown-statusline"
+    directory.mkdir(parents=True, exist_ok=True)
+    record = {"session": "s", "account_scope": "acct-x", "digest": name, "observed_at": observed.isoformat(),
+              "quota": {"seven_day": {"used_percentage": 1.0, "window_minutes": 10080, "resets_at": resets_at}}}
+    (directory / name).write_text(json.dumps(record), encoding="utf-8")
+    return directory / name
+
+
+def test_anchor_projects_reset_through_overnight_gap():
+    # Last reading 04:00Z at 98%, app asleep through the 07:00Z reset, next reading 12:00Z at 0%.
+    readings = [reading(-480, 0, 98), reading(0, 0, 0), reading(60, 0, 2)]
+    week = by_window(claude_desktop.to_samples(items_of(readings), anchor=SCHEDULED - timedelta(days=21)))["7d"]
+    assert week[0].resets_at == SCHEDULED  # before the gap: the reset still ahead of it
+    assert week[1].resets_at == SCHEDULED + timedelta(days=7)
+    assert week[2].resets_at == SCHEDULED + timedelta(days=7)  # not the drop time (12:00Z) plus seven days
+
+
+def test_reading_after_a_missed_scheduled_reset_points_at_the_next_one():
+    # No reading since the reset: the reset shown must already be the next scheduled one,
+    # not a reset that has passed.
+    week = by_window(claude_desktop.to_samples(items_of([reading(-480, 0, 98)]), anchor=SCHEDULED))["7d"]
+    assert week[0].resets_at == SCHEDULED
+    assert claude_desktop.project_reset(SCHEDULED, SCHEDULED) == SCHEDULED + timedelta(days=7)
+    assert claude_desktop.project_reset(SCHEDULED, SCHEDULED - timedelta(seconds=1)) == SCHEDULED
+
+
+def test_drop_off_schedule_falls_back_to_inference_until_schedule_agrees():
+    # Drop observed two days after the scheduled reset, with readings on both sides: off-schedule.
+    off = 2 * 24 * 60
+    readings = [reading(off - 15, 0, 60), reading(off, 0, 0), reading(off + 15, 0, 1)]
+    week = by_window(claude_desktop.to_samples(items_of(readings), anchor=SCHEDULED))["7d"]
+    assert week[0].resets_at == SCHEDULED + timedelta(days=7)
+    assert week[1].resets_at == T0 + timedelta(minutes=off, days=7)
+    assert week[2].resets_at == T0 + timedelta(minutes=off, days=7)
+    # The next drop straddles the scheduled reset again: the anchor resumes.
+    nxt = 7 * 24 * 60
+    readings += [reading(nxt - 360, 0, 50), reading(nxt, 0, 0)]
+    week = by_window(claude_desktop.to_samples(items_of(readings), anchor=SCHEDULED))["7d"]
+    assert week[-1].resets_at == SCHEDULED + timedelta(days=14)
+
+
+def test_weekly_anchor_persists_beyond_handoff_and_takes_newer_reports(tmp_path):
+    assert claude_desktop.weekly_anchor(tmp_path) is None
+    handoff = write_handoff(tmp_path, T0, int(SCHEDULED.timestamp()))
+    assert claude_desktop.weekly_anchor(tmp_path) == SCHEDULED
+    handoff.unlink()  # pruned by the status line a day later
+    assert claude_desktop.weekly_anchor(tmp_path) == SCHEDULED
+    moved = SCHEDULED + timedelta(days=7, hours=3)
+    write_handoff(tmp_path, T0 + timedelta(days=1), moved.isoformat(), name="acct-x-2.json")
+    write_handoff(tmp_path, T0 - timedelta(days=1), int(SCHEDULED.timestamp()), name="acct-x-0.json")  # older: ignored
+    assert claude_desktop.weekly_anchor(tmp_path) == moved
+
+
+def test_collect_reemits_newest_reading_when_anchor_changes(tmp_path):
+    path = tmp_path / "Claude" / "plan-usage-history.json"
+    state = tmp_path / "state.json"
+    write_history(path, [reading(-360, 0, 2), reading(0, 0, 0), reading(15, 0, 1)])
+    samples, _, _ = claude_desktop.collect(state, path)
+    assert by_window(samples)["7d"][-1].resets_at == T0 + timedelta(days=7)  # inferred from the drop
+    assert claude_desktop.collect(state, path)[0] == []
+
+    write_handoff(tmp_path, T0, int(SCHEDULED.timestamp()))
+    samples, _, stats = claude_desktop.collect(state, path)
+    assert [(s.window, s.used) for s in samples] == [("5h", 0.0), ("7d", 1.0)] and stats["new"] == 2
+    assert by_window(samples)["7d"][0].resets_at == SCHEDULED + timedelta(days=7)
+    assert claude_desktop.collect(state, path)[0] == []  # anchor unchanged: nothing new

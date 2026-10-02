@@ -364,7 +364,10 @@ class CapacityState:
                 if downgrades_reading(item, prior, now):
                     continue
                 if item.observed_at == prior.observed_at:
-                    if SOURCE_RANK.get(item.source, 0) <= SOURCE_RANK.get(prior.source, 0):
+                    # The same reading again replaces the prior one only from a stronger
+                    # source, or from the same source with a corrected reset.
+                    item_rank, prior_rank = SOURCE_RANK.get(item.source, 0), SOURCE_RANK.get(prior.source, 0)
+                    if item_rank < prior_rank or (item_rank == prior_rank and item.resets_at == prior.resets_at):
                         continue
                     history.pop()
                 reset_changed = item.resets_at != prior.resets_at and (
