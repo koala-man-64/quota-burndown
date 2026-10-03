@@ -170,3 +170,71 @@ def test_writer_lease_released_on_process_death(paths):
     finally:
         process.terminate(); process.wait(timeout=3)
     with WriterLease(paths.home): pass
+
+
+def test_storage_health_recovers_on_success_and_append_failure_sets_error(paths):
+    service = CapacityService(paths, collectors=False)
+    service.state.set_health("storage", "error", "PermissionError")
+    assert service.state.health["storage"]["state"] == "error"
+
+    service._spawn("capacity-writer", service._writer)
+    try:
+        now = now_utc()
+        service.publish([Observation("codex", "a", "codex", "300m", 300, 50, now, now, now, "app-server")])
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if service.state.health.get("storage", {}).get("state") == "healthy":
+                break
+            time.sleep(0.05)
+        assert service.state.health["storage"]["state"] == "healthy"
+
+        # Now simulate store.append failing
+        def failing_append(samples):
+            raise OSError("simulated disk write error")
+        service.store.append = failing_append
+        now2 = now_utc()
+        service.publish([Observation("codex", "a", "codex", "300m", 300, 60, now2, now2, now2, "app-server")])
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if service.state.health.get("storage", {}).get("state") == "error":
+                break
+            time.sleep(0.05)
+        assert service.state.health["storage"]["state"] == "error"
+        assert service.state.health["storage"]["last_error"] == "OSError"
+
+        # Wait >2.1 seconds so periodic persist runs; verify append error is not masked by persist
+        time.sleep(2.2)
+        assert service.state.health["storage"]["state"] == "error"
+        assert service.state.health["storage"]["last_error"] == "OSError"
+
+        # Restore working append and verify recovery
+        service.store.append = lambda samples: None
+        now3 = now_utc()
+        service.publish([Observation("codex", "a", "codex", "300m", 300, 70, now3, now3, now3, "app-server")])
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if service.state.health.get("storage", {}).get("state") == "healthy":
+                break
+            time.sleep(0.05)
+        assert service.state.health["storage"]["state"] == "healthy"
+    finally:
+        service.close()
+
+
+def test_ingest_health_recovers_on_clean_batch(paths):
+    service = CapacityService(paths, collectors=False)
+    service.state.set_health("ingest", "error", "ValueError")
+    assert service.state.health["ingest"]["state"] == "error"
+
+    service._spawn("capacity-writer", service._writer)
+    try:
+        now = now_utc()
+        service.publish([Observation("codex", "a", "codex", "300m", 300, 50, now, now, now, "app-server")])
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if service.state.health.get("ingest", {}).get("state") == "healthy":
+                break
+            time.sleep(0.05)
+        assert service.state.health["ingest"]["state"] == "healthy"
+    finally:
+        service.close()

@@ -75,6 +75,7 @@ class CapacityService:
         self._last_persist = 0.0
         self._lease = None
         self.max_publication_latency_ms = 0.0
+        self._storage_error_op = None
 
     def active(self):
         with self._consumer_lock:
@@ -149,6 +150,7 @@ class CapacityService:
             received = []
             arrivals = []
             dirty = False
+            batch_ok = False
             try:
                 event = self.events.get(timeout=0.2)
                 batch = [event]
@@ -169,33 +171,50 @@ class CapacityService:
                     elif kind == "policy":
                         self.state.set_policy(data)
                         dirty = True
+                batch_ok = True
             except queue.Empty:
                 pass
             except (OSError, ValueError, RuntimeError, TypeError) as exc:
-                self.state.set_health("storage", "error", type(exc).__name__)
+                self.state.set_health("ingest", "error", type(exc).__name__)
                 dirty = True
-            try:
-                now = time.monotonic()
-                if arrivals:
-                    latency = (now - min(arrivals)) * 1000
-                    self.max_publication_latency_ms = max(self.max_publication_latency_ms, latency)
-                    self.state.health["publication"] = {"state": "healthy", "last_latency_ms": latency,
-                        "max_latency_ms": self.max_publication_latency_ms, "target_ms": 2000,
-                        "measurement": "adapter enqueue to snapshot assembly; upstream delay excluded"}
-                if dirty or now - last_tick >= 0.5:
-                    self.state.publish(persist=False)
-                    last_tick = now
-                if now - self._last_persist >= 2:
+            if batch_ok and self.state.health.get("ingest", {}).get("state") == "error":
+                self.state.set_health("ingest", "healthy", None)
+            now = time.monotonic()
+            if arrivals:
+                latency = (now - min(arrivals)) * 1000
+                self.max_publication_latency_ms = max(self.max_publication_latency_ms, latency)
+                self.state.health["publication"] = {"state": "healthy", "last_latency_ms": latency,
+                    "max_latency_ms": self.max_publication_latency_ms, "target_ms": 2000,
+                    "measurement": "adapter enqueue to snapshot assembly; upstream delay excluded"}
+            if dirty or now - last_tick >= 0.5:
+                self.state.publish(persist=False)
+                last_tick = now
+            if now - self._last_persist >= 2:
+                try:
                     self.state.publish(persist=True)
                     self._last_persist = now
-                if received:
-                    samples = [Sample(i.observed_at, i.provider, f"{i.window}:{i.limit_id}", i.used_pct, i.resets_at,
-                                      i.window_min, i.source) for i in received if i.used_pct is not None]
+                    if self._storage_error_op in ("persist", None):
+                        self._storage_error_op = None
+                        if self.state.health.get("storage", {}).get("state") == "error":
+                            self.state.set_health("storage", "healthy", None)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    self._storage_error_op = "persist"
+                    self.state.set_health("storage", "error", type(exc).__name__)
+                    self.state.publish()
+            if received:
+                samples = [Sample(i.observed_at, i.provider, f"{i.window}:{i.limit_id}", i.used_pct, i.resets_at,
+                                  i.window_min, i.source) for i in received if i.used_pct is not None]
+                try:
                     self.store.append(samples)
                     self._cache_legacy()
-            except (OSError, ValueError, RuntimeError) as exc:
-                self.state.set_health("storage", "error", type(exc).__name__)
-                self.state.publish()
+                    if self._storage_error_op in ("append", None):
+                        self._storage_error_op = None
+                        if self.state.health.get("storage", {}).get("state") == "error":
+                            self.state.set_health("storage", "healthy", None)
+                except (OSError, ValueError, RuntimeError) as exc:
+                    self._storage_error_op = "append"
+                    self.state.set_health("storage", "error", type(exc).__name__)
+                    self.state.publish()
 
     def _cache_legacy(self):
         from .cli import _bd_json

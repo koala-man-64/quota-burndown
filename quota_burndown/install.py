@@ -122,19 +122,43 @@ def uninstall_task(apply: bool = False, name: str = TASK_NAME) -> str:
 
 def uninstall_service(apply: bool = False) -> str:
     startup = startup_shortcut()
+    removed = []
     if startup.exists():
         if not apply:
-            return f"would remove user startup shortcut {startup}; stop the running service separately"
-        startup.unlink()
-        return f"removed user startup shortcut {startup}; running process remains until stopped or sign-out"
-    if os.name == "nt" and apply:
-        subprocess.run(["schtasks", "/End", "/TN", SERVICE_TASK_NAME], capture_output=True, text=True)
-    return uninstall_task(apply=apply, name=SERVICE_TASK_NAME)
+            removed.append(f"would remove user startup shortcut {startup}; stop the running service separately")
+        else:
+            startup.unlink()
+            removed.append(f"removed user startup shortcut {startup}; running process remains until stopped or sign-out")
+    if os.name == "nt":
+        check = subprocess.run(["schtasks", "/Query", "/TN", SERVICE_TASK_NAME], capture_output=True, text=True)
+        if check.returncode == 0:
+            if not apply:
+                removed.append(f"would remove scheduled task {SERVICE_TASK_NAME}")
+            else:
+                subprocess.run(["schtasks", "/End", "/TN", SERVICE_TASK_NAME], capture_output=True, text=True)
+                res = uninstall_task(apply=True, name=SERVICE_TASK_NAME)
+                removed.append(res)
+    return "; ".join(removed) if removed else "service not installed"
 
 
 def startup_shortcut() -> Path:
     roaming = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
     return roaming / "Microsoft/Windows/Start Menu/Programs/Startup" / (SERVICE_TASK_NAME + ".lnk")
+
+
+def _clean_legacy_task() -> str:
+    if os.name != "nt":
+        return ""
+    script = (
+        f"if (Get-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue) {{ "
+        f"  Unregister-ScheduledTask -TaskName '{TASK_NAME}' -Confirm:$false "
+        f"}}"
+    )
+    res = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                         capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
+    if res.returncode != 0:
+        return f" (warning: failed to remove legacy task {TASK_NAME}: {(res.stderr or res.stdout).strip()})"
+    return ""
 
 
 def _install_startup(interpreter: Path, arguments: str) -> str:
@@ -153,7 +177,8 @@ def _install_startup(interpreter: Path, arguments: str) -> str:
                             capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode:
         return f"service installation failed ({result.returncode}): {(result.stderr or result.stdout).strip()}"
-    return f"installed and started per-user Startup service: {shortcut}; Task Scheduler registration denied; periodic collection delegates via writer lease"
+    legacy_warn = _clean_legacy_task()
+    return f"installed and started per-user Startup service: {shortcut}; Task Scheduler registration denied; periodic collection delegates via writer lease{legacy_warn}"
 
 
 def install_service(apply: bool = False, home: str | None = None) -> str:
@@ -167,25 +192,62 @@ def install_service(apply: bool = False, home: str | None = None) -> str:
     quote = lambda value: "'" + str(value).replace("'", "''") + "'"
     arguments = subprocess.list2cmdline(["-B", str(launcher_path()), *(["--home", home] if home else []), "serve"])
     script = (
+        f"$existing = Get-ScheduledTask -TaskName '{SERVICE_TASK_NAME}' -ErrorAction SilentlyContinue; "
+        f"if ($existing) {{ "
+        f"  if (@($existing.Actions).Count -eq 1 -and $existing.Actions[0].Execute -eq {quote(interpreter)} -and $existing.Actions[0].Arguments -eq {quote(arguments)}) {{ "
+        f"    if ($existing.State -ne 'Disabled') {{ "
+        f"      Start-ScheduledTask -TaskName '{SERVICE_TASK_NAME}' -ErrorAction SilentlyContinue; "
+        f"      Write-Output 'task_already_registered'; exit 0 "
+        f"    }} else {{ "
+        f"      Write-Output 'task_exists_disabled'; exit 0 "
+        f"    }} "
+        f"  }} "
+        f"  $driftAction = $existing.Actions[0].Execute + ' ' + $existing.Actions[0].Arguments; "
+        f"}}; "
         f"$a = New-ScheduledTaskAction -Execute {quote(interpreter)} -Argument {quote(arguments)}; "
         "$t = New-ScheduledTaskTrigger -AtLogOn; "
         "$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries "
         "-StartWhenAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::Zero) "
         "-RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1); "
-        f"Register-ScheduledTask -TaskName '{SERVICE_TASK_NAME}' -Action $a -Trigger $t -Settings $s -Force | Out-Null; "
-        f"if (Get-ScheduledTask -TaskName '{TASK_NAME}' -ErrorAction SilentlyContinue) "
-        f"{{ Disable-ScheduledTask -TaskName '{TASK_NAME}' | Out-Null }}; "
+        "try { "
+        f"  Register-ScheduledTask -TaskName '{SERVICE_TASK_NAME}' -Action $a -Trigger $t -Settings $s -Force | Out-Null "
+        "} catch { "
+        "  if ($driftAction) { Write-Output ('task_exists_drift:' + $driftAction) }; "
+        "  throw $_ "
+        "}; "
         f"Start-ScheduledTask -TaskName '{SERVICE_TASK_NAME}'"
     )
     if not apply:
-        return f"would install and start {SERVICE_TASK_NAME} at logon; disable {TASK_NAME}; command: {interpreter} {arguments}"
+        return f"would install and start {SERVICE_TASK_NAME} at logon; remove {TASK_NAME}; command: {interpreter} {arguments}"
     command = ["powershell", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference='Stop'; " + script]
     result = subprocess.run(command, capture_output=True, text=True, creationflags=subprocess.CREATE_NO_WINDOW)
     if result.returncode:
+        if "task_exists_drift:" in result.stdout:
+            drift_action = result.stdout.split("task_exists_drift:", 1)[1].strip()
+            err_detail = f": {result.stderr.strip()}" if result.stderr.strip() else ""
+            return (
+                f"service installation failed: scheduled task '{SERVICE_TASK_NAME}' already exists with different action "
+                f"({drift_action}); re-run with Administrator privileges to update it or unregister it first{err_detail}"
+            )
         if "0x80070005" in result.stderr or "Access is denied" in result.stderr:
             return _install_startup(interpreter, arguments)
         return f"service installation failed ({result.returncode}): {(result.stderr or result.stdout).strip()}"
-    return f"installed and started {SERVICE_TASK_NAME}; periodic collection disabled"
+    if "task_exists_disabled" in result.stdout:
+        return (
+            f"service installation failed: scheduled task '{SERVICE_TASK_NAME}' exists in Task Scheduler but is Disabled; "
+            f"enable it with 'Enable-ScheduledTask {SERVICE_TASK_NAME}' or unregister it first"
+        )
+    startup = startup_shortcut()
+    unlink_warning = ""
+    if startup.exists():
+        try:
+            startup.unlink()
+        except OSError as exc:
+            unlink_warning = f" (warning: failed to remove legacy startup shortcut {startup}: {exc})"
+    legacy_warn = _clean_legacy_task()
+    if "task_already_registered" in result.stdout:
+        return f"{SERVICE_TASK_NAME} already registered in Task Scheduler and started{unlink_warning}{legacy_warn}"
+    return f"installed and started {SERVICE_TASK_NAME}; periodic collection removed{unlink_warning}{legacy_warn}"
 
 
 def task_status() -> str:
