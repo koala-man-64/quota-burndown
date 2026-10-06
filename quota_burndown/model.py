@@ -14,6 +14,7 @@ PROVIDER_ORDER = {"claude": 0, "codex": 1, "antigravity": 2}
 SOURCE_RANK = {
     "api": 4,
     "statusline": 4,
+    "oauth-usage": 4,
     "app-server": 4,
     "rollout": 3,
     "desktop": 2,
