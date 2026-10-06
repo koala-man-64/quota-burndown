@@ -7,6 +7,7 @@ import os
 import queue
 import threading
 import time
+from collections import deque
 from contextlib import AbstractContextManager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -67,6 +68,8 @@ class CapacityService:
         self._consumer_lock = threading.Lock()
         self._page = b""
         self._recent_page = (b"", {})
+        self._recent_history = deque(maxlen=4)
+        self._recent_lock = threading.Lock()
         self._text_slots = threading.BoundedSemaphore(2)
         self._usage = b"{}"
         self._efficiency = b"{}"
@@ -116,10 +119,11 @@ class CapacityService:
         # Build pages/usage independently. Never perform this work in HTTP handlers.
         self._spawn("capacity-ledger", self._ledger)
         if self.collectors:
-            from .integrations import AdapterContext, run_antigravity, run_codex, run_files
+            from .integrations import AdapterContext, run_antigravity, run_claude_oauth, run_codex, run_files
             context = AdapterContext()
             self._spawn("capacity-codex", lambda: run_codex(self.stop_event, self.publish, self.health, self.active, context))
             self._spawn("capacity-files", lambda: run_files(self.stop_event, self.publish, self.health, self.paths, context))
+            self._spawn("capacity-claude-oauth", lambda: run_claude_oauth(self.stop_event, self.publish, self.health))
             self._spawn("capacity-antigravity", lambda: run_antigravity(self.stop_event, self.publish, self.health, self.active))
         return self
 
@@ -222,6 +226,24 @@ class CapacityService:
         self._legacy_latest = json.dumps({k: v.to_dict() for k, v in latest.items()}).encode()
         self._legacy_status = json.dumps([_bd_json(b) for b in current([], latest, now_utc())]).encode()
 
+    def _publish_page(self, page, rows):
+        # A browser can still be displaying the preceding snapshot when collection
+        # publishes the next one. Keep a bounded grace period for its text links.
+        with self._recent_lock:
+            self._recent_history.append((time.monotonic(), self._recent_page[1]))
+            self._recent_page = (page, rows)
+        self._page = page
+
+    def _recent_row(self, row_id):
+        with self._recent_lock:
+            row = self._recent_page[1].get(row_id)
+            if row is not None:
+                return row
+            for published, rows in reversed(self._recent_history):
+                if time.monotonic() - published <= 120 and row_id in rows:
+                    return rows[row_id]
+        return None
+
     def _ledger(self):
         while not self.stop_event.is_set():
             try:
@@ -248,8 +270,7 @@ class CapacityService:
                     conn.close()
                 page = render.render_html(self.store, now=now, usage_db=self.paths.usage_db,
                                           capacity=self.state.read(), live=True, recent_rows=recent).encode("utf-8")
-                self._recent_page = (page, {request_text.row_id(row): dict(row) for row in recent})
-                self._page = page
+                self._publish_page(page, {request_text.row_id(row): dict(row) for row in recent})
                 self._cache_legacy()
                 self.health("ledger", "healthy")
             except Exception as exc:
@@ -326,7 +347,7 @@ def make_server(service: CapacityService, host="127.0.0.1", port=8787):
             elif path == "/v1/usage":
                 self._send(200, "application/json", service._efficiency)
             elif path.startswith('/v1/recent-text/'):
-                row = service._recent_page[1].get(path.removeprefix('/v1/recent-text/'))
+                row = service._recent_row(path.removeprefix('/v1/recent-text/'))
                 if row is None:
                     self._send(404, 'application/json', b'{"status":"unavailable","note":"This request is no longer in the displayed recent list. Reload the dashboard."}')
                 elif not service._text_slots.acquire(blocking=False):

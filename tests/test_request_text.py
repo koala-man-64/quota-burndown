@@ -177,3 +177,21 @@ def test_static_render_does_not_offer_or_embed_text(paths, store):
     ledger.upsert(conn, [ledger.Event('claude', 'claude-code', ledger.REQUEST, 'test', now_utc())])
     conn.close()
     assert 'View raw text' not in render.render_html(store, usage_db=paths.usage_db)
+
+
+def test_recent_text_survives_snapshot_rotation_but_is_bounded(paths, monkeypatch):
+    service = CapacityService(paths, collectors=False)
+    clock = [100.0]
+    monkeypatch.setattr('quota_burndown.service.time.monotonic', lambda: clock[0])
+    service._publish_page(b'first', {'first': {'source_file': 'server-owned'}})
+    service._publish_page(b'second', {'second': {'source_file': 'new'}})
+    assert service._recent_row('first') == {'source_file': 'server-owned'}
+    assert service._recent_row('../../secret') is None
+    clock[0] += 121
+    assert service._recent_row('first') is None
+    assert service._recent_row('second') == {'source_file': 'new'}
+    for index in range(6):
+        service._publish_page(b'next', {str(index): {'source_file': 'bounded'}})
+    assert len(service._recent_history) == 4
+    assert service._recent_row('0') is None
+    assert service._recent_row('4') is not None

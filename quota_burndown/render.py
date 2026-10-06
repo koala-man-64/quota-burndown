@@ -475,7 +475,7 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str,
     age = f"{bd.age_min:.0f} min ago" if bd.age_min is not None else "never"
     foot = f"last sample {esc(age)} via {esc(bd.source or '?')} · {len(bd.samples)} samples this window"
     if stale:
-        foot += " · <b>stale</b>: collector has not run recently"
+        foot += " · <b>stale</b>: no recent quota observation"
     efficiency_val = f"{data.token_efficiency.tokens_per_point:.1f}" if data and data.token_efficiency else ""
     return (
         f'<article class="{classes}" data-card-id="{esc(chart_id)}" '
@@ -1018,6 +1018,7 @@ table.usage tr.inferred td{color:var(--muted);font-style:italic}
 .request-text pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:24rem;overflow:auto;max-width:85vw;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;font-size:12px}
 .request-text h4{margin:12px 0 6px}.text-status{color:var(--muted);font-size:12px}
 .note{font-size:11px;color:var(--muted);margin-top:8px}
+#refresh-status{max-width:1852px;margin:0 auto;padding:0 24px 8px}
 section.capacity{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:8px 0 18px;border-top:4px solid var(--actual)}
 section.capacity header{display:flex;justify-content:space-between;gap:8px;align-items:center}section.capacity h2,.efficiency-section h2{font-size:15px;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
 .reserve{display:flex;gap:5px;align-items:center;margin:10px 0;font-size:12px}.reserve button{font:inherit;font-size:12px;padding:2px 9px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;cursor:pointer}.reserve button.on{border-color:var(--chart-series);color:var(--chart-series);font-weight:600}.reserve button:focus-visible{outline:2px solid var(--chart-series);outline-offset:1px}
@@ -1065,7 +1066,10 @@ HOVER_SCRIPT = """
 (function(){
   var tip = document.getElementById('chart-tooltip');
   if (!tip) return;
+  function bindCharts(){
   Array.prototype.forEach.call(document.querySelectorAll('svg.chart[data-chart]'), function(svg){
+    if (svg.dataset.hoverBound) return;
+    svg.dataset.hoverBound = 'true';
     var dataEl = document.querySelector('script.chart-data[data-for="' + svg.getAttribute('data-chart') + '"]');
     if (!dataEl) return;
     var data;
@@ -1111,6 +1115,9 @@ HOVER_SCRIPT = """
       } else if (e.key === 'Escape'){ hide(); }
     });
   });
+  }
+  bindCharts();
+  document.addEventListener('dashboard:updated', function(){ tip.hidden = true; bindCharts(); });
 })();
 """
 
@@ -1251,67 +1258,138 @@ CAPACITY_SCRIPT = """
 
 LIVE_SCRIPT = """
 (function(){
-  document.querySelectorAll('.request-text').forEach(function(panel){
-    panel.addEventListener('toggle', function(){
-      if (!panel.open || panel.dataset.loaded || panel.dataset.loading) return;
-      panel.dataset.loading='true';
-      var status=panel.querySelector('.text-status');
-      status.textContent='Loading recorded text…';
-      fetch('/v1/recent-text/' + encodeURIComponent(panel.dataset.requestId), {cache:'no-store'})
-        .then(function(r){ return r.json().then(function(data){ return {ok:r.ok,data:data}; }); })
-        .then(function(result){
-          var data=result.data;
-          status.textContent=data.note || 'Text unavailable.';
-          if (result.ok && (data.status === 'available' || data.status === 'partial')) {
-            panel.querySelector('.request-input').textContent=data.request || 'No user prompt text could be matched to this call.';
-            panel.querySelector('.request-output').textContent=data.response || 'No response text could be matched to this call.';
-            panel.querySelector('.text-content').hidden=false;
-            panel.dataset.loaded='true';
-          }
-        }).catch(function(){ status.textContent='Could not load text. Close and reopen to retry.'; })
-        .finally(function(){ delete panel.dataset.loading; });
-    });
-  });
-  function esc(v){ var d=document.createElement('div'); d.textContent=v===undefined||v===null?'unknown':String(v); return d.innerHTML; }
-  function value(v){ return v === undefined || v === null ? 'unknown' : String(v); }
-  function count(v){ return v === undefined || v === null ? 'unknown' : Math.round(Number(v)).toLocaleString(); }
-  function panel(name, title, rows){
-    var host=document.getElementById('efficiency-' + name + '-panel'); if (!host) return;
-    var old=document.getElementById('efficiency-' + name), open=old && old.open;
-    var focused=document.activeElement === (old && old.querySelector('summary'));
-    var left=old ? old.scrollLeft : 0, top=old ? old.scrollTop : 0;
-    var body=(rows || []).slice(0,20).map(function(r){
-      var reasoning=r.reasoning_share_of_output_pct === undefined || r.reasoning_share_of_output_pct === null ? 'unknown' : r.reasoning_share_of_output_pct + '%';
-      var id=r.anchor ? ' id="' + esc(r.anchor) + '"' : '';
-      return '<tr' + id + '><td>' + esc(r.key) + '</td><td>' + count(r.uncached_input) + '</td><td>' + count(r.cached_input) + '</td><td>' + count(r.output) + '</td><td>' + reasoning + '</td><td>' + count(r.requests) + '</td><td>' + count(r.median_tokens_per_request) + '</td></tr>';
-    }).join('') || '<tr><td colspan="7">no requests in range</td></tr>';
-    host.innerHTML='<details id="efficiency-' + name + '" class="efficiency"' + (open ? ' open' : '') + '><summary>' + esc(title) + ' (last 7 days)</summary><table class="usage"><thead><tr><th>group</th><th>uncached in</th><th>cached in</th><th>output</th><th>reasoning / output</th><th>requests</th><th>median tokens/request</th></tr></thead><tbody>' + body + '</tbody></table></details>';
-    var replacement=document.getElementById('efficiency-' + name);
-    if (replacement){ replacement.scrollLeft=left; replacement.scrollTop=top; if (focused) replacement.querySelector('summary').focus(); }
+  var host = document.getElementById('dashboard-data');
+  var status = document.getElementById('refresh-status');
+  if (!host || !status) return;
+  var pending = false;
+  var lastChecked = Date.now();
+
+  // Capture toggle events so newly published and retained request panels work too.
+  document.addEventListener('toggle', function(event){
+    var panel = event.target;
+    if (!panel.matches('.request-text') || !panel.open || panel.dataset.loaded || panel.dataset.loading) return;
+    panel.dataset.loading = 'true';
+    var message = panel.querySelector('.text-status');
+    message.textContent = 'Loading recorded text…';
+    var controller = new AbortController();
+    var timeout = setTimeout(function(){ controller.abort(); }, 15000);
+    fetch('/v1/recent-text/' + encodeURIComponent(panel.dataset.requestId),
+          {cache:'no-store', signal:controller.signal})
+      .then(function(r){ return r.json().then(function(data){ return {ok:r.ok,data:data}; }); })
+      .then(function(result){
+        var data = result.data;
+        message.textContent = data.note || 'Text unavailable.';
+        if (result.ok && (data.status === 'available' || data.status === 'partial')) {
+          panel.querySelector('.request-input').textContent = data.request || 'No user prompt text could be matched to this call.';
+          panel.querySelector('.request-output').textContent = data.response || 'No response text could be matched to this call.';
+          panel.querySelector('.text-content').hidden = false;
+          panel.dataset.loaded = 'true';
+        }
+      }).catch(function(){ message.textContent = 'Could not load text. Close and reopen to retry.'; })
+      .finally(function(){ clearTimeout(timeout); delete panel.dataset.loading; });
+  }, true);
+
+  function key(el){
+    var request = el.closest('.request-text');
+    if (request) return 'request:' + request.dataset.requestId;
+    var card = el.closest('article[data-provider][data-window]');
+    if (card) {
+      var prefix = card.dataset.provider + ':' + card.dataset.window;
+      if (el.matches('svg.chart')) return prefix + ':chart';
+      return prefix + ':details:' + Array.from(card.querySelectorAll('details')).indexOf(el);
+    }
+    return el.id || (el.matches('.recent') ? 'recent' : '');
   }
-  function dailyModels(markup){
-    var host=document.getElementById('daily-models-panel');
-    if (!host || typeof markup !== 'string' || host.dataset.markup === markup) return;
-    var focused=document.activeElement, focusId=null, states={};
-    var x=window.scrollX, y=window.scrollY;
-    host.querySelectorAll('details').forEach(function(el){
-      states[el.id]={open:el.open,left:el.scrollLeft,top:el.scrollTop};
-      if (focused === el.querySelector('summary')) focusId=el.id;
+
+  function replaceData(next){
+    var focused = document.activeElement;
+    var focusRoot = focused.closest('details, svg.chart');
+    var focusKey = focusRoot && key(focusRoot);
+    var states = new Map();
+    var x = window.scrollX, y = window.scrollY;
+    host.querySelectorAll('details, .recent, svg.chart').forEach(function(el){
+      states.set(key(el), {open:el.open,left:el.scrollLeft,top:el.scrollTop});
     });
-    host.innerHTML=markup; host.dataset.markup=markup;
-    host.querySelectorAll('details').forEach(function(el){
-      var old=states[el.id]; if (!old) return;
-      el.open=old.open; el.scrollLeft=old.left; el.scrollTop=old.top;
-      if (el.id === focusId) el.querySelector('summary').focus({preventScroll:true});
+    var incoming = new Map();
+    next.querySelectorAll('.request-text').forEach(function(el){ incoming.set(el.dataset.requestId, el); });
+    host.querySelectorAll('.request-text').forEach(function(old){
+      var fresh = incoming.get(old.dataset.requestId);
+      if (fresh) {
+        // Move the existing node: loaded text and in-flight callbacks survive.
+        old.querySelector('summary').textContent = 'View raw text';
+        fresh.replaceWith(old);
+      } else if (old.open) {
+        var body = next.querySelector('.recent tbody');
+        if (!body) {
+          var recent = host.querySelector('.recent').cloneNode(true);
+          recent.querySelector('tbody').replaceChildren();
+          next.appendChild(recent);
+          body = recent.querySelector('tbody');
+        }
+        var row = old.closest('tr'), values = row.previousElementSibling;
+        body.appendChild(values);
+        body.appendChild(row);
+        old.querySelector('summary').textContent = 'View raw text · retained while open';
+      }
     });
+    host.replaceChildren(...Array.from(next.childNodes));
+    host.dataset.generatedAt = next.dataset.generatedAt;
+    host.querySelectorAll('details, .recent, svg.chart').forEach(function(el){
+      var saved = states.get(key(el));
+      if (saved) {
+        if (el.matches('details')) el.open = saved.open;
+        el.scrollLeft = saved.left; el.scrollTop = saved.top;
+      }
+      if (focusKey && key(el) === focusKey) {
+        var target = focused.isConnected ? focused : el.matches('details') ? el.querySelector('summary') : el;
+        target.focus({preventScroll:true});
+      }
+    });
+    document.dispatchEvent(new Event('dashboard:updated'));
     window.scrollTo(x,y);
   }
-  function efficiency(){
-    fetch('/v1/usage', {cache:'no-store'}).then(function(r){ return r.ok ? r.json() : null; }).then(function(data){
-      if (!data) return; dailyModels(data.daily_models_html); panel('session','By session',data.by_session); panel('model','By model × effort',data.by_model_effort);
-    }).catch(function(){});
+
+  function report(){
+    var generated = Date.parse(host.dataset.generatedAt);
+    var age = Math.max(0, Math.floor((Date.now() - generated) / 1000));
+    status.textContent = (age > 120 ? 'Dashboard data is stale' : 'Dashboard refreshed') +
+      ' · snapshot ' + new Date(generated).toLocaleTimeString() +
+      ' · ' + age + 's old. Updates every 30 seconds; provider readings may be older.';
   }
-  efficiency(); setInterval(efficiency, 30000);
+
+  async function refresh(){
+    if (pending) return;
+    pending = true;
+    var controller = new AbortController();
+    var timeout = setTimeout(function(){ controller.abort(); }, 15000);
+    try {
+      var response = await fetch('/', {cache:'no-store', signal:controller.signal});
+      if (!response.ok) throw new Error('dashboard unavailable');
+      var page = new DOMParser().parseFromString(await response.text(), 'text/html');
+      var next = page.getElementById('dashboard-data');
+      if (!next || !Number.isFinite(Date.parse(next.dataset.generatedAt))) throw new Error('invalid dashboard snapshot');
+      // Only chart JSON belongs in the data region; never execute fetched scripts.
+      next.querySelectorAll('script:not([type="application/json"])').forEach(function(el){ el.remove(); });
+      if (next.dataset.generatedAt !== host.dataset.generatedAt) {
+        replaceData(next);
+        var meta = page.getElementById('dashboard-meta');
+        if (meta) document.getElementById('dashboard-meta').textContent = meta.textContent;
+      }
+      report();
+    } catch (error) {
+      status.textContent = 'Dashboard refresh failed · showing snapshot ' +
+        new Date(host.dataset.generatedAt).toLocaleTimeString() + '. Retrying in 30 seconds.';
+    } finally {
+      clearTimeout(timeout);
+      pending = false;
+      lastChecked = Date.now();
+    }
+  }
+  document.addEventListener('visibilitychange', function(){
+    if (!document.hidden && Date.now() - lastChecked >= 30000) refresh();
+  });
+  report();
+  setInterval(refresh, 30000);
 })();
 """
 
@@ -1627,6 +1705,7 @@ TARGET_SCRIPT = """
     if (toggle.checked) update();
   }, 10000);
 
+  document.addEventListener('dashboard:updated', update);
   update();
 })();
 """
@@ -1685,9 +1764,9 @@ def render_html(
     if warnings:
         banner = '<div class="banner">' + "<br>".join(esc(w) for w in warnings) + "</div>"
     updated = to_local(now).strftime("%a %Y-%m-%d %H:%M")
-    legend = LEGEND_HTML if chart_count else ""
+    legend = LEGEND_HTML if chart_count or live else ""
     target_bar = target_bar_html(target_date=target_date, now=now)
-    hover = f'<div id="chart-tooltip" role="status" aria-live="polite" hidden></div><script>{HOVER_SCRIPT}</script>' if chart_count else ""
+    hover = f'<div id="chart-tooltip" role="status" aria-live="polite" hidden></div><script>{HOVER_SCRIPT}</script>' if chart_count or live else ""
     live_script = f'<script id="live-script">{LIVE_SCRIPT}</script>' if live else ""
     target_script = f'<script id="target-script">{TARGET_SCRIPT}</script>'
     mode = "live dashboard" if live else f"static fallback generated {updated}"
@@ -1696,11 +1775,13 @@ def render_html(
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
         "" if live else f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">",
         f"<title>Quota Burndown</title><style>{CSS}</style></head><body>",
-        f'<header class="top"><h1>Quota burndown</h1><div class="meta">{esc(mode)} · {len(samples)} historic samples in view</div></header>',
-        "<main>", banner, target_bar, legend, history,
+        f'<header class="top"><h1>Quota burndown</h1><div class="meta" id="dashboard-meta">{esc(mode)} · {len(samples)} historic samples in view</div></header>',
+        '<div class="note" id="refresh-status" role="status">Updates every 30 seconds; provider readings may be older.</div>' if live else "",
+        "<main>", banner, target_bar, legend,
+        f'<div id="dashboard-data" data-generated-at="{now.isoformat()}">', history,
         daily_models_section_html(usage_db, now) if usage_db is not None else "",
         usage_section_html(usage_db, now, live=live, recent_rows=recent_rows) if usage_db is not None else "",
-        efficiency_section_html(usage_db, now) if usage_db is not None else "", "</main>",
+        efficiency_section_html(usage_db, now) if usage_db is not None else "", "</div></main>",
         f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",
         hover, live_script, target_script, "</body></html>\n",
     ))

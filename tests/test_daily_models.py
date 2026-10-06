@@ -92,7 +92,8 @@ def test_render_models_escaped_complete_and_unavailable(store, paths):
     live = render.render_html(store, now=NOW, usage_db=paths.usage_db, live=True)
     assert content in static and content in live
     assert static.index('No historical charts to show.') < static.index('Recorded tokens by model') < static.index('<h2>Token usage')
-    assert 'dailyModels(data.daily_models_html)' in live
+    assert 'id="dashboard-data"' in live
+    assert 'setInterval(refresh, 30000)' in live
     conn.close()
 
 
