@@ -483,7 +483,9 @@ def run_claude_oauth(
 ) -> None:
     """Poll Claude's account usage every five minutes; see providers.claude_oauth for the
     credential rules. Errors back off up to 30 minutes and never stop other collectors."""
+    import http.client
     import urllib.error
+    from dataclasses import replace
     from .config import claude_home as default_claude_home
     from .providers import claude_oauth
 
@@ -494,6 +496,7 @@ def run_claude_oauth(
     health("claude_oauth", "starting", None)
     while not stop.is_set():
         wait = CLAUDE_OAUTH_INTERVAL_S
+        token_mtime: float | None = None
         try:
             if rejected_mtime is not None:
                 try: mtime = path.stat().st_mtime
@@ -502,12 +505,16 @@ def run_claude_oauth(
                     if stop.wait(60.0): return
                     continue
                 rejected_mtime = None
+            # Taken before the read so a refresh racing a rejection is not mistaken for it.
+            try: token_mtime = path.stat().st_mtime
+            except OSError: token_mtime = None
             token = claude_oauth.read_token(path)
             data = fetch(token)
             readings = observations_from_limits(claude_oauth.quota(data), provider="claude", account_scope=_scope("local"),
                                                 source=claude_oauth.SOURCE, observed_at=_now(),
                                                 mapping_confidence="reported", reset_provenance="reported",
                                                 observation_time_provenance="polled")
+            readings = [r if r.resets_at else replace(r, reset_provenance="unknown") for r in readings]
             if readings:
                 publish(readings)
                 health("claude_oauth", "healthy", None)
@@ -518,16 +525,15 @@ def run_claude_oauth(
             health("claude_oauth", "unavailable", exc.reason)
             wait = 60.0
         except urllib.error.HTTPError as exc:
-            if exc.code in (401, 403):
-                try: rejected_mtime = path.stat().st_mtime
-                except OSError: rejected_mtime = None
+            if exc.code in (401, 403) and token_mtime is not None:
+                rejected_mtime = token_mtime
                 health("claude_oauth", "unavailable", f"token rejected (HTTP {exc.code}); waiting for new credentials")
                 wait = 60.0
             else:
                 wait = claude_oauth.retry_after(exc, backoff)
                 backoff = min(backoff * 2, CLAUDE_OAUTH_MAX_BACKOFF_S)
                 health("claude_oauth", "degraded", f"HTTP {exc.code}")
-        except (OSError, ValueError, TypeError) as exc:
+        except (OSError, ValueError, TypeError, http.client.HTTPException) as exc:
             wait = backoff
             backoff = min(backoff * 2, CLAUDE_OAUTH_MAX_BACKOFF_S)
             health("claude_oauth", "degraded", exc.__class__.__name__)

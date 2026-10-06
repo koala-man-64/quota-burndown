@@ -16,6 +16,7 @@ The endpoint is undocumented, so any shape it does not match yields no observati
 from __future__ import annotations
 
 import json
+import math
 import time
 import urllib.error
 import urllib.request
@@ -28,6 +29,16 @@ ENDPOINT = "https://api.anthropic.com/api/oauth/usage"
 SOURCE = "oauth-usage"
 WINDOWS = {"five_hour": 300, "seven_day": 10080}
 _MAX_BYTES = 262_144
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect would carry the Authorization header to another URL; surface it as HTTPError."""
+
+    def redirect_request(self, *args, **kwargs):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 class Unavailable(Exception):
@@ -69,7 +80,7 @@ def fetch(token: str, timeout: float = 15.0) -> dict:
         "Accept": "application/json",
         "User-Agent": "quota-burndown",
     })
-    with urllib.request.urlopen(request, timeout=timeout) as response:
+    with _OPENER.open(request, timeout=timeout) as response:
         raw = response.read(_MAX_BYTES + 1)
     if len(raw) > _MAX_BYTES:
         raise ValueError("usage response too large")
@@ -99,6 +110,7 @@ def quota(data: dict[str, Any]) -> dict[str, dict]:
 
 def retry_after(error: urllib.error.HTTPError, default: float) -> float:
     try:
-        return max(float(error.headers.get("Retry-After")), default)
+        value = float(error.headers.get("Retry-After"))
     except (TypeError, ValueError, AttributeError):
         return default
+    return max(value, default) if math.isfinite(value) else default

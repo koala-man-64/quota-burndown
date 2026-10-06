@@ -147,3 +147,57 @@ def test_rate_limit_and_errors_back_off(tmp_path):
     assert published == []
     assert waits == [900.0, 600.0, 1200.0, 1800.0]
     assert [h[2] for h in health[1:]] == ["HTTP 429", "HTTP 503", "OSError", "HTTP 429"]
+
+
+def test_redirects_are_not_followed_with_the_token():
+    import http.server
+    import threading
+    import urllib.request
+
+    seen = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            seen.append((self.path, self.headers.get("Authorization")))
+            self.send_response(302)
+            self.send_header("Location", "/elsewhere")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def log_message(self, *_):
+            pass
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        request = urllib.request.Request(f"http://127.0.0.1:{server.server_port}/usage", headers={"Authorization": "Bearer " + TOKEN})
+        with pytest.raises(urllib.error.HTTPError) as raised:
+            claude_oauth._OPENER.open(request, timeout=5)
+        assert raised.value.code == 302
+        assert seen == [("/usage", "Bearer " + TOKEN)]
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def test_non_finite_retry_after_uses_backoff():
+    assert claude_oauth.retry_after(http_error(429, "nan"), 300.0) == 300.0
+    assert claude_oauth.retry_after(http_error(429, "inf"), 300.0) == 300.0
+
+
+def test_protocol_errors_back_off_instead_of_killing_the_poller(tmp_path):
+    import http.client
+    write_credentials(tmp_path)
+
+    def fetch(token):
+        raise http.client.IncompleteRead(b"")
+
+    published, health, waits = run(tmp_path, fetch, limit=2)
+    assert waits == [300.0, 600.0]
+    assert health[-1] == ("claude_oauth", "degraded", "IncompleteRead")
+
+
+def test_missing_reset_is_not_labeled_reported(tmp_path):
+    write_credentials(tmp_path)
+    published, _, _ = run(tmp_path, lambda token: {"seven_day": {"utilization": 40}})
+    assert [(o.resets_at, o.reset_provenance) for o in published] == [(None, "unknown")]
