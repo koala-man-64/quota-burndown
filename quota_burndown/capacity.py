@@ -98,10 +98,13 @@ def valid_observation(item: Observation, now: datetime) -> bool:
 
 
 def freshness_seconds(source: str) -> int:
-    return 1200 if source in ("desktop", "claude_desktop", "desktop-history") else 60
+    if source in ("desktop", "claude_desktop", "desktop-history"):
+        return 1200
+    # Polled every five minutes; two intervals tolerate one missed poll.
+    return 600 if source == "oauth-usage" else 60
 
 
-SOURCE_RANK = {"app-server": 4, "statusline": 3, "rollout": 2, "desktop-history": 1}
+SOURCE_RANK = {"app-server": 4, "statusline": 3, "oauth-usage": 3, "rollout": 2, "desktop-history": 1}
 FABLE_WEEKLY_UNAVAILABLE = "Supported Claude status-line and desktop history sources do not report Fable weekly quota."
 _RESET_RANK = {"reported": 2, "inferred": 1, "unknown": 0}
 
