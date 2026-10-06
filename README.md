@@ -31,6 +31,8 @@ Direct/event observations have a **60-second** freshness deadline; desktop histo
 
 Claude's documented status-line payload does not identify the subscription account or quota observation time. Its local scope is explicitly unverified; do not merge it with other machines/accounts. Identical cached quota may become stale while the allowance is unchanged: a redraw cannot prove another provider observation.
 
+The live dashboard checks for a complete rendered snapshot every 30 seconds. Charts, headline figures, token totals, daily models, efficiency tables and recent requests update together. Target-date controls, expanded details and scroll position are preserved; open request text stays visible until closed. A refresh failure retains the last successful view and displays a retry message. The refresh status timestamps the dashboard snapshot, not the provider's quota observation. A running collector can still have stale upstream readings.
+
 Sources: [Codex app-server](https://learn.chatgpt.com/docs/app-server), [Claude status-line contract](https://code.claude.com/docs/en/statusline).
 
 ## Orchestrator contract
@@ -93,3 +95,5 @@ py -B -m pytest tests/test_service.py -q -s
 ```
 
 Regression coverage includes shared pools, weekly exhaustion, missing/stale windows, resets/corrections, duplicates/out-of-order events, persisted recovery, SSE reconnection, same-origin controls, bounded handoff, collector overlap, omitted five-hour history charts, and exact weekly chart domains. The benchmark runs 100 HTTP reads while the history worker is busy, targeting p95 below 100 ms. Adapter enqueue-to-publication latency is separate from unknown upstream delay; its target is two seconds. Browser acceptance exercises reserve updates, focus preservation, chart domains and drilldowns.
+
+For the browser refresh regression, run `py -B tests/browser_refresh.py` and open its printed `/tests` URL. The dependency-free fixture uses temporary synthetic data and accelerated timers to exercise automatic updates, preserved controls and request text, chart interactions, failed/malformed/timed-out responses, and recovery. The page reports PASS or FAIL; stop the fixture with Ctrl+C afterward.

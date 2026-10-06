@@ -48,6 +48,25 @@ def test_render_html_contains_cards_and_charts(store):
     assert "window reset" in html and "linear pace" in html
 
 
+def test_live_snapshot_contains_all_data_and_preserves_controls_outside(store):
+    seed(store)
+    first = render.render_html(store, now=NOW, live=True)
+    second = render.render_html(store, now=NOW + timedelta(minutes=31), live=True)
+    assert f'data-generated-at="{NOW.isoformat()}"' in first
+    assert f'data-generated-at="{(NOW + timedelta(minutes=31)).isoformat()}"' in second
+    assert first.index('id="target-bar"') < first.index('id="dashboard-data"')
+    assert first.index('id="dashboard-data"') < first.index('class="history-grid"')
+    assert 'id="refresh-status"' in first
+    assert 'http-equiv="refresh"' not in first
+    assert "no recent quota observation" in second
+
+
+def test_empty_live_page_can_initialize_charts_after_first_observation(store):
+    html = render.render_html(store, now=NOW, live=True)
+    assert 'id="chart-tooltip"' in html
+    assert "dashboard:updated" in html
+
+
 def test_render_collapses_legacy_gpt_versions_and_shows_spark_weekly(store):
     weekly_reset = NOW + timedelta(days=3)
     store.append([
