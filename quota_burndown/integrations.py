@@ -32,6 +32,7 @@ class AdapterContext:
     codex_scope: str | None = None
     codex_obtained_at: datetime | None = None
     lock: threading.Lock = field(default_factory=threading.Lock)
+    publish_credits: Callable | None = None
 
     def codex_identity(self) -> tuple[str | None, datetime | None]:
         with self.lock: return self.codex_scope, self.codex_obtained_at
@@ -392,6 +393,9 @@ def _run_native(stop: threading.Event, publish: Callable[[list[Observation]], No
                 account_ready = True
                 next_poll = 0.0
             if account_ready and isinstance(payload, dict) and (method == "account/rateLimits/updated" or quota_response):
+                if context and context.publish_credits:
+                    from .paid_credits import codex as paid_codex
+                    context.publish_credits(paid_codex(payload, scope, _now(), complete=quota_response))
                 readings = observations_from_limits(payload, provider="codex", account_scope=scope, source="app-server",
                     complete_snapshot=quota_response, observation_time_provenance="read_completed")
                 if not readings and quota_response:
@@ -480,6 +484,7 @@ def run_claude_oauth(
     health: Callable[[str, str, str | None], None],
     claude_home: Path | None = None,
     fetch: Callable[[str], dict] | None = None,
+    publish_credits: Callable | None = None,
 ) -> None:
     """Poll Claude's account usage every five minutes; see providers.claude_oauth for the
     credential rules. Errors back off up to 30 minutes and never stop other collectors."""
@@ -510,7 +515,15 @@ def run_claude_oauth(
             except OSError: token_mtime = None
             token = claude_oauth.read_token(path)
             data = fetch(token)
-            readings = observations_from_limits(claude_oauth.quota(data), provider="claude", account_scope=_scope("local"),
+            identity = data.get("account_id")
+            verified = isinstance(identity, str) and bool(identity)
+            account_scope = _scope(identity if verified else "local")
+            if publish_credits:
+                from .paid_credits import claude as paid_claude
+                # Only a stable provider identity may attribute a spending counter.
+                publish_credits(paid_claude(data, account_scope, _now(),
+                                           account_verified=verified))
+            readings = observations_from_limits(claude_oauth.quota(data), provider="claude", account_scope=account_scope,
                                                 source=claude_oauth.SOURCE, observed_at=_now(),
                                                 mapping_confidence="reported", reset_provenance="reported",
                                                 observation_time_provenance="polled")
