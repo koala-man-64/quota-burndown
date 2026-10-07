@@ -87,18 +87,39 @@ def html(snapshot: dict[str, Any] | None, now: datetime, live: bool) -> str:
 
 
 CSS = """
-.credit-plans{margin:1.1rem 0;padding:1rem;border:1px solid #3b5364;border-radius:12px;background:#14202a}
-.credit-plans h2{margin:.1rem 0 .5rem}.credit-plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:1rem}
-.credit-plan{padding:1rem;border:1px solid #40566a;border-radius:9px;background:#182734}
-.credit-plan h3{margin:0 0 .75rem}.credit-plan h3 small{font-size:.75em;opacity:.8}
-.credit-plan label{display:grid;gap:.3rem;margin:.55rem 0;font-size:.9rem}
-.credit-plan input,.credit-plan select{width:100%;box-sizing:border-box;padding:.45rem;border-radius:5px;border:1px solid #64798b;background:#0d1922;color:#f4f7f9;color-scheme:dark}
-.credit-actions{display:flex;gap:.5rem;margin:.8rem 0}.credit-actions button{padding:.45rem .8rem;cursor:pointer}
-.credit-form-message{min-height:1.2em;color:#eec483}.credit-plan-result{line-height:1.55;font-size:.9rem}
-.credit-plan-result p{margin:.35rem 0}.credit-plan-result svg{display:block;width:100%;max-width:460px;height:140px;border:1px solid #40566a;border-radius:5px;margin:.55rem 0}
-.credit-forecast-overlay{margin:.7rem 0;padding:.65rem;border-left:3px solid #d9aa5d;background:#263342;font-size:.88rem}
-.credit-forecast-overlay strong{display:block}.credit-forecast-overlay p{margin:.2rem 0}
-.credit-forecast-overlay svg{display:block;width:100%;max-width:460px;height:auto;margin:.55rem 0;background:#192936;border:1px solid #40566a;border-radius:5px}
+.credit-plans{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:8px 0 18px;border-top:4px solid #f59e0b}
+.credit-plans h2{font-size:15px;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.credit-plans>.note{margin:4px 0 0}
+.credit-plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px;margin-top:12px}
+.credit-plan{min-width:0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.credit-plan h3{margin:0 0 8px;font-size:14px}.credit-plan h3 small{font-size:12px;font-weight:400;color:var(--muted)}
+.credit-plan label{display:grid;gap:3px;margin:8px 0;font-size:12px;color:var(--muted)}
+.credit-plan input,.credit-plan select{width:100%;font:inherit;font-size:13px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);color-scheme:light dark;outline:none}
+.credit-plan input:focus,.credit-plan select:focus{border-color:#f59e0b;box-shadow:0 0 0 1px #f59e0b}
+.credit-plan input:disabled,.credit-plan select:disabled{opacity:.6}
+.credit-actions{display:flex;gap:6px;margin:12px 0 4px}
+.credit-actions button{font:inherit;font-size:12px;padding:3px 12px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;cursor:pointer}
+.credit-actions button[type=submit]{border-color:#f59e0b;color:#d97706;font-weight:600}
+.credit-actions button:hover:not(:disabled){border-color:#f59e0b}
+.credit-actions button:focus-visible{outline:2px solid #f59e0b;outline-offset:1px}
+.credit-actions button:disabled{opacity:.5;cursor:default}
+.credit-form-message{min-height:1.2em;margin:4px 0;font-size:12px;color:var(--warn)}
+.credit-plan-result{line-height:1.5;font-size:12px;color:var(--muted)}
+.credit-plan-result p{margin:4px 0}
+.credit-plan-result svg{display:block;width:100%;max-width:460px;height:140px;background:var(--card);border:1px solid var(--line);border-radius:6px;margin:8px 0}
+.credit-forecast-overlay{margin:10px 0 0;padding:8px 10px;border-left:3px solid #f59e0b;background:var(--grid);border-radius:0 6px 6px 0;font-size:12px;color:var(--fg)}
+.credit-forecast-overlay strong{display:block;color:#d97706}.credit-forecast-overlay p{margin:3px 0;color:var(--muted)}
+.credit-forecast-overlay svg{display:block;width:100%;max-width:460px;height:auto;margin:8px 0;background:var(--card);border:1px solid var(--line);border-radius:6px}
+.cg-goal{stroke:var(--chart-axis);stroke-width:2;stroke-dasharray:6 4}
+.cg-pace{stroke:#f59e0b;stroke-width:2;stroke-dasharray:5 3}
+.cg-pace-high{stroke:#fbbf24;stroke-width:2;stroke-dasharray:5 3}
+.cg-spent{fill:var(--under)}
+.cg-band{fill:#f59e0b;fill-opacity:.2}
+.cg-axis{stroke:var(--chart-axis)}
+.cg-lbl{fill:var(--chart-muted);font-size:11px;font-variant-numeric:tabular-nums}
+@media (prefers-color-scheme: dark){
+  .credit-actions button[type=submit],.credit-forecast-overlay strong{color:#fbbf24}
+}
 """
 
 
@@ -129,15 +150,15 @@ SCRIPT = r"""
     var svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
     svg.setAttribute('viewBox','0 0 420 140');svg.setAttribute('role','img');
     svg.setAttribute('aria-label',names[provider]+' paid '+units[provider]+' goal: original straight-line goal, current required pace'+(y===null?'; confirmed spending unavailable':'; confirmed '+(report.progress_known?'spending ':'spending lower bound ')+fmt(spent,4)+' of '+fmt(target,4)));
-    function line(x1,y1,x2,y2,color,dash){var l=document.createElementNS('http://www.w3.org/2000/svg','line');[['x1',x1],['y1',y1],['x2',x2],['y2',y2],['stroke',color],['stroke-width',2]].forEach(function(a){l.setAttribute(a[0],a[1]);});if(dash)l.setAttribute('stroke-dasharray',dash);svg.appendChild(l);}
-    line(24,116,396,16,'#8897a5','6 4');
+    function line(x1,y1,x2,y2,cls){var l=document.createElementNS('http://www.w3.org/2000/svg','line');[['x1',x1],['y1',y1],['x2',x2],['y2',y2],['class',cls]].forEach(function(a){l.setAttribute(a[0],a[1]);});svg.appendChild(l);}
+    line(24,116,396,16,'cg-goal');
     if(y!==null){
       var point=document.createElementNS('http://www.w3.org/2000/svg','circle');
       point.setAttribute('cx',24+372*x);point.setAttribute('cy',116-100*y);point.setAttribute('r',5);
-      point.setAttribute('fill','#6ec1a6');svg.appendChild(point);
-      line(24+372*x,116-100*y,396,16,'#d9aa5d','5 3');
+      point.setAttribute('class','cg-spent');svg.appendChild(point);
+      line(24+372*x,116-100*y,396,16,'cg-pace');
     }
-    else {line(24+372*x,116,396,16,'#d9aa5d','5 3');}
+    else {line(24+372*x,116,396,16,'cg-pace');}
     parent.appendChild(svg);
     textLine(parent,'Original goal · · ·   Required future pace · · ·   '+(y===null?'Actual paid spending unavailable':report.progress_known?'Confirmed spend ●':'Confirmed spending lower bound ●'));
   }
@@ -190,12 +211,12 @@ SCRIPT = r"""
     svg.setAttribute('class','credit-workload-trajectory');svg.setAttribute('viewBox','0 0 420 168');
     svg.setAttribute('role','img');svg.setAttribute('aria-label',names[provider]+' projected cumulative workload from now to deadline: '+fmt(low,1)+' to '+fmt(high,1)+' quota-equivalent points; forecast only, not measured quota');
     function shape(tag,attrs){var e=document.createElementNS('http://www.w3.org/2000/svg',tag);Object.keys(attrs).forEach(function(k){e.setAttribute(k,attrs[k]);});svg.appendChild(e);return e;}
-    function label(x,ypos,value,anchor){var e=shape('text',{x:x,y:ypos,fill:'#ccd8df','font-size':'11','text-anchor':anchor||'start'});e.textContent=value;return e;}
-    shape('line',{x1:left,y1:bottom,x2:right,y2:bottom,stroke:'#738898'});
-    shape('line',{x1:left,y1:bottom,x2:left,y2:top,stroke:'#738898'});
-    shape('polygon',{points:left+','+bottom+' '+right+','+y(high)+' '+right+','+y(low),fill:'#d9aa5d','fill-opacity':'0.2'});
-    shape('line',{x1:left,y1:bottom,x2:right,y2:y(low),stroke:'#d9aa5d','stroke-width':'2','stroke-dasharray':'5 3'});
-    shape('line',{x1:left,y1:bottom,x2:right,y2:y(high),stroke:'#f2ce87','stroke-width':'2','stroke-dasharray':'5 3'});
+    function label(x,ypos,value,anchor){var e=shape('text',{x:x,y:ypos,'class':'cg-lbl','text-anchor':anchor||'start'});e.textContent=value;return e;}
+    shape('line',{x1:left,y1:bottom,x2:right,y2:bottom,'class':'cg-axis'});
+    shape('line',{x1:left,y1:bottom,x2:left,y2:top,'class':'cg-axis'});
+    shape('polygon',{points:left+','+bottom+' '+right+','+y(high)+' '+right+','+y(low),'class':'cg-band'});
+    shape('line',{x1:left,y1:bottom,x2:right,y2:y(low),'class':'cg-pace'});
+    shape('line',{x1:left,y1:bottom,x2:right,y2:y(high),'class':'cg-pace-high'});
     label(left-6,bottom+3,'0','end');label(left-6,top+4,fmt(max,0),'end');
     label(left,bottom+19,new Date(now).toLocaleString(), 'start');
     label(right,bottom+19,new Date(end).toLocaleString(), 'end');
