@@ -9,7 +9,7 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from . import __version__, charts, ledger, request_text, usage_report
+from . import __version__, charts, credit_ui, ledger, request_text, usage_report
 from .charts import ChartData
 from .ledger import Totals
 from .model import Burndown, canonical_samples, current
@@ -1644,10 +1644,14 @@ TARGET_SCRIPT = """
     }
 
     var minLeft = msLeft / 60000;
-    summary.innerHTML = '<span class="target-active">Targeting 100% quota by <b>' + formatDisplay(targetDate) + '</b> (' + formatDuration(minLeft) + ' left) · all models paced to reach 100% at target.</span>';
+    summary.innerHTML = '<span class="target-active">Targeting 100% quota by <b>' + formatDisplay(targetDate) + '</b> (' + formatDuration(minLeft) + ' left) · providers with active credit plans use their saved goals.</span>';
 
     cards.forEach(function(card){
-      applyTargetToCard(card, targetDate, now);
+      if (window.qbCreditPlans && window.qbCreditPlans[card.dataset.provider]) {
+        revertCard(card);
+      } else {
+        applyTargetToCard(card, targetDate, now);
+      }
     });
   }
 
@@ -1706,6 +1710,7 @@ TARGET_SCRIPT = """
   }, 10000);
 
   document.addEventListener('dashboard:updated', update);
+  document.addEventListener('credit-plans:updated', update);
   update();
 })();
 """
@@ -1732,10 +1737,13 @@ def render_html(
     store: Store, now: datetime | None = None, days: int = 7,
     warnings: list[str] | None = None, refresh_s: int = 120,
     usage_db: Path | None = None, capacity: dict | None = None, live: bool = False,
-    recent_rows=None, target_date: datetime | str | None = None,
+    recent_rows=None, target_date: datetime | str | None = None, credit_plans: dict | None = None,
 ) -> str:
     """The whole page. Weekly history renders as exact two-window-cycle charts."""
     now = now or now_utc()
+    if credit_plans is None:
+        from .plans import PlanState
+        credit_plans = PlanState(store.paths.home, clock=lambda: now).snapshot()
     samples = canonical_samples(store.load(since=now - timedelta(days=max(days, 31))))
     latest = store.latest()
     burndowns = current(samples, latest, now)
@@ -1774,16 +1782,17 @@ def render_html(
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">",
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
         "" if live else f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">",
-        f"<title>Quota Burndown</title><style>{CSS}</style></head><body>",
+        f"<title>Quota Burndown</title><style>{CSS}{credit_ui.CSS}</style></head><body>",
         f'<header class="top"><h1>Quota burndown</h1><div class="meta" id="dashboard-meta">{esc(mode)} · {len(samples)} historic samples in view</div></header>',
         '<div class="note" id="refresh-status" role="status">Updates every 30 seconds; provider readings may be older.</div>' if live else "",
-        "<main>", banner, target_bar, legend,
+        "<main>", banner, target_bar, credit_ui.html(credit_plans, now, live), legend,
         f'<div id="dashboard-data" data-generated-at="{now.isoformat()}">', history,
         daily_models_section_html(usage_db, now) if usage_db is not None else "",
         usage_section_html(usage_db, now, live=live, recent_rows=recent_rows) if usage_db is not None else "",
         efficiency_section_html(usage_db, now) if usage_db is not None else "", "</div></main>",
         f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",
-        hover, live_script, target_script, "</body></html>\n",
+        hover, live_script, target_script,
+        '<script id="credit-plan-script">' + credit_ui.script(credit_plans) + '</script>', "</body></html>\n",
     ))
 
 

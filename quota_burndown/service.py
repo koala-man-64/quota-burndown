@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+import copy
 import json
 import os
 import queue
@@ -9,11 +10,13 @@ import threading
 import time
 from collections import deque
 from contextlib import AbstractContextManager
+from datetime import timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import ledger, render, request_text, usage, usage_report
+from .plans import Conflict, PlanState, forecast_snapshot
 from .capacity import CapacityState
 from .model import current
 from .store import Sample, Store
@@ -58,6 +61,9 @@ class CapacityService:
     def __init__(self, paths, *, collectors: bool = True, clock=now_utc):
         self.paths = paths
         self.state = CapacityState(paths.home, clock=clock)
+        self.plans = PlanState(paths.home, clock=clock)
+        self._credit_forecast = {}
+        self._page_wakeup = threading.Event()
         self.store = Store(paths)
         self.stop_event = threading.Event()
         self.events = queue.Queue(maxsize=256)
@@ -104,6 +110,29 @@ class CapacityService:
             except queue.Full:
                 continue
 
+    def publish_credits(self, observations):
+        if not observations:
+            return
+        while not self.stop_event.is_set():
+            try:
+                self.events.put(("credits", observations, time.monotonic()), timeout=0.2)
+                return
+            except queue.Full:
+                continue
+
+    def plans_snapshot(self):
+        snapshot = self.plans.snapshot()
+        cached = self._credit_forecast
+        observed = lambda value: {key: obs.get("observed_at") for key, obs in value.get("observations", {}).items()}
+        if cached.get("revision") == snapshot["revision"] and observed(cached) == observed(snapshot):
+            for provider, plan in snapshot["plans"].items():
+                if plan is None:
+                    continue
+                old = cached.get("plans", {}).get(provider) or {}
+                if old.get("remaining") == plan.get("remaining"):
+                    plan["forecast"] = copy.deepcopy(old.get("forecast", {"available": False, "note": "Forecast updating."}))
+        return snapshot
+
     def health(self, provider, state, error=None):
         self._enqueue(("health", (provider, state, error), time.monotonic()))
 
@@ -120,15 +149,17 @@ class CapacityService:
         self._spawn("capacity-ledger", self._ledger)
         if self.collectors:
             from .integrations import AdapterContext, run_antigravity, run_claude_oauth, run_codex, run_files
-            context = AdapterContext()
+            context = AdapterContext(publish_credits=self.publish_credits)
             self._spawn("capacity-codex", lambda: run_codex(self.stop_event, self.publish, self.health, self.active, context))
             self._spawn("capacity-files", lambda: run_files(self.stop_event, self.publish, self.health, self.paths, context))
-            self._spawn("capacity-claude-oauth", lambda: run_claude_oauth(self.stop_event, self.publish, self.health))
+            self._spawn("capacity-claude-oauth", lambda: run_claude_oauth(self.stop_event, self.publish, self.health,
+                                                                       publish_credits=self.publish_credits))
             self._spawn("capacity-antigravity", lambda: run_antigravity(self.stop_event, self.publish, self.health, self.active))
         return self
 
     def close(self):
         self.stop_event.set()
+        self._page_wakeup.set()
         with self.state.condition:
             self.state.condition.notify_all()
         deadline = time.monotonic() + 20
@@ -175,6 +206,22 @@ class CapacityService:
                     elif kind == "policy":
                         self.state.set_policy(data)
                         dirty = True
+                    elif kind == "credits":
+                        self.plans.ingest(data)
+                        self._page_wakeup.set()
+                    elif kind == "plan":
+                        payload, completed, outcome = data
+                        try:
+                            outcome.update(status=200, body=self.plans.apply(payload))
+                            self._page_wakeup.set()
+                        except Conflict as exc:
+                            outcome.update(status=409, body={"error": str(exc), "snapshot": self.plans.snapshot()})
+                        except (ValueError, TypeError, KeyError) as exc:
+                            outcome.update(status=400, body={"error": str(exc)})
+                        except OSError:
+                            outcome.update(status=503, body={"error": "Could not persist plan; nothing saved."})
+                        finally:
+                            completed.set()
                 batch_ok = True
             except queue.Empty:
                 pass
@@ -266,16 +313,23 @@ class CapacityService:
                     efficiency["daily_models_html"] = render.daily_models_html(efficiency["daily_models"])
                     self._efficiency = json.dumps(efficiency).encode()
                     recent = ledger.recent_requests(conn)
+                    credit_plans = forecast_snapshot(self.plans.snapshot(), conn,
+                        self.store.load(since=now - timedelta(days=7)), self.state.read(), now)
+                    self._credit_forecast = credit_plans
                 finally:
                     conn.close()
                 page = render.render_html(self.store, now=now, usage_db=self.paths.usage_db,
-                                          capacity=self.state.read(), live=True, recent_rows=recent).encode("utf-8")
+                                          capacity=self.state.read(), live=True, recent_rows=recent,
+                                          credit_plans=credit_plans).encode("utf-8")
                 self._publish_page(page, {request_text.row_id(row): dict(row) for row in recent})
                 self._cache_legacy()
                 self.health("ledger", "healthy")
             except Exception as exc:
                 self.health("ledger", "error", type(exc).__name__)
-            self.stop_event.wait(30)
+            if self.stop_event.wait(0):
+                break
+            self._page_wakeup.wait(30)
+            self._page_wakeup.clear()
 
 
 def loopback_host(host: str) -> str:
@@ -333,6 +387,9 @@ def make_server(service: CapacityService, host="127.0.0.1", port=8787):
             if path == "/v1/capacity":
                 service.touch()
                 self._send(200, "application/json", json.dumps(service.state.read()).encode())
+            elif path == "/v1/plans":
+                service.touch()
+                self._send(200, "application/json", json.dumps(service.plans_snapshot()).encode())
             elif path == "/v1/capacity/events":
                 self._events()
             elif path in ("/", "/index.html"):
@@ -368,6 +425,26 @@ def make_server(service: CapacityService, host="127.0.0.1", port=8787):
         def do_POST(self):
             if not self._trusted():
                 self._send(403, "text/plain", b"loopback origin required")
+                self.close_connection = True
+                return
+            if self.path == "/v1/plans":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= 4096 or self.headers.get("Content-Type", "").split(";")[0] != "application/json":
+                        raise ValueError("bounded JSON request required")
+                    self.connection.settimeout(2)
+                    payload = json.loads(self.rfile.read(length))
+                    if not isinstance(payload, dict):
+                        raise ValueError("plan request must be an object")
+                    completed, outcome = threading.Event(), {}
+                    if not service._enqueue(("plan", (payload, completed, outcome), time.monotonic())):
+                        self._send(503, "application/json", b'{"error":"writer queue full; retry"}')
+                    elif completed.wait(2):
+                        self._send(outcome["status"], "application/json", json.dumps(outcome["body"]).encode())
+                    else:
+                        self._send(202, "application/json", b'{"accepted":true,"note":"Save queued; reload plans to confirm."}')
+                except (ValueError, TypeError, KeyError, OSError):
+                    self._send(400, "application/json", b'{"error":"bounded JSON plan request required"}')
                 self.close_connection = True
                 return
             if self.path != "/v1/policy":
