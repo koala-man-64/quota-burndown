@@ -60,7 +60,9 @@ def test_durable_save_conflict_and_clear_with_busy_history(running, paths):
 
 def test_origin_bounded_json_and_storage_failure(running, monkeypatch):
     service, server = running
-    assert request(server, "POST", {}, headers={"Origin": "https://evil.example"})[0] == 403
+    # Rejected origins close before reading a body. Avoid a Windows TCP reset
+    # racing the response when unread request bytes remain on the connection.
+    assert request(server, "POST", headers={"Origin": "https://evil.example"})[0] == 403
     assert request(server, "POST", raw="x"*4097)[0] == 400
     assert request(server, "POST", raw="{")[0] == 400
     assert request(server, "POST", {"expected_revision": 0, "provider": "unknown", "plan": plan()})[0] == 400
