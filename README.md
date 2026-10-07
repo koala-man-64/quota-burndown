@@ -35,6 +35,18 @@ The live dashboard checks for a complete rendered snapshot every 30 seconds. Cha
 
 Sources: [Codex app-server](https://learn.chatgpt.com/docs/app-server), [Claude status-line contract](https://code.claude.com/docs/en/statusline).
 
+## Paid-credit plans
+
+The live dashboard has independent Codex credit and Claude USD plans. Enter a paid-spending goal, start, deadline, forecast model, and supported speed, then **Save**. An untouched start defaults to the save time. **Clear** restores the existing quota/target-date pace for that provider. Plans survive browser refreshes and service restarts in `credit-plans.json`; unsaved form edits survive automatic refreshes.
+
+`GET /v1/plans` returns the plans, model/rate registry, credit observations, and cached forecasts. `POST /v1/plans` accepts `{expected_revision, provider, plan}` where `plan` is `{amount, starts_at, ends_at, model, speed}` or `null` to clear. Amounts use decimal strings, timestamps require explicit offsets, and model/speed combinations come from the registry. Writes use the quota writer and atomic persistence: 200 confirms a durable save, 409 requires reloading the current revision, 400 rejects invalid input, and 503 indicates queue/storage failure. A 202 response means queued, not yet confirmed.
+
+The goal counts paid spending, not the theoretical price of subscription-covered tokens. Provider counters establish spending; balance changes alone never prove debits. Counter resets, account changes, missing observations, and delayed initial baselines preserve only confirmed lower bounds. Spending after the deadline is excluded. The current Codex source reports a balance but no debit counter; Claude counters require explicit currency/scale and verified account attribution. Where these are unavailable, actual spending remains unknown and the full unverified budget stays in the forecast.
+
+Versioned [OpenAI credit rates](https://learn.chatgpt.com/docs/pricing#token-rates) and [Anthropic USD rates](https://platform.claude.com/docs/en/about-claude/pricing) price the selected model using its last seven days of token-category proportions, with a labeled provider-wide fallback. Unknown Claude cache-write durations produce a range. The forecast estimates a constant workload pace across jointly constraining quota windows and expected resets, consuming included allowance before paid capacity. Historical tokens per quota point are approximate and may be incomplete. Stale/missing windows, insufficient calibration, and future starts leave the combined trajectory unavailable.
+
+Paid capacity appears beside measured quota charts as an explicitly labeled quota equivalent; actual quota remains 0–100%. Disabled paid usage makes the forecast hypothetical. Plans do not purchase funds, enable paid usage, change provider limits, route agents, or enforce spending caps. Free limit-reset credits and reserve settings remain separate.
+
 ## Orchestrator contract
 
 | Interface | Response |
