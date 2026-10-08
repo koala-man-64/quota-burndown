@@ -20,7 +20,7 @@ from .plans import Conflict, PlanState, forecast_snapshot
 from .capacity import CapacityState
 from .model import current
 from .store import Sample, Store
-from .util import atomic_write_text, now_utc
+from .util import atomic_write_text, now_utc, read_json
 
 
 class WriterLease(AbstractContextManager):
@@ -505,7 +505,68 @@ def make_server(service: CapacityService, host="127.0.0.1", port=8787):
     return Server((host, port), Handler)
 
 
+def _python_process(pid: int) -> bool:
+    """True only when pid is a live Python process; guards against killing a reused pid."""
+    if os.name == "nt":
+        import ctypes
+        from ctypes import wintypes
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
+        if not handle:
+            return False
+        try:
+            buffer = ctypes.create_unicode_buffer(32768)
+            size = wintypes.DWORD(len(buffer))
+            if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+                return False
+            image = buffer.value
+        finally:
+            kernel32.CloseHandle(handle)
+    else:
+        import subprocess
+        try:
+            image = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            return False
+    return "python" in Path(image.strip()).name.lower()
+
+
+def stop_running_service(paths, timeout: float = 10.0) -> int | None:
+    """Terminate the recorded `serve` writer if it holds the writer lease; return its pid.
+
+    Raises RuntimeError when the lease is held by something other than a recorded service
+    (for example a one-shot collector), rather than killing an unidentified process.
+    """
+    try:
+        with WriterLease(paths.home):
+            return None
+    except RuntimeError:
+        pass
+    info = read_json(paths.home / "capacity-service.json", {})
+    pid = info.get("pid") if isinstance(info, dict) else None
+    if type(pid) is not int or pid <= 0 or pid == os.getpid() or not _python_process(pid):
+        raise RuntimeError("quota writer lease is held by a process that is not a recorded capacity service; stop it and retry")
+    import signal
+    try:
+        os.kill(pid, signal.SIGTERM)  # TerminateProcess on Windows; the OS releases the lease.
+    except OSError:
+        pass  # Exited between the check and the signal.
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            with WriterLease(paths.home):
+                return pid
+        except RuntimeError:
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"existing capacity service (pid {pid}) did not release the writer lease") from None
+            time.sleep(0.1)
+
+
 def serve(paths, host="127.0.0.1", port=8787):
+    stopped = stop_running_service(paths)
+    if stopped:
+        print(f"stopped existing capacity service (pid {stopped})", flush=True)
     service = CapacityService(paths)
     server = make_server(service, host, port)
     try:
