@@ -506,16 +506,36 @@ def make_server(service: CapacityService, host="127.0.0.1", port=8787):
 
 
 def serve(paths, host="127.0.0.1", port=8787):
-    service = CapacityService(paths)
-    server = make_server(service, host, port)
+    host = loopback_host(host)
+    if not 0 <= port <= 65535:
+        raise ValueError("port must be between 0 and 65535")
+    service = None
+    server = None
     try:
-        service.start()
-        authority = f"[{server.server_address[0]}]" if ":" in server.server_address[0] else server.server_address[0]
-        atomic_write_text(paths.home / "capacity-service.json", json.dumps({"url": f"http://{authority}:{server.server_port}", "pid": os.getpid()}))
+        # Serialize replacement through metadata publication. Never delete or
+        # steal the writer lock, and never kill an arbitrary port occupant.
+        with WriterLease(paths.home, ".quota-start.lock"):
+            try:
+                with WriterLease(paths.home):
+                    pass
+            except RuntimeError:
+                from .restart import stop_existing
+                stop_existing(paths.home)
+            service = CapacityService(paths)
+            server = make_server(service, host, port)
+            service.start()
+            authority = f"[{server.server_address[0]}]" if ":" in server.server_address[0] else server.server_address[0]
+            from .restart import current_process_started
+            atomic_write_text(paths.home / "capacity-service.json", json.dumps({
+                "url": f"http://{authority}:{server.server_port}", "pid": os.getpid(),
+                "started": current_process_started(),
+            }))
         print(f"serving http://{host}:{server.server_port}/ (Ctrl+C to stop)", flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
-        service.close()
+        if server is not None:
+            server.server_close()
+        if service is not None:
+            service.close()
