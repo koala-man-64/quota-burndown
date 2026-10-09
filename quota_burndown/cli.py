@@ -386,7 +386,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-color", action="store_true")
     p.set_defaults(func=cmd_statusline)
 
-    p = sub.add_parser("serve", help="persistent loopback capacity service and live dashboard")
+    p = sub.add_parser("serve", help="persistent loopback capacity service; replaces the existing service on Windows")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=DEFAULT_PORT)
     p.add_argument("--min-interval", type=float, default=60, help="deprecated; native collection uses active/idle intervals")
