@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ado-swimlane"
+version = "0.1.0"
+description = "Azure DevOps backlog execution swimlanes: a curated board kept current by a local polling service."
+requires-python = ">=3.10"
+dependencies = []
+license = { text = "MIT" }
+
+[project.scripts]
+ado-swimlane = "ado_swimlane.cli:main"
+
+[tool.setuptools]
+packages = ["ado_swimlane"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
