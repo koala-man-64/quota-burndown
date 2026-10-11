@@ -1,0 +1,9 @@
+{
+  "name": "ado-swimlane",
+  "description": "Azure DevOps backlog execution swimlanes: a curated board kept current by a local polling service, with the /swimlane skill for reporting what moved and republishing the Artifact. Ships the on-demand skill only; no hooks.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Rudy Prokes"
+  },
+  "license": "MIT"
+}

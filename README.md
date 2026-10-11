@@ -1,5 +1,9 @@
 # quota-burndown
 
+The standalone Azure DevOps swimlane application is in [ado-swimlane](ado-swimlane/README.md).
+It has its own launcher, configuration, and test suite. Run each application's
+tests from its own directory.
+
 A local capacity service and live dashboard for Codex and Claude, with a token activity ledger for Antigravity. Python 3.10+, standard library only. The service reports observations and guidance; an orchestrator owns scheduling.
 
 ## Start and install
