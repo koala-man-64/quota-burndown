@@ -502,3 +502,36 @@ def test_render_says_when_no_reset_credits_are_left(store, monkeypatch):
     assert "no reset credits left" in html
     assert "reset credit available" not in html
     assert 'class="proj-reset"' not in html
+
+
+def test_stale_reading_withholds_pace_verdict_and_names_collector_issue(store):
+    weekly_reset = NOW + timedelta(days=3)
+    store.append([
+        Sample(NOW - timedelta(hours=22), "claude", "7d", 80.0, weekly_reset, 10080, "oauth-usage"),
+        Sample(NOW - timedelta(hours=21), "claude", "7d", 93.0, weekly_reset, 10080, "oauth-usage"),
+        Sample(NOW - timedelta(hours=1), "codex", "7d", 20.0, weekly_reset, 10080, "app-server"),
+        Sample(NOW, "codex", "7d", 30.0, weekly_reset, 10080, "app-server"),
+    ])
+    capacity = {"collector_health": {
+        "claude": {"state": "watching", "last_error": None},
+        "claude_oauth": {"state": "unavailable", "last_error": "sign-in token expired"},
+        "codex": {"state": "healthy", "last_error": None},
+    }}
+    html = render.render_html(store, now=NOW, capacity=capacity)
+    claude, codex = re.findall(r'<article class="card[^"]*".*?</article>', html, re.S)
+    assert 'class="card status-stale stale"' in claude and 'data-std-status="stale"' in claude
+    assert "stale reading · 21h" in claude and "over pace" not in claude
+    assert "no projection from a stale reading" in claude and "hits 100%" not in claude
+    assert "93%</b><span>used as of" in claude and "(sign-in token expired)" in claude
+    assert "status-stale" not in codex and "stale reading" not in codex
+    assert "stdStatus === 'stale'" in html  # target mode leaves frozen cards alone
+
+
+def test_stale_exhausted_and_expired_cards_keep_their_status(store):
+    store.append([
+        Sample(NOW - timedelta(hours=2), "claude", "7d", 100.0, NOW + timedelta(days=2), 10080, "oauth-usage"),
+        Sample(NOW - timedelta(days=2), "codex", "7d", 40.0, NOW - timedelta(hours=1), 10080, "app-server"),
+    ])
+    html = render.render_html(store, now=NOW)
+    assert "status-stale" not in html
+    assert "budget exhausted" in html and "window ended" in html
