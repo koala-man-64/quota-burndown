@@ -3,8 +3,8 @@
 The Claude desktop app polls the plan usage for its display and appends each reading to
 plan-usage-history.json: `{"t": epoch ms, "org": id, "u": {"fh": five-hour %, "sd": seven-day %}}`,
 one every 5 to 15 minutes while the app runs. That gives the 5h and 7d windows with no
-credential and no network call, and it is the only Claude limit source. Two things the
-file lacks are inferred:
+credential and no network call; the OAuth usage poller is the other Claude limit source.
+Two things the file lacks are inferred:
 
   * the 5-hour window's reset: `fh` drops to 0 when a window ends, so a window starts at the
     first non-zero reading after a zero and resets five hours later;

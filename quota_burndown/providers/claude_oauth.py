@@ -68,7 +68,7 @@ def read_token(path: Path, now: float | None = None) -> str:
     expires = oauth.get("expiresAt")
     if isinstance(expires, (int, float)) and not isinstance(expires, bool):
         if expires / 1000 <= (time.time() if now is None else now) + 30:
-            raise Unavailable("token expired; waiting for Claude Code to refresh it")
+            raise Unavailable("sign-in token expired; run `claude` in a terminal to refresh it (desktop app sessions do not)")
     return token
 
 
