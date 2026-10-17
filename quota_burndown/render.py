@@ -220,6 +220,7 @@ def chart_svg(data: ChartData, chart_id: str, title: str) -> str:
         parts.append(f'<text class="end-lbl" x="{x + dx:.1f}" y="{y - 8:.1f}" text-anchor="{anchor}">{end.used:.0f}%</text>')
 
     parts.append(f'<line class="crosshair" x1="{PAD_L}" y1="{PAD_T}" x2="{PAD_L}" y2="{plot_bottom:.1f}"/>')
+    parts.append(f'<line class="crosshair crosshair-y" x1="{PAD_L}" y1="{plot_bottom:.1f}" x2="{CHART_W - PAD_R}" y2="{plot_bottom:.1f}"/>')
     parts.append(f'<circle class="hover-dot" cx="{PAD_L}" cy="{plot_bottom:.1f}" r="5"/>')
     label = f"Percent of the {esc(title)} window used, {esc(data.span_label)}"
     return (
@@ -1093,7 +1094,7 @@ HOVER_SCRIPT = """
     try { data = JSON.parse(dataEl.textContent); } catch (e) { return; }
     var pts = data.points || [];
     if (!pts.length) return;
-    var cross = svg.querySelector('.crosshair'), dot = svg.querySelector('.hover-dot');
+    var cross = svg.querySelector('.crosshair'), crossY = svg.querySelector('.crosshair-y'), dot = svg.querySelector('.hover-dot');
     var vw = Number(svg.getAttribute('data-w')) || 800, vh = Number(svg.getAttribute('data-h')) || 320;
     var idx = -1;
     function viewX(evt){
@@ -1109,6 +1110,7 @@ HOVER_SCRIPT = """
       idx = i;
       var p = pts[i];
       cross.setAttribute('x1', p.x); cross.setAttribute('x2', p.x); cross.style.opacity = 1;
+      if (crossY){ crossY.setAttribute('y1', p.y); crossY.setAttribute('y2', p.y); crossY.style.opacity = 1; }
       dot.setAttribute('cx', p.x); dot.setAttribute('cy', p.y); dot.style.opacity = 1;
       while (tip.firstChild) tip.removeChild(tip.firstChild);
       var v = document.createElement('b'); v.textContent = p.v; tip.appendChild(v);
@@ -1120,7 +1122,7 @@ HOVER_SCRIPT = """
       tip.style.left = Math.max(4, Math.min(sx + 14, window.scrollX + document.documentElement.clientWidth - w - 8)) + 'px';
       tip.style.top = (sy - 36) + 'px';
     }
-    function hide(){ cross.style.opacity = 0; dot.style.opacity = 0; tip.hidden = true; idx = -1; }
+    function hide(){ cross.style.opacity = 0; if (crossY) crossY.style.opacity = 0; dot.style.opacity = 0; tip.hidden = true; idx = -1; }
     svg.addEventListener('pointermove', function(e){ show(nearest(viewX(e))); });
     svg.addEventListener('pointerleave', hide);
     svg.addEventListener('blur', hide);

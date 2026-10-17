@@ -45,6 +45,9 @@ def test_render_html_contains_cards_and_charts(store):
     assert first["points"] and {"x", "y", "t", "v"} <= set(first["points"][0]) and first["points"][-1]["v"] == "27%"
     assert first["reset"].startswith("resets ")
     assert html.count("<script>") == 1 and "src=" not in html and 'id="chart-tooltip"' in html
+    assert html.count('<line class="crosshair" x1="48" y1="30" x2="48" y2="290.0"/>') == 2
+    assert html.count('<line class="crosshair crosshair-y" x1="48" y1="290.0" x2="744" y2="290.0"/>') == 2
+    assert "crossY.setAttribute('y1', p.y); crossY.setAttribute('y2', p.y)" in html
     assert "window reset" in html and "linear pace" in html
 
 
