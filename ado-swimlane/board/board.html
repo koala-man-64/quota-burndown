@@ -1,0 +1,1095 @@
+<title>Backlog Execution Swimlanes — AdaptiveAssetAllocation</title>
+<style>
+  :root {
+    --bg: #f4f7f8;
+    --panel: #ffffff;
+    --lane-alt: #ecf1f3;
+    --ink: #1c2530;
+    --ink-soft: #4c5a66;
+    --ink-faint: #7b8894;
+    --line: #d5dde2;
+    --teal: #0e7c7b;
+    --teal-soft: #e1efee;
+    --amber: #a06b00;
+    --amber-soft: #f6ecd6;
+    --danger: #b3382e;
+    --danger-soft: #f7e3e1;
+    --violet: #5b4b8a;
+    --violet-soft: #e9e5f3;
+    --queued: #7b8894;
+    --ok: #2e7d4f;
+    --ok-soft: #e2f0e7;
+    --pill-ink: #ffffff;
+    --arrow: #9fb0ba;
+    --arrow-gate: #c99a2e;
+    --mono: Consolas, "Cascadia Mono", ui-monospace, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11181d;
+      --panel: #1a232b;
+      --lane-alt: #162027;
+      --ink: #dfe7ea;
+      --ink-soft: #a7b4bd;
+      --ink-faint: #77848e;
+      --line: #2b3841;
+      --teal: #45b3a9;
+      --teal-soft: #163732;
+      --amber: #e0a63e;
+      --amber-soft: #3a2f14;
+      --danger: #e06055;
+      --danger-soft: #3d1f1c;
+      --violet: #a493d6;
+      --violet-soft: #2b2540;
+      --queued: #77848e;
+      --ok: #55b380;
+      --ok-soft: #17301f;
+      --pill-ink: #11181d;
+      --arrow: #4c5f6b;
+      --arrow-gate: #b98f2e;
+    }
+  }
+  :root[data-theme="light"] {
+    --bg: #f4f7f8; --panel: #ffffff; --lane-alt: #ecf1f3; --ink: #1c2530;
+    --ink-soft: #4c5a66; --ink-faint: #7b8894; --line: #d5dde2;
+    --teal: #0e7c7b; --teal-soft: #e1efee; --amber: #a06b00; --amber-soft: #f6ecd6;
+    --danger: #b3382e; --danger-soft: #f7e3e1; --violet: #5b4b8a; --violet-soft: #e9e5f3;
+    --queued: #7b8894; --ok: #2e7d4f; --ok-soft: #e2f0e7; --pill-ink: #ffffff; --arrow: #9fb0ba; --arrow-gate: #c99a2e;
+  }
+  :root[data-theme="dark"] {
+    --bg: #11181d; --panel: #1a232b; --lane-alt: #162027; --ink: #dfe7ea;
+    --ink-soft: #a7b4bd; --ink-faint: #77848e; --line: #2b3841;
+    --teal: #45b3a9; --teal-soft: #163732; --amber: #e0a63e; --amber-soft: #3a2f14;
+    --danger: #e06055; --danger-soft: #3d1f1c; --violet: #a493d6; --violet-soft: #2b2540;
+    --queued: #77848e; --ok: #55b380; --ok-soft: #17301f; --pill-ink: #11181d; --arrow: #4c5f6b; --arrow-gate: #b98f2e;
+  }
+
+  /* ---- Work breakdown (state ramp validated with the dataviz palette validator:
+     light on #ffffff, dark on #1a232b; ordinal, one hue, monotone lightness) ---- */
+  :root {
+    --wv-s1: #86b6ef;  /* New */
+    --wv-s2: #3987e5;  /* Active */
+    --wv-s3: #1c5cab;  /* Resolved */
+    --wv-s4: #104281;  /* Closed */
+    --wv-gray: #b4bec5; /* Removed / not on the scale */
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --wv-s1: #1c5cab; --wv-s2: #3987e5; --wv-s3: #86b6ef; --wv-s4: #b7d3f6; --wv-gray: #4c5f6b;
+    }
+  }
+  :root[data-theme="dark"] {
+    --wv-s1: #1c5cab; --wv-s2: #3987e5; --wv-s3: #86b6ef; --wv-s4: #b7d3f6; --wv-gray: #4c5f6b;
+  }
+  .workviz {
+    max-width: 1500px; margin: 0 auto 22px;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    border-left: 3px solid var(--teal);
+  }
+  .workviz > summary {
+    list-style: none; cursor: pointer; padding: 9px 26px 9px 12px; position: relative;
+  }
+  .workviz > summary::-webkit-details-marker { display: none; }
+  .workviz > summary::after { content: "▸"; position: absolute; right: 10px; top: 9px; color: var(--ink-faint); font-size: 11px; }
+  .workviz[open] > summary::after { content: "▾"; }
+  .workviz > summary > b { display: block; font-size: 11px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--ink-faint); font-weight: 600; }
+  .workviz > summary > .teaser { display: block; margin-top: 3px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.35; }
+  .wv-body { padding: 4px 12px 12px; }
+  .wv-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 6px 0 12px; }
+  .wv-kpi { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .wv-kpi .l { font-size: 11px; color: var(--ink-faint); }
+  .wv-kpi .v { font-size: 22px; font-weight: 600; color: var(--ink); line-height: 1.15; }
+  .wv-kpi .d { font-size: 11.5px; color: var(--ink-soft); margin-top: 2px; }
+  .wv-charts { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 18px 28px; }
+  .wv-chart h4 { margin: 0 0 6px; font-size: 12px; font-weight: 600; color: var(--ink); }
+  .wv-chart h4 small { font-weight: 400; color: var(--ink-faint); margin-left: 6px; }
+  /* Name column wide enough for the long phase/lane names, wrapping to two
+     lines rather than truncating; rows grow to fit instead of clipping. */
+  .wv-row { display: grid; grid-template-columns: minmax(150px, 38%) 1fr 34px; align-items: center; column-gap: 8px; min-height: 26px; padding: 1px 0; }
+  .wv-row .n { font-size: 11px; line-height: 1.15; color: var(--ink-soft); white-space: normal; overflow-wrap: anywhere; }
+  .wv-track { position: relative; height: 24px; display: flex; align-items: center; border-left: 1px solid var(--line); }
+  /* The 2px surface gap is a flex gap; segments may shrink so a full-width
+     stack absorbs its own spacers instead of overflowing the track. */
+  .wv-bar { display: flex; gap: 2px; height: 16px; width: 100%; }
+  .wv-seg { height: 100%; display: block; flex: 0 1 auto; min-width: 2px; outline: none; }
+  .wv-seg:last-of-type { border-radius: 0 4px 4px 0; }
+  .wv-seg:hover, .wv-seg:focus-visible { filter: brightness(1.12); box-shadow: 0 0 0 2px var(--panel), 0 0 0 3px var(--ink-faint); }
+  .wv-seg.s1 { background: var(--wv-s1); } .wv-seg.s2 { background: var(--wv-s2); }
+  .wv-seg.s3 { background: var(--wv-s3); } .wv-seg.s4 { background: var(--wv-s4); }
+  .wv-seg.sg { background: var(--wv-gray); }
+  .wv-row .t { font-size: 11.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; text-align: right; }
+  .wv-legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 10px 0 0; font-size: 11.5px; color: var(--ink-soft); }
+  .wv-legend i { display: inline-block; width: 12px; height: 10px; border-radius: 2px; vertical-align: -1px; margin-right: 5px; }
+  .wv-foot { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-top: 8px; font-size: 11px; color: var(--ink-faint); }
+  .wv-foot button { font: inherit; font-size: 11px; color: var(--ink-soft); background: transparent; border: 1px solid var(--line); border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+  .wv-foot button:hover { background: var(--lane-alt); }
+  .wv-table { margin-top: 10px; border-collapse: collapse; font-size: 11.5px; width: 100%; }
+  .wv-table th, .wv-table td { border-bottom: 1px solid var(--line); padding: 3px 8px; text-align: right; font-variant-numeric: tabular-nums; }
+  .wv-table th:first-child, .wv-table td:first-child { text-align: left; }
+  .wv-table th { color: var(--ink-faint); font-weight: 600; }
+  .wv-tip { position: fixed; z-index: 30; pointer-events: none; background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 5px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,0.12); }
+  .wv-tip b { font-size: 14px; }
+  .wv-tip .k { display: inline-block; width: 12px; height: 3px; vertical-align: 3px; margin-right: 5px; border-radius: 2px; }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    margin: 0;
+    padding: 28px 20px 60px;
+    font-size: 14px;
+    line-height: 1.45;
+  }
+  header { max-width: 1500px; margin: 0 auto 6px; }
+  h1 {
+    font-size: 24px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 0 0 4px;
+    text-wrap: balance;
+  }
+  .sub { color: var(--ink-soft); margin: 0 0 18px; max-width: 78ch; }
+  .sub code, .kfacts code { font-family: var(--mono); font-size: 12.5px; }
+
+  .kfacts {
+    max-width: 1500px;
+    margin: 0 auto 22px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 10px;
+  }
+  .kfact {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 0;
+    align-self: start;          /* collapsed panels stay short in the grid row */
+  }
+  /* Header row: click to expand. The marker is absolute so the title and teaser
+     stack normally instead of fighting a flex row. */
+  .kfact > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 9px 26px 9px 12px;
+    position: relative;
+    border-radius: 6px;
+  }
+  .kfact > summary::-webkit-details-marker { display: none; }
+  .kfact > summary::after {
+    content: "▸";
+    position: absolute; right: 10px; top: 9px;
+    color: var(--ink-faint); font-size: 11px;
+  }
+  .kfact[open] > summary::after { content: "▾"; }
+  .kfact > summary:hover { background: var(--ok-soft); }
+  /* Only the panel title gets the uppercase label treatment. Bold inside the
+     body must stay inline -- scoping this to `.kfact b` turned every emphasis
+     in the prose into its own block heading. */
+  .kfact > summary > b {
+    display: block; font-size: 11px; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--ink-faint); font-weight: 600;
+  }
+  .kfact > summary > .teaser {
+    display: block; margin-top: 3px;
+    font-size: 12.5px; color: var(--ink-soft); line-height: 1.35;
+  }
+  .kfact > .body {
+    display: block; padding: 0 12px 11px;
+    color: var(--ink-soft); font-size: 13px; line-height: 1.45;
+  }
+  .kfact > .body b { font-weight: 700; color: var(--ink); }
+  .kfact.crit { border-left: 3px solid var(--danger); }
+  .kfact.gate { border-left: 3px solid var(--amber); }
+  .kfact.par  { border-left: 3px solid var(--teal); }
+  .kfact.ok   { border-left: 3px solid var(--ok); }
+
+  @media print {
+    .boardwrap, .legend { display: none; }
+  }
+
+  .boardwrap {
+    max-width: 1830px;
+    margin: 0 auto;
+    overflow-x: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--panel);
+  }
+  .board {
+    position: relative;
+    min-width: 1820px;
+    display: grid;
+    grid-template-columns: 150px repeat(7, minmax(225px, 1fr));
+  }
+  .phasehead {
+    padding: 12px 14px 10px;
+    border-bottom: 2px solid var(--line);
+    border-left: 1px dashed var(--line);
+    background: var(--panel);
+  }
+  .phasehead:first-child { border-left: none; }
+  .phasehead .pnum { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); display: block; }
+  .phasehead .pname { font-weight: 650; font-size: 13.5px; }
+  .phasehead .pwhen { font-size: 11.5px; color: var(--ink-soft); }
+  .phase-toggle {
+    display: block; margin-top: 8px; padding: 4px 8px;
+    font: inherit; font-size: 12px; color: var(--ink); background: var(--panel);
+    border: 1px solid var(--line); border-radius: 4px; cursor: pointer;
+  }
+  .phase-toggle:hover { background: var(--teal-soft); }
+  .phase-toggle:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+  .phasehead.phase-collapsed { padding: 12px 6px 10px; }
+  .phasehead.phase-collapsed .pname, .phasehead.phase-collapsed .pwhen { display: none; }
+  .board > .cell[hidden] { display: none !important; }
+
+  .lanelabel {
+    padding: 14px 12px;
+    border-top: 1px solid var(--line);
+    font-weight: 650;
+    font-size: 13px;
+    line-height: 1.3;
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--panel);
+    border-right: 1px solid var(--line);
+  }
+  .lanelabel small { display: block; font-weight: 400; color: var(--ink-faint); font-size: 11px; margin-top: 3px; }
+  .cell {
+    border-top: 1px solid var(--line);
+    border-left: 1px dashed var(--line);
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: flex-start;
+  }
+  .cell.lane-alt, .lanelabel.lane-alt { background: var(--lane-alt); }
+
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--teal);
+    border-radius: 5px;
+    padding: 7px 10px 8px;
+    width: 100%;
+    position: relative;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
+  }
+  .card .ids { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); }
+  .card .t { font-size: 12.5px; font-weight: 600; line-height: 1.3; margin-top: 1px; }
+  .card .n { font-size: 11.5px; color: var(--ink-soft); margin-top: 3px; line-height: 1.35; }
+  .card.bug { border-left-color: var(--danger); background: var(--danger-soft); }
+  .card.gatecard { border-left-color: var(--amber); background: var(--amber-soft); }
+  .card.aa2 { border-left-color: var(--violet); background: var(--violet-soft); }
+  .card.queued { border-left-color: var(--queued); border-style: solid solid solid solid; opacity: 0.85; }
+  .card.queued .t { font-weight: 500; }
+  .card.done { border-left-color: var(--ok); background: var(--ok-soft); opacity: 0.8; }
+  .card.removed { border-left-color: var(--queued); background: var(--panel); opacity: 0.8; }
+  .card.done .t { font-weight: 500; }
+  .pill {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    border-radius: 999px;
+    padding: 1px 7px;
+    margin-left: 6px;
+    vertical-align: 1px;
+  }
+  .pill.live { background: var(--danger); color: var(--pill-ink); }
+  .pill.gate { background: var(--amber); color: var(--pill-ink); }
+  .pill.wait { background: var(--queued); color: var(--pill-ink); }
+  .pill.done { background: var(--ok); color: var(--pill-ink); }
+  .pill.act { background: var(--teal); color: var(--pill-ink); }
+  .pill.info { background: transparent; color: var(--ink-soft); border: 1px solid var(--ink-faint); }
+  .card .pill[hidden] { display: none; }
+
+  .stbadge {
+    display: inline-block;
+    font-size: 9.5px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border-radius: 3px;
+    padding: 0 5px;
+    margin-left: 6px;
+    vertical-align: 1px;
+    line-height: 1.6;
+  }
+  .stbadge.new { color: var(--ink-faint); border: 1px solid var(--line); background: transparent; }
+  .stbadge.active { background: var(--teal); color: var(--pill-ink); }
+  .stbadge.resolved { color: var(--ok); border: 1px dashed var(--ok); background: transparent; }
+  .stbadge.closed { background: var(--ok); color: var(--pill-ink); }
+  .stbadge.done { background: var(--ok); color: var(--pill-ink); }
+  .stbadge.removed { color: var(--queued); border: 1px solid var(--line); }
+
+  svg.arrows {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    overflow: visible;
+  }
+  svg.arrows path { fill: none; stroke: var(--arrow); stroke-width: 1.6; }
+  svg.arrows path.gatearrow { stroke: var(--arrow-gate); stroke-width: 1.8; }
+
+  .legend {
+    max-width: 1500px;
+    margin: 14px auto 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    font-size: 12px;
+    color: var(--ink-soft);
+    align-items: center;
+  }
+  .legend .sw { display: inline-block; width: 14px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+  .legend .arrowdemo { display:inline-block; width: 26px; border-top: 2px solid var(--arrow-gate); margin-right: 5px; vertical-align: 3px; }
+  .legend .arrowdemo.soft { border-top-color: var(--arrow); }
+
+  .notes { max-width: 1500px; margin: 26px auto 0; }
+  .notes h2 { font-size: 16px; font-weight: 650; margin: 0 0 8px; }
+  .notes h3 { font-size: 13.5px; font-weight: 650; margin: 18px 0 6px; }
+  .notes h3 .ph { font-family: var(--mono); font-size: 11px; color: var(--ink-faint); font-weight: 400; margin-right: 6px; }
+  .notes p { color: var(--ink-soft); max-width: 90ch; margin: 0 0 8px; }
+  .notes ul { margin: 0 0 4px; padding-left: 22px; color: var(--ink-soft); max-width: 90ch; }
+  .notes ul li { margin-bottom: 6px; }
+  .notes ul li b { color: var(--ink); font-weight: 600; }
+  .notes ol { margin: 0; padding-left: 22px; color: var(--ink-soft); max-width: 90ch; }
+  .notes li { margin-bottom: 7px; }
+  .notes li b { color: var(--ink); font-weight: 600; }
+
+  a.wi {
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-style: dotted;
+    text-decoration-color: var(--ink-faint);
+    text-underline-offset: 2px;
+  }
+  a.wi:hover, a.wi:focus-visible {
+    text-decoration-style: solid;
+    text-decoration-color: var(--teal);
+    color: var(--teal);
+  }
+  a.wi:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; border-radius: 2px; }
+
+  .stories { display: flex; flex-wrap: wrap; gap: 3px; margin-top: 6px; }
+  .stories a.st {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    line-height: 1.6;
+    padding: 0 5px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    background: var(--panel);
+    color: var(--ink-soft);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .stories a.st.active { border-color: var(--teal); color: var(--teal); }
+  .stories a.st.resolved { border-style: dashed; border-color: var(--ok); color: var(--ok); }
+  .stories a.st:hover, .stories a.st:focus-visible { border-color: var(--teal); color: var(--teal); background: var(--teal-soft); }
+  .stories a.st:focus-visible { outline: 2px solid var(--teal); outline-offset: 1px; }
+</style>
+
+<header>
+  <h1>Backlog execution swimlanes — order of work &amp; parallelism</h1>
+  <p class="sub">AdaptiveAssetAllocation, snapshot <span id="snap-date" class="nolink">…</span> · 86 open epics/features. Lanes are programs; columns are execution phases. Amber arrows are actual <code>Predecessor/Successor</code> links recorded in Azure Boards — a card cannot start until its inbound arrows are done. Gray arrows are implied ordering only (program phase sequence, queued-behind). Green cards were completed since the <span class="nolink">07-28</span> baseline.</p>
+</header>
+
+<div class="kfacts">
+  <details class="kfact ok"><summary><b style="color:var(--ok)">Audit corrections retained</b><span class="teaser">F2070 and F2598 remain Closed. Their records retain the correction of the earlier audit's false reopenings.</span></summary><span class="body">Both features were restored to Closed on 09-10 after their children were checked. The correction history remains on AB#2070 and AB#2598; it is no longer an open blocker.</span></details>
+  <details class="kfact ok"><summary><b style="color:var(--ok)">Readiness-probe fix</b><span class="teaser">Bug 3527 remains Resolved. Its fix has historical production verification; closure is still outstanding.</span></summary><span class="body">The missing demand-symbol property and health-response serialization defect were fixed on 09-10. The board's earlier readback recorded a healthy, ready replica after deployment; this review checked the work-item state, not current runtime health.</span></details>
+  <details class="kfact ok"><summary><b style="color:var(--ok)">Relay cutover complete</b><span class="teaser">F3202, Bug 2880 and Bug 3213 remain Closed. The readiness-probe issue is tracked separately in Resolved Bug 3527.</span></summary><span class="body">The cutover record covers single-owner provider streaming and the stale-event handoff fixes. Earlier market-hours verification is historical evidence, not a new production check.</span></details>
+  <details class="kfact"><summary><b>Critical path</b><span class="teaser">F2097 is Active with its four recorded gates Closed. F2099 is Active while all three of its recorded gates remain New.</span></summary><span class="body"><b>Engine:</b> 2609, 2614, F2022 and F257 are Closed; the recorded prerequisites of F2097 are clear, while implementation and certification remain separate.<br><br><b>Workstation:</b> F302, 2044 and F295 remain New and are the open gates of F2099.<br><br><b>Evidence:</b> F2094 and the four evidence producers (2609, 2610, 2611, 2614) are Closed. Stories 2046 and 2082, still listed as predecessors of F2094, remain New; their scope needs reconciliation before treating the dependency graph as complete.</span></details>
+  <details class="kfact"><summary><b>Watch list</b><span class="teaser">33 open bugs; 18 have no parent and 25 are Resolved. Earnings coverage (3892) is Closed; the crypto-exit production proof and the trade-reconciliation defects remain open.</span></summary><span class="body"><b>Reviewed 2026-10-09, 05:23 UTC.</b> These prose counts include Resolved bugs and are separate from the automatically refreshed card totals.<br><br><b>Data:</b> 3892 is Closed (10-09 05:08 UTC, Rudy's decision D78): PRs 4073 and 4106 landed expected-empty classification, sticky suppression and a 3-day new-to-universe window, and the 10-09 proof run passed all three earnings jobs. Its closeout still lists five real coverage regressions (FSEA, HVII, NSTS, VACI, SVMH) that it expects the 10-10 run to suppress; that is a prediction, not evidence. Bugs 3884 (metadata lost updates) and 3797 (consumers reading frozen Gold Market root tables) remain New.<br><br><b>Trading:</b> 3855 (partial-fill IOC legs stay non-terminal) and 3863 (Schwab fills missing from the blotter) are New. Bug 3885 is still Resolved: the 10-08 paper canary (2295) filled its entry but never exited, because no exit policy was assigned and the assignment endpoint failed until control-plane PR 4120 deployed at 20:31 UTC. Its note now defers proof to the next canary, after the 3574 writer move. New task 3903 (Active since 10-09) is to let an operator close the stranded position with a reduce-only plan.<br><br><b>Readiness:</b> Bug 3900 moved New → Resolved 10-08 20:33 UTC: PR 4113 deployed by deploy-prod 28071, with a read-only readback showing writer epoch 0 and trade-identity readiness true. Not yet Closed.<br><br><b>Operations and security:</b> 3877's unexplained readiness-restart episode remains New. Bug 3814 remains New although remediation task 3818 is Closed; reconcile those records before calling the finding cleared. Bug 3836 remains Resolved. New unparented Bug 3901 (hook approval friction) is agent-tooling work, not a product defect.<br><br><b>Residual proof:</b> 3832 and 3833 are Closed with the production disruption path unexercised. Task 3878 is Closed, but its recorded residual is the first real held plan proving the complete path from marker to page. Hook execution-evidence Bug 3899 is Active.</span></details>
+  <details class="kfact"><summary><b>F2100 resilience</b><span class="teaser">F2100 remains New, with recovery, trading operations and freshness work open. Recent closures leave recovery-time, phone-delivery and cutover evidence gaps.</span></summary><span class="body"><b>Recovery:</b> 2143 is Closed; its remaining 30-minute Tier-0 recovery drill was deferred to 2142, which is New.<br><br><b>Operations:</b> 2481 remains New. Bug 3881 and console task 2486 are Closed; 2486 explicitly records that phone-delivery latency was not measured, so the full-path &lt;2-minute target is unproven.<br><br><b>Freshness:</b> 3337 remains New; 3861 is Active for per-dataset cutover. Its gate requires 20 recorded qualifying sessions plus per-dataset deployment and guard evidence; this review does not establish readiness or enforcement.<br><br><b>Plan recovery:</b> 3886 and 3880 are Closed. The 3880 closeout records 11 plans quarantined from the account list, with their plan and leg rows retained; its readback returned zero unavailable plans. Quarantine does not repair those historical records.<br><br><b>Telemetry:</b> 2267 is Closed with a recorded production trace through the jobs executor. Parent 2141 remains New; the separate execution-service live crossing is an acceptance criterion on Active task 3574.</span></details>
+  <details class="kfact par"><summary><b>Recent changes <span id="delta-range" class="nolink">…</span></b><span class="teaser">Earnings coverage (3892) and the crypto exit-draft fix (3902) are Closed; 3900 is Resolved. Two audit-remediation Features (3904, 3920) add 26 New tasks; story 1044 was reopened.</span></summary><span class="body"><b>Editorial review: 2026-10-09, 05:23 UTC.</b> Live work-item states supersede the prior narrative; the automatic snapshot may be newer.<br><br><b>Closed:</b> 3892 (earnings freshness; decision D78, proof run 10-09), 3902 (Trade Desk exit-policy draft survives refetch; UI deploy 28064, validated read-only) and six leftover PIT tasks under Closed stories 3579 and 3588 (3581–3584, 3589, 3590), closed in the 10-09 P1/P2/P3 backlog review citing 3579's existing evidence.<br><br><b>Resolved:</b> 3900 (cp-0192 epoch advance; PR 4113, deploy-prod 28071).<br><br><b>New:</b> Feature 3904 under E2710, the control-plane repository audit 2026-10-08 remediation, with 15 tasks 3905–3919, all New. Feature 3920, unparented, the UI audit remediation (2026-10-08), with 11 tasks 3921–3931, all New; it sits on no lane. Bug 3901 (hook approval friction), unparented.<br><br><b>Reopened:</b> story 1044 (analyst target-gap gold factors, under F203) went Closed → Active 10-09: the 09-10 audit had closed it over an open child (1805) and its own refutation was never applied.<br><br><b>Active:</b> task 3903 (operator reduce-only crypto close-out) started 10-09 under Closed task 2295.<br><br><b>Snapshot totals:</b> 86 open epics/features, 33 open bugs and 83 open children of board cards. Of those bugs, 18 are unparented and 25 are Resolved.</span></details>
+</div>
+
+<details class="workviz" id="workviz" open><summary><b>Work breakdown</b><span class="teaser" id="wv-teaser">Open work by phase, by lane, and card states — computed from the board below.</span></summary>
+  <div class="wv-body" id="wv-body"></div>
+</details>
+
+<div class="boardwrap">
+<div class="board" id="board">
+  <!-- header row -->
+  <div class="phasehead"></div>
+  <div class="phasehead"><span class="pnum">P0</span><span class="pname">Unblock</span><div class="pwhen">days — live fires first</div></div>
+  <div class="phasehead"><span class="pnum">P1</span><span class="pname">Foundations</span><div class="pwhen">weeks — reliability &amp; delivery truth</div></div>
+  <div class="phasehead"><span class="pnum">P2</span><span class="pname">Evidence plane</span><div class="pwhen">jumps the queue — feeds every gate</div></div>
+  <div class="phasehead"><span class="pnum">P3</span><span class="pname">Platform predecessors</span><div class="pwhen">the AA 2.0 entry tickets</div></div>
+  <div class="phasehead"><span class="pnum">P4</span><span class="pname">AA 2.0 foundations</span><div class="pwhen">gates trace to P0–P3 · all parallel</div></div>
+  <div class="phasehead"><span class="pnum">P5</span><span class="pname">AA 2.0 evidence &amp; workstation</span><div class="pwhen">needs the P2 evidence stories</div></div>
+  <div class="phasehead"><span class="pnum">P6</span><span class="pname">Engine, certification &amp; downstream</span><div class="pwhen">critical path ends at 2098</div></div>
+
+  <!-- Lane 1: Stabilize & Operate -->
+  <div class="lanelabel">Stabilize &amp; operate<small><a class="wi" href="https://dev.azure.com/rdprokes/AdaptiveAssetAllocation/_workitems/edit/36" target="_blank" rel="noopener">Epic 36</a> · F2598 / F2599 / F2070</small></div>
+  <div class="cell">
+    <div class="card done" id="c2597"><span class="ids">BUG 2597</span><span class="pill done">closed 07-28</span><div class="t">Jobs image cannot activate 5/6 workflow workers</div></div>
+    <div class="card done" id="c2556"><span class="ids">BUG 2556</span><span class="pill done">closed 07-31</span><div class="t">Dependency confusion — contracts on public PyPI</div></div>
+    <div class="card done" id="c2601"><span class="ids">US 2600 · 2601</span><span class="pill done">closed</span><div class="t">Secret mapping + prod auth drift fixes</div></div>
+    <div class="card done" id="c2844"><span class="ids">E2843 · F2844</span><span class="pill done">closed 10-09</span><div class="t">Scheduled-job failure triage</div><div class="n">Closed 10-09 after the 09-26 reopening. Market-clock bug 3890 Closed 10-07; retirement task 3889 Closed 10-09. Epic 2843 remains Active.</div></div>
+    <div class="card done" id="c2783"><span class="ids">BUG 2783</span><span class="pill done">closed 08-22</span><div class="t">Schwab OAuth INSERT privilege</div><div class="n">Write-privilege class, fourth recurrence, fixed. Siblings 2784 and 2822 Closed 09-07</div></div>
+    <div class="card done" id="c3220"><span class="ids">BUG 3220 · 3214 · 2861 · 2855 · 2559</span><span class="pill done">all closed by 08-30</span><div class="t">The five founding release blockers</div><div class="n">Every bug F3221 was created to hold is now closed. <b>3225 was not 3220's cause</b> — separate defect, same deploy step, fixed a day earlier</div></div>
+    <div class="card done" id="c3384"><span class="ids">BUG 3384</span><span class="pill done">closed 09-02</span><div class="t">Jobs security gate lock hash mismatch</div><div class="n"><code>pip_audit</code> lock-hash mismatch blocked every release; raised and closed the same day</div></div>
+    <div class="card done" id="c3369"><span class="ids">BUG 3369 · 3370 · 3371 · 3318</span><span class="pill done">cleared</span><div class="t">Options-jobs deploy manifests</div><div class="n">3369, 3370, 3371 and 3318 Closed. Fixed outright, no owning feature needed</div></div>
+    <div class="card done" id="c3327"><span class="ids">BUG 3327 · 3314 · 3287 · 3373 · 3289</span><span class="pill done">cluster retired</span><div class="t">CI governance gates that don't hold</div><div class="n">3327, 3314, 3287, 3373 and 3289 Closed without an owning feature</div></div>
+    <div class="card done" id="c3462" data-state="Closed"><span class="ids">BUG 3462</span><span class="pill done">closed 09-08</span><div class="t">Relay outbox tables have no grants</div><div class="n"><code>jobs-0076</code> relay tables had no grants and crash-looped the monitor 09-06. Fixed; production shows <code>outbox=arwd</code></div></div>
+    <div class="card done" id="c2880" data-state="Closed"><span class="ids">BUG 2880 · 3213</span><span class="pill done">closed 09-10</span><div class="t">Intraday monitor: WebSocket limit &amp; stale events</div><div class="n">Both Closed 13:44Z, verified in market hours: one provider socket, zero 1008 closures</div></div>
+  </div>
+  <div class="cell">
+    <div class="card done" id="c2822" data-state="Closed"><span class="ids">BUG 2822</span><span class="pill done">closed</span><div class="t">API 500 on /api/data/chart-presets</div><div class="n">Resolved 08-10, Closed 09-07 on production evidence alongside sibling 2784</div></div>
+    <div class="card done" id="c2598" data-state="Closed"><span class="ids">F2598 · US 2602–2607</span><span class="pill done">closed (corrected)</span><div class="t">Runtime resilience &amp; capital readiness</div><div class="n">Closed again 14:31Z after an audit error; all 30 children confirmed. ⚠ 2093's DB gates 2605/2606 were Removed, not done</div></div>
+    <div class="card done" id="c2599"><span class="ids">F2599</span><span class="pill done">closed 08-11</span><div class="t">Private platform migration — complete</div><div class="n">Fleet restored (2554) · legacy API retired (2555) · Redis provisioned (2021), retired 09-29 under story 3775 · handoff doc refreshed (2558)</div></div>
+    <div class="card done" id="c3202" data-state="Closed"><span class="ids">F3202</span><span class="pill done">closed 09-10</span><div class="t">Single-owner live stock provider stream</div><div class="n">Closed 13:44Z with all 16 children; single provider socket verified live. Readiness-probe bug 3527 fixed 16:56Z</div></div>
+    <div class="card done" id="c3221" data-state="Closed"><span class="ids">F3221</span><span class="pill done">closed 09-10</span><div class="t">Release &amp; deploy pipeline reliability</div><div class="n">Opened 08-26 with five bugs, grew to 25 children, all landed incl. Wave 2 (3258). Retired the class, not just instances</div></div>
+    <div class="card done" id="c3296"><span class="ids">F3296</span><span class="pill done">closed 09-02</span><div class="t">Content freshness SLOs — alert on data dates, not job status</div><div class="n">Content-date SLO catalog (3297), lag evaluator (3298), breach alerting (3299). 3299 Closed 09-27 15:08Z under 3337; the breach alert rule is deployed disabled, pending Rudy's switch</div></div>
+    <div class="card done" id="c2070" data-state="Closed"><span class="ids">F2070</span><span class="pill done">closed (corrected)</span><div class="t">Disaster-recovery readiness</div><div class="n">Closed again 14:29Z after an audit error; all seven 07-24 assessment stories delivered 09-10</div></div>
+  </div>
+  <div class="cell"></div>
+  <div class="cell"></div>
+  <div class="cell">
+    <div class="card aa2" id="c2100"><span class="ids">F2100</span><span class="pill gate">gated</span><div class="t">Capital-safety observability, resilience, migration</div><div class="n">← DR readiness 2070</div></div>
+  </div>
+  <div class="cell"></div>
+  <div class="cell"></div>
+
+  <!-- Lane 2: Golden Path & Evidence -->
+  <div class="lanelabel">Golden Path &amp; evidence<small>F2037 · F1593 / F2051 / F1517 / F2094</small></div>
+  <div class="cell">
+    <div class="card done" id="c2085" data-state="Closed"><span class="ids">US 2085 · 2086</span><span class="pill done">closed 09-08</span><div class="t">One DDL owner · one stack promotion authority</div><div class="n">Both Closed 09-08 after their tasks cleared; the DDL-owner gate of 2095 is clear</div></div>
+  </div>
+  <div class="cell">
+    <div class="card done" id="c2612" data-state="Removed"><span class="ids">US 2612 · 2613 · 2048–2050</span><span class="pill info">removed 08-21</span><div class="t">Compat gate in CI · transport ADR · mesh compatibility policy</div><div class="n">⚠ 2612 was <b>Removed</b>, not delivered — the CI compatibility gate this card represents does not exist</div></div>
+    <div class="card done" id="c2024" data-state="Closed"><span class="ids">BUG 2024</span><span class="pill done">closed 09-07</span><div class="t">[contracts-first] next-open signal semantics</div><div class="n">Gate of 2093. Resolved 08-06, Closed 09-07; its three repo tasks Closed 09-10</div></div>
+  </div>
+  <div class="cell">
+    <div class="card done" id="c2609" data-state="Closed"><span class="ids">US 2609</span><span class="pill done">closed 09-20</span><div class="t">Out-of-sample / walk-forward producer</div><div class="n">Closed 09-20 on all six tasks (planner, assembler, driver, evaluator, fold evidence). No production fold run evidenced here</div></div>
+    <div class="card done" id="c2610" data-state="Closed"><span class="ids">US 2610</span><span class="pill done">closed 09-10</span><div class="t">Paper book v1 — start the live-forward clock</div><div class="n">Closed 09-10 on all six tasks (2908–2913): contracts through UI evidence view</div></div>
+    <div class="card done" id="c2611" data-state="Closed"><span class="ids">US 2611 · 2614</span><span class="pill done">2611 closed 09-09</span><div class="t">Realistic cost model · PIT storage spike</div><div class="n">2611 Closed 09-09: <code>spread_participation_v1</code> cost model replaces <code>simple_bps</code>-only. 2614 Closed 09-20</div></div>
+    <div class="card done" id="c2045" data-state="Closed"><span class="ids">US 2045 · 2046 · 2082</span><span class="pill done">2045 closed 09-09</span><div class="t">PIT-leakage auditor · negative-results registry</div><div class="n">2045 Closed 09-09. ⚠ Task 2893 (auditor core) still <code>New</code>; 2046 still <code>New</code></div></div>
+    <div class="card done" id="c1518" data-state="Closed"><span class="ids">F1518</span><span class="pill done">closed 09-11</span><div class="t">Corporate-action &amp; PIT integrity for backtests</div><div class="n">Closed 09-11 13:48Z with all five stories; last was 1549, backtest-runtime reconciliation</div></div>
+    <div class="card done" id="c2051" data-state="Closed"><span class="ids">F2051 · US 2052–2056, 2281, 2282, 3193, 2610</span><span class="pill done">closed 09-12</span><div class="t">Strategy promotion &amp; live evidence gates</div><div class="n">Closed 09-12 with all stories; straggler 2056 Closed 09-25</div></div>
+  </div>
+  <div class="cell"></div>
+  <div class="cell">
+    <div class="card aa2" id="c2092"><span class="ids">F2092</span><span class="pill gate">gated</span><div class="t">Seven-repo delivery &amp; runtime truth</div><div class="n">← 1107 · mesh policy 2048–2050 · 2086 · ✓ prod-secret exposure task 3818 Closed 09-28 01:40Z</div></div>
+    <div class="card aa2" id="c2093"><span class="ids">F2093</span><span class="pill gate">gated</span><div class="t">Contracts 8.0 · Runtime-Common 6.0</div><div class="n">← 2037 · 2024 (Closed) — ⚠ both DB gates Removed (2605, 2606); verify coverage before treating them satisfied</div></div>
+  </div>
+  <div class="cell">
+    <div class="card done" id="c2094" data-state="Closed"><span class="ids">F2094</span><span class="pill done">closed 09-22</span><div class="t">Point-in-time data &amp; immutable evidence plane</div><div class="n">Closed 09-22 with all 15 children. ⚠ Predecessors 2046 and 2082 still <code>New</code>. Six leftover tasks under 3579/3588 Closed 10-09, citing 3579's certified snapshot set and canary run (not re-verified here).</div></div>
+  </div>
+  <div class="cell"></div>
+
+  <!-- Lane 3: Execution platform -->
+  <div class="lanelabel">Execution platform<small>Epic 153 · Epic 256 · Epic 290</small></div>
+  <div class="cell"></div>
+  <div class="cell">
+    <div class="card done" id="c1232" data-state="Closed"><span class="ids">F1232</span><span class="pill done">closed 09-10</span><div class="t">Finish durable PG workflow orchestration</div><div class="n">Closed 09-10: Service Bus and Event Hubs retirement done</div></div>
+  </div>
+  <div class="cell">
+    <div class="card done" id="c2022" data-state="Closed"><span class="ids">F2022</span><span class="pill done">closed 09-11</span><div class="t">Security-level paper shadow book &amp; reconciliation</div><div class="n">Closed 09-11 17:45Z, one minute after its last of four stories</div></div>
+    <div class="card done" id="c257" data-state="Closed"><span class="ids">F257</span><span class="pill done">closed 09-12</span><div class="t">Account risk controls</div><div class="n">Closed 09-12; its one story, 259, closed seven minutes earlier with all four tasks</div></div>
+  </div>
+  <div class="cell">
+    <div class="card done" id="c265" data-state="Closed"><span class="ids">F265 · US 1180</span><span class="pill done">closed 09-12</span><div class="t">Shorting support end-to-end · intraday reconciliation</div><div class="n">Closed 09-12, all 13 children checked Closed or Removed. US 1180 Closed 09-10</div></div>
+    <div class="card done" id="c291" data-state="Closed"><span class="ids">F291 · F302</span><span class="pill done">291 closed 09-10</span><div class="t">Centralized rate limiter · MCP actions</div><div class="n">F291 Closed 09-10. F302 still <code>New</code>; its story 303 reopened 09-18 by Rudy, now <code>Active</code></div></div>
+    <div class="card" id="c1964"><span class="ids">F1964</span><span class="pill info">optional · paper canary Closed</span><div class="t">Spot-crypto execution engine</div><div class="n">Optional, only if 2098 certification covers crypto. Story 1970 Active: canary 2295 Closed, its 10-08 rerun filled but never exited; 3902 Closed 10-08; close-out task 3903 Active. Live canary 2296 <code>New</code>. ⚠ 2294 Closed before its 168-hour window ran.</div></div>
+  </div>
+  <div class="cell">
+    <div class="card done" id="c2095"><span class="ids">F2095</span><span class="pill done">closed 09-27</span><div class="t">Workload, DB, identity, runtime ownership</div><div class="n">Closed 09-27, all ten stories Closed. ⚠ Task 2193 still <code>New</code>; tasks 2441, 3573, 3574 Active under Closed story 2439.</div></div>
+    <div class="card aa2" id="c2096"><span class="ids">F2096</span><span class="pill act">active, gate clear</span><div class="t">Privilege-separated planes</div><div class="n">✓ Active since 09-16; its gate, 291, is Closed. Stories 2119 and 2123 Active; the execution-plan kernel 2120 is still <code>New</code>.</div></div>
+  </div>
+  <div class="cell">
+    <div class="card aa2" id="c2099"><span class="ids">F2099</span><span class="pill act">active, 0 of 3 gates</span><div class="t">Research workstation + evidence copilot</div><div class="n">← 302 · 2044 · F295. ⚠ <b>Active since 09-10 with none of its three gates cleared</b>: F302, F295 and 2044 are <code>New</code>. Set Active by the AB#3526 audit, not a person.</div></div>
+  </div>
+  <div class="cell"></div>
+
+  <!-- Lane 4: AA 2.0 engine (kept separate to show the deepest gates) -->
+  <div class="lanelabel lane-alt">AA 2.0 engine &amp; certification<small>Epic 2091 — the destination</small></div>
+  <div class="cell lane-alt"></div>
+  <div class="cell lane-alt"></div>
+  <div class="cell lane-alt"></div>
+  <div class="cell lane-alt"></div>
+  <div class="cell lane-alt"></div>
+  <div class="cell lane-alt"></div>
+  <div class="cell lane-alt">
+    <div class="card aa2" id="c2097" data-state="Active"><span class="ids">F2097</span><span class="pill act">active, all 4 gates clear</span><div class="t">Deterministic research, book, risk, TCA, attribution engine</div><div class="n">Active since 09-13 on Rudy's instruction. ✓ All four gates Closed by 09-20. All nine stories still <code>New</code>. Kernel task 2217 (under 2124) merged PRs 4112 and 4123 on 10-08 while still New.</div></div>
+    <div class="card aa2" id="c2098"><span class="ids">F2098</span><span class="pill gate">gated ×4</span><div class="t">Equities-first certification &amp; policy-bound autonomous execution</div><div class="n">← 2610 · 265 · 1180 · (1964). FX stories 3659, 3681, 3682 filed 09-22, all <code>New</code>. Decision D5: no FX work until Alpaca equities are certified.</div></div>
+  </div>
+
+  <!-- Lane 5: Regime Forecasting -->
+  <div class="lanelabel">Regime Forecasting<small>Epic 2326 — parallel team</small></div>
+  <div class="cell">
+    <div class="card done" id="c2557"><span class="ids">BUG 2557</span><span class="pill done">closed 08-01</span><div class="t">Triage long-failing jobs incl. gold-regime</div></div>
+  </div>
+  <div class="cell">
+    <div class="card done" id="c2327" data-state="Closed"><span class="ids">F2327</span><span class="pill done">closed 09-10</span><div class="t">Phase 0 — pipeline hygiene &amp; reliability</div><div class="n">Closed 09-10, all seven children verified Closed</div></div>
+  </div>
+  <div class="cell">
+    <div class="card done" id="c2346" data-state="Closed"><span class="ids">F2346</span><span class="pill done">closed 09-13</span><div class="t">Phase 1 — feature expansion from in-house data</div><div class="n">Closed 09-13 on four stories; 2360 and 2365 deliberately moved to new Feature 3543 (still <code>New</code>)</div></div>
+  </div>
+  <div class="cell">
+    <div class="card done" id="c2374" data-state="Closed"><span class="ids">F2374 · US 2375/2380/2390/2394/2385</span><span class="pill done">closed 09-15</span><div class="t">Phase 2 — probabilistic regime modeling</div><div class="n">Closed 09-15 on four stories. ⚠ Deferred story 2385 closed 67 min later citing a 60-session simulation, not the live pilot it was deferred for</div></div>
+  </div>
+  <div class="cell">
+    <div class="card done" id="c2398"><span class="ids">F2398</span><span class="pill done">closed 09-23</span><div class="t">Phase 3 — governed SPY/cash automation</div><div class="n">Closed 09-23, all stories and tasks; pilot gate 2405 cites PR 3618 and deploy-prod 25038/25048. First regime phase that moves money</div></div>
+  </div>
+  <div class="cell"></div>
+  <div class="cell"></div>
+
+  <!-- Lane 6: Queued programs -->
+  <div class="lanelabel">Queued programs<small>Start only when gates clear</small></div>
+  <div class="cell"></div>
+  <div class="cell"></div>
+  <div class="cell"></div>
+  <div class="cell"></div>
+  <div class="cell"></div>
+  <div class="cell"></div>
+  <div class="cell">
+    <div class="card queued" id="c2487"><span class="ids">E2487</span><span class="pill wait">gates clear</span><div class="t">Clustering Research (CR-F1…F5)</div><div class="n">← Regime 2375 (F1/F2) · 2390 (F5). ✓ <b>Both gates Closed</b> 09-14. Still <code>New</code>, tagged queued-behind-aa-2.0; starting it is a capacity call.</div></div>
+    <div class="card queued" id="c1679"><span class="ids">E1679</span><span class="pill wait">queued</span><div class="t">Commodity Intelligence MVP</div><div class="n">Tagged queued-behind-aa-2.0</div></div>
+    <div class="card queued" id="c174" data-state="none"><span class="ids">E174 · E196 · E227-UI · E275 · E309</span><span class="pill wait">backfill</span><div class="t">Data expansion, ranking, strategy UI, research ideas, UI operator redesign</div><div class="n">Demand work; schedule opportunistically, never ahead of gates. ✓ Story 3295 (news sentiment end to end) Closed 10-02. E309 (UI operator redesign) Active. Story 1044 (F203 ranking factors) reopened 10-09: the 09-10 audit closed it over open child 1805.</div></div>
+    <div class="card" id="c2633"><span class="ids">E2633 · F2634–2638</span><span class="pill info">ungated · F0 done, F2 active</span><div class="t">Probability &amp; option-pricing analytics (Black-Scholes family)</div><div class="n">No recorded predecessors. ✓ <b>BS-F0 Closed 09-16</b>; <b>BS-F2 (pricing kernel) Active</b>; F1 <code>New</code>; F3 and F4 frozen on named decisions.</div></div>
+    <div class="card aa2" id="c2870"><span class="ids">E2870 · F2871–2875</span><span class="pill gate">gated</span><div class="t">Axiom — evidence-bound autonomous multi-asset reflex lab</div><div class="n">New 08-13, properly sequenced: ← AA 2.0 (2091) and certification (2098) via recorded links; features chain F1 Black Box → F2 Shockwave → F3 Blast Shield → F4 Gatekeeper → F5 Reflex</div></div>
+    <div class="card" id="c2710" data-state="New"><span class="ids">E2710 · F2711–2717 · F3240</span><span class="pill live">now executing</span><div class="t">[CPD] Control-plane decomposition into isolated runtime domains</div><div class="n"><b>F3240 Active since 09-07</b> (phase A: import fence, artifact diet, CI gates). New 10-09: <b>F3904</b>, the 2026-10-08 audit remediation, 15 tasks, all <code>New</code>. ⚠ CPD-F4/F6 overlap AA 2.0 stories 2114/2120.</div></div>
+  </div>
+
+  <svg class="arrows" id="arrows" aria-hidden="true"></svg>
+</div>
+</div>
+
+<div class="legend">
+  <span><b>States:</b></span>
+  <span><span class="stbadge new">New</span> not started</span>
+  <span><span class="stbadge active">Active</span> in progress</span>
+  <span><span class="stbadge resolved">Resolved</span> fix awaiting verification</span>
+  <span><span class="sw" style="background:var(--ok)"></span>Closed since 07-28 baseline (green card)</span>
+  <span><span class="pill act">● n active</span> card has n Active child stories</span>
+</div>
+<div class="legend">
+  <span><b>Categories:</b></span>
+  <span><span class="sw" style="background:var(--danger)"></span>Live bug / blocker</span>
+  <span><span class="sw" style="background:var(--amber)"></span>Evidence gate (produces a required approval input)</span>
+  <span><span class="sw" style="background:var(--teal)"></span>Committed work</span>
+  <span><span class="sw" style="background:var(--violet)"></span>AA 2.0 feature (all gated)</span>
+  <span><span class="sw" style="background:var(--queued)"></span>Queued / optional</span>
+  <span><span class="arrowdemo"></span>Recorded predecessor → successor link</span>
+  <span><span class="arrowdemo soft"></span>Implied ordering only</span>
+  <span>Chips = open child stories (hover for title; ● Active · ◌ Resolved · plain New)</span>
+</div>
+
+<div class="notes">
+  <h2>How to read the ordering</h2>
+  <ol>
+    <li><b>P0 exists for live fires, and its contents rotate.</b> A single recorded predecessor link from a bug can park an entire program — as 2557 and 2699 did to Regime Forecasting until they closed — and data-starvation bugs act as de facto gates even with no link recorded. This list describes the ordering logic only; the current live status (what's open, resolved, or newly on fire) lives in the tiles at the top, which are refreshed with every pull.</li>
+    <li><b>P1 is three independent tracks</b> — runtime resilience (F2598), migration completion (F2599), and delivery-truth hygiene (2612/2613, mesh policy) — they share no dependencies and can be worked by three agents/streams concurrently.</li>
+    <li><b>P2 is the highest-leverage column on the board.</b> The July 28 grading found the governed approval pipeline unreachable by construction: five canonical gates have zero producers. 2609, 2610, 2611 and 2614 are deliberately small stories that give each gate its first producer — and they are recorded predecessors of the two hardest AA 2.0 features. Do these before any AA 2.0 feature work.</li>
+    <li><b>P3 items are the entry tickets to AA 2.0.</b> Each maps to exactly one AA 2.0 feature (1232→2095, 291→2096, 302→2099, 257+2022→2097, 265+1180→2098). They are mutually independent — parallelize freely.</li>
+    <li><b>AA 2.0 features unlock in three waves</b>, now shown as separate columns: P4 foundations (2092, 2093, 2095, 2096, 2100 — all gated only on P0–P3 work, all parallel) → P5 evidence &amp; workstation (2094, 2099 — need the P2 evidence stories) → P6 engine then certification (2097, then 2098, which needs the paper book's live-forward clock to have been running). 2098 is the end of the critical path.</li>
+    <li><b>Regime Forecasting is your parallel lane</b> — a different team, sequential phases 0→1→2→3, only touching the main path at 2557 (start) and 2375/2390 (which later unlock Clustering).</li>
+    <li><b>Clustering and Commodity stay parked.</b> Clustering's first features have recorded predecessors in Regime Phase 2; Commodity is tagged queued-behind-aa-2.0. Starting either early spends capacity ahead of their gates.</li>
+  </ol>
+</div>
+
+<div class="notes written">
+  <h2>Historical planning notes — not live status</h2>
+  <p>These retained notes describe earlier planning decisions and dated observations; their state and readiness claims are not refreshed. Use the current card badges and work breakdown above for live work-item state. Within a phase, work can run in parallel once its own named predecessors are satisfied.</p>
+
+  <h3><span class="ph">P0</span>Unblock — days, live fires first</h3>
+  <ul>
+    <li><b>✓ Done — worker outage:</b> Bug 2597 (caller-job-name rename broke control-plane allow lists) closed 07-28.</li>
+    <li><b>✓ Done — supply-chain hole:</b> Bug 2556 (internal contracts package claimable on public PyPI) closed 07-31.</li>
+    <li><b>✓ Done — production config drift:</b> Stories 2600 (secret mapping, closed 07-31) and 2601 (control-plane auth drift, closed 07-30).</li>
+    <li><b>✓ Done — failing scheduled jobs:</b> Bug 2557 (gold-regime, runner-risk-daily, free-float-collection, backtests-canary) closed 08-01. All four original P0 items are now closed.</li>
+    <li><b>✓ Done — the write-privilege bug cluster:</b> Bugs 2699 and 2708 closed 08-03, 2786 closed 08-01, and recovery verified 08-04 (Story 2785 ✓). Only Bugs 2784 and 2702 remain, both Resolved awaiting final verification.</li>
+    <li><b>✓ Done — stale market data:</b> Bug 2798 (gold.market_data 12 trading days stale, the de facto regime data blocker) closed 08-04. The regime pipeline had fresh data again — briefly.</li>
+    <li><b>✓ The watermark failure class is closed.</b> Bugs 2845 (gold-regime-job), 2846 (FX-weekend calendar lookback) and 2823 (gold currency-intraday) all closed 08-16, and Feature 2844 closed with them — F2844 did what it was created for, root-causing a class rather than patching instances. Epic 2843 stays open as the standing maintenance home for the next batch.</li>
+    <li><b>✓ Done — the write-privilege bug:</b> Bug 2783 (Schwab OAuth blocked on a missing INSERT privilege) closed 08-22, on its fourth recurrence of that class. Note the class is not provably retired: siblings 2784 and 2822 are still only Resolved, so the "every new table is born unwritable" default-privileges problem has a fix in flight but no verified close.</li>
+    <li><b>✓ The release-pipeline class now has an owner.</b> Feature 3221 ("Release and deploy pipeline reliability") was created 08-26 under Epic 2843, and its stated rationale is precisely the argument this board made: five bugs had accumulated against the release and deploy path with no owning feature — 3220, 3214, 2861, 2855, 2559 — and it groups them into three defect classes rather than five incidents: <i>version and provenance skew</i> (2559, where deploy compiles its YAML from main while the tree is rewound to the release commit; 2861, where a published wheel's bytes differ from the hash its own manifest attested), <i>cross-pipeline coupling that fails at validation before any work starts</i>, and an <i>unreplaceable canary shape</i>. 3214 is already Closed. <b>Both gaps this board raised are now resolved.</b> (a) F3221 originally parented only 2855, 3220 and 3214, leaving 2861 and 2559 — the two bugs it cites as its clearest evidence of provenance skew — under Task 2828 and Story 2086. Both were re-parented into F3221 on 08-28, so the feature now holds all five bugs it names. (b) <b>Bug 3225 was <i>not</i> 3220's root cause</b> — that earlier reading was wrong. They are two distinct defects that happened to break the same deploy step: 3225 was an unsupported merge-patch media type on the Container Apps PATCH request (fixed 08-26), while 3220 was a container-identity fault — <code>az containerapp job update --container-name notification-email-canary</code> found no container by that name, because infra creates the job with a placeholder named <code>neutral-bootstrap</code>, so az <i>appended</i> a second container instead of replacing the placeholder; the readback then tested <code>containers[0].command</code>, which was the placeholder, and a bare <code>test</code> under <code>set -e</code> exited 1 with no message. 3220 closed separately on 08-27. Its own write-up makes the general point explicitly: deploy-prod had been red since run 18538 with several distinct causes stacked behind one another, so clearing one reveals the next — which is exactly the argument for F3221 existing.</li>
+    <li><b>✓ F3221 finished the job it was created for, and kept going.</b> By 08-30 all five founding bugs are Closed and the feature has grown to 25 children — a six-wave restructure of the deploy pipeline, with Waves 0 (deployed-source baseline tags), 1 (decouple pipeline tests from pipeline text), 3 (branch policies and approval timeout), 4 (parallel Container Apps apply) and 5 (agent-tree reconciliation) all landed. <b>Wave 2 (Task 3258) — replace the tip-of-main invariant and restructure the deploy pipeline — was the one still Active</b>, and it was the most consequential: Bug 3327 documents the defect it fixes, where <code>validate_promotion_freshness</code> requires a release's source SHA to <i>equal</i> the live main tip at deploy time. Main moves constantly here — four merges in a single working session on 08-25 — so any merge between cutting a release and deploying it fails the gate. That is a race, not a flake. 3327 itself was parented nowhere, so the bug and the wave that fixed it were not linked. <b>✓ Closed out 09-10: Wave 2 landed and F3221 itself Closed at 12:17Z</b>, retiring the whole class this Feature was opened to own.</li>
+    <li><b>⚠ The next ownerless cluster has already formed.</b> Open bugs went 30 → 45 and unparented bugs 8 → 20 in two days. Three clusters account for most of it, and each has one mechanism: <b>options-jobs deploy manifests</b> (3369 undefined deploy variables, 3370 ten unprovisioned ADO variables, 3371 undefined variables in the OPRA manifests, ✓3318 missing infra Starter role assignments) — the same shape F3221 was created to retire; <b>CI governance gates that don't hold</b> (3327 main-tip race, 3314 inert drift waivers, 3316 baseline generator hashing build residue, 3287 sentinel blind to structural drift, 3289 hardcoded App Insights names); and <b>E*TRADE broker connectivity</b> (3274 callback_rejected on every scheduled run, 3275 OAuth token store intermittently unavailable). The options cluster is the clearest candidate for the F2844 / F3202 / F3221 treatment. <b>Update 09-02 — the options cluster cleared itself:</b> 3318, 3370 and 3371 Closed and 3369 Resolved, without an owning feature. A useful correction to the pattern: a cluster whose members share a mechanism but are each individually cheap does not need a feature; escalation earns its keep when the fix is architectural, not when it is four config edits.</li>
+    <li><b>✓ Done — the release blockade.</b> Bug 3384 (jobs security gate failing on a requirements lock hash mismatch: <code>pip_audit</code> aborting on run 20293, which cascaded into release 20308 failing its traceability gate) was raised and <b>closed the same day, 09-02</b>. Releases and production deploys are flowing again, and no hard blocker currently sits on the board.</li>
+    <li><b>⚠ One defect is being tracked three times.</b> Bug 3327 (opened 08-29, run 19764) and Bug 3380 (opened 08-31, runs 19958 and 20170) describe the same <code>PromotionFreshnessError</code> race, and Task 3258 — F3221's Wave 2 — is the fix already in flight. 3380 contributes the sharpest framing: revalidation runs <i>after</i> the approval gate, main merges roughly every one to two hours, and the release-plus-deploy-plus-approval cycle takes 30 to 45 minutes, so deploys lose the race by construction and it is not specific to one author. Consolidate the two bugs and link them to 3258 before the same fix is written twice. <b>Update 09-05 — it resolved asymmetrically, and that is worse than either outcome.</b> Bug 3380 closed as "fixed and verified", while 3327 — the same defect, filed first and with the root cause pinned to <code>validate_promotion_freshness</code>'s <code>if release_sha != main_sha</code> — is still New and unparented, and Task 3258 is still Active. Three records of one defect disagreed about whether it was fixed, so the question was settled against the code rather than the board. <b>Verdict: the gate is gone.</b> Control-plane PR 2961 ("Remove production rollback paths") deleted <code>scripts/automation/promotion_freshness.py</code>, <code>scripts/azure-devops/validate_promotion_freshness.py</code> and <code>tests/automation/test_promotion_freshness.py</code> — 262 lines in total — and no file on <code>origin/main</code> now compares a release SHA against the live main tip. 3380's closure was correct; <b>3327 is a stale record of deleted code and should be closed</b>; and Task 3258's remaining scope is the broader pipeline restructure, not the invariant, which is already gone. The lesson generalises: ground a work item against <code>origin/main</code> before scheduling it, because bugs here routinely outlive their fixes.</li>
+    <li><b>Throughput has a structural ceiling.</b> Bug 3373: <code>generate_runtime_ownership_baseline.py</code> hashes twelve inventories — routes, schemas, dependencies, migrations, tables, postgres schemas, configuration, secrets, workloads, identities, storage and pipelines — into a single <code>sourceTreeInventorySha256</code>, committed into two tracked files. Most substantive changes touch at least one of those twelve, so most branches must regenerate the digest, and every concurrent pull request conflicts on that one derived line. That is serialization by construction, sitting on top of a CI pool licensed for four parallel jobs.</li>
+    <li><b>⚠ Governance that does not exist.</b> Bug 3314: <code>.codedrift.yml</code>'s <code>detection.approved_behavioral_changes</code> key has zero references in the sentinel script, while its three sibling keys under the same block have five, three and five. The four entries added under PIPE-AUTO-001 to record reviewed behavioural changes suppress nothing and affect no score. Anything recorded there as an approved waiver is inert — confirmed while unblocking PR 2847, where adding entries would not have changed the gate result. F3221's task 3269 (split approval records per path) and 3268 (point the CodeDrift baseline at the working strategy) are adjacent but neither implements the key.</li>
+    <li><b>✓ The "green job, empty table" class finally has an owner too.</b> Feature 3296 ("Content freshness SLOs: alert on gold data dates, not job status") was created under Epic 2843 after the 08-26 production census found <b>six dark data domains sitting behind 256 green sync buckets</b> — monitoring watched pipeline execution and never data content, so a job could pass while its table stood still. Three tasks: a declarative per-table catalog of expected cadence and maximum content lag (3297), a scheduled evaluator computing lag from actual data dates (3298), and breach alerting through the Story 2603 notification path plus Azure Monitor scheduled-query rules, including a dead-monitor rule (3299). Two live bugs are instances of exactly this class and should be verified against it: 3293 (regime publication stale since 07-30 — the input-readiness retry targets the newest incomplete macro day) and 3368 (free-float and market-supplemental jobs silently skip symbols whose <code>core.symbols.status</code> is NULL). <b>Update 09-02 — F3296 Closed</b>, four days after it opened, with 3368 closed alongside it. Bug 3293 is still open and has been re-root-caused: the macro rate and credit inputs never populate at all, and the publisher keeps retrying the incomplete day. It is the natural first test of whether the new content-date SLOs actually fire — a domain that has been dark since 07-30 is exactly what they were built to catch.</li>
+    <li><b>Intraday monitor, still live:</b> Bug 2880 (Active) — the intraday-monitor handoff blocked by a Massive-stocks WebSocket connection limit — matters beyond ops because F170's story 1180 is a recorded gate of certification (2098). It has been escalated properly: Feature 3202 (single-owner live stock provider stream) was created 08-20 to converge every monitor onto one provider connection, and is nearly done — feasibility (3203) and cutover (3208) Closed, contracts (3204) Resolved, both fan-out stories (3205 C1, 3206 C2) now Active, only C3 topic-demand propagation (3207) still New. <b>Its scope was deliberately widened on 08-28:</b> Bug 3213 (intraday monitor rejects queued stale or removed-subscription events) was re-parented out of F170 and into F3202, because its two failure modes land squarely on two stories F3202 already has open. The age-fence half — the Jobs sidecar validates event age at observation, but the control plane revalidates at receipt, so queue and transport time consume the budget (p90 accepted age 4.665s against a 5s fence, 306 rejections in one two-hour window) — is the same receipt path story 3206 (C2) is rewriting. The removed-subscription half — refresh leaves queued events for symbols dropped from the active snapshot — is what story 3207 (C3) governs. <b>The 5-second fence is a hard freshness contract, not a tunable</b>, so the fix has to be architectural: move validation so transport time cannot eat the budget. Fixing these outside F3202 would have meant two efforts editing the same receipt path.</li>
+    <li><b>Settle delivery authority:</b> ⚠ Story 2085 (one production DDL owner) was closed 07-31 but REOPENED 08-10 — the recorded gate on Feature 2095 is live again. Story 2086 (stack promotion authority) is Active. Both in flight.</li>
+  </ul>
+
+  <h3><span class="ph">P1</span>Foundations — weeks, three independent tracks</h3>
+  <ul>
+    <li><b>Runtime resilience (Feature 2598):</b> ✓ Story 2602 (runtime loss-limit enforcement) closed 08-21 — after a close on 08-10 and a reopen the next day, the capital-readiness milestone has now landed. Also closed since: 2604 (failed-job recovery hardening) and Task 2799 (BuildKit cache integrity). Still Active: 2603 (alert wiring). Still New: 2607 (market-clock service). Resolved awaiting verification: 2702, 2784, 2822. <b>⚠ Both DB-hardening predecessors of Feature 2093 are now Removed</b> — 2605 (PostgreSQL hardening, 07-31) and 2606 (immutable audit archive, 08-11). Either that scope moved somewhere real or two recorded gates were silently deleted; resolve before 2093 starts.</li>
+    <li><b>✓ Private platform migration (Feature 2599) — COMPLETE, closed 08-11:</b> fleet restored (2554), legacy API retired (2555), production Redis provisioned (2021), handoff doc refreshed (2558). One of the three P1 tracks is fully done.</li>
+    <li><b>Delivery truth (under Features 2037 and 646):</b> ✓ Story 2613 (Postgres transport doctrine ADR) closed 08-23. ⚠ Story 2612 (CI-enforce the cross-repo compatibility gate) was <b>Removed</b> 08-21 — worth confirming that gate moved somewhere real rather than simply going away, given the release-integrity bugs now open. Remaining: the mesh-compatibility trio 2048/2049/2050 plus Task 1107 — together the predecessors of Features 2092 and 2093. Bug 2024 (next-open signal semantics, contracts-first) belongs here too — Resolved 08-06, one verification away from clearing a 2093 gate.</li>
+    <li><b>Disaster-recovery readiness (Feature 2070)</b> — predecessor of Feature 2100; independent of everything above.</li>
+    <li><b>Execution platform:</b> finish Feature 1232 (durable PostgreSQL workflow orchestration) — predecessor of Feature 2095, now down to one open story (1896, Active).</li>
+    <li><b>Regime lane (parallel team):</b> Phase 0 is underway — story 2328 (strict Gold-regime publication readiness) is Active and both recorded gates are closed. ⚠ The clear runway it briefly had has closed again: two Active bugs are now parented directly to Feature 2327 — 3187 (Gold Regime required-input completeness regressed after PR 2644) and 3200 (an unused infrastructure verifier assignment blocking Jobs deployment). Neither is a recorded predecessor link, so the board draws no arrow, but both are real blockers on this lane's own data path. <b>Update 08-26 — all three cleared:</b> story 2328 is now <b>Closed</b>, the first Phase 0 story to land, and bugs 3187 (retitled to "Complete Gold Regime provider-delay recovery and serving proof") and 3200 both closed. Phase 0 stands at 1 of 5 stories done with no blocker of any kind — the cleanest position this program has held.</li>
+  </ul>
+
+  <h3><span class="ph">P2</span>Evidence plane — the queue-jumpers</h3>
+  <p>The governed approval pipeline is currently unreachable: five canonical gates have no producer anywhere in the system. These four small stories give each gate its first producer, and each is a recorded predecessor of an AA 2.0 feature — which is why they outrank everything except live fires.</p>
+  <ul>
+    <li><b>Story 2609:</b> out-of-sample / walk-forward producer for the existing governance gate → unlocks part of Feature 2097.</li>
+    <li><b>Story 2610:</b> paper book v1 on the existing contract surface. This starts the live-forward evidence clock, so every week of delay pushes out certification (Feature 2098) by a week — start it early even if it runs unattended.</li>
+    <li><b>Story 2611:</b> interim realistic cost model (static spread + participation cap, non-zero defaults), and <b>Story 2614:</b> the PIT price-storage and symbol-identity spike → together the entry ticket to Feature 2094 and part of 2097.</li>
+    <li><b>Stories 2045, 2046, 2082:</b> PIT-leakage auditor, negative-results registry, and the Currency-Intraday write-amplification fix — remaining predecessors of Feature 2094.</li>
+    <li><b>Feature 1518 — Active, reopened 08-11:</b> corporate-action and PIT integrity for backtests, the first evidence-plane feature actually in flight, with 2057 (immutable dataset receipts) and 2058 (snapshot-set registry) both Active. Not a recorded predecessor of anything, but it builds exactly the substrate Feature 2094 needs — worth keeping aligned with the 2614 spike so the two don't diverge.</li>
+    <li><b>Execution platform in parallel:</b> Feature 2022 (security-level paper shadow book and reconciliation) and Feature 257 (account risk controls) — the other two predecessors of Feature 2097.</li>
+    <li><b>Regime lane:</b> Feature 2346, Phase 1 feature expansion from in-house data.</li>
+  </ul>
+
+  <h3><span class="ph">P3</span>Platform predecessors — the AA 2.0 entry tickets</h3>
+  <ul>
+    <li><b>Feature 265</b> (shorting across strategy, backtest, execution, reporting) and <b>Story 1180</b> (intraday reconciliation validation) → predecessors of Feature 2098.</li>
+    <li><b>Feature 291</b> (centralized rate limiter) → predecessor of Feature 2096. <b>Effectively delivered:</b> all three stories (292 policy model, 293 enforcement, 294 observability) closed 08-16; only the feature's own state transition remains, after which 2096's gate is clear.</li>
+    <li><b>Feature 302</b> (MCP actions) and <b>Story 2044</b> (evidence copilot over MCP receipts) → predecessors of Feature 2099. Story 308 (controlled code access) closed 08-16, leaving 303 (consolidated MCP backtest actions) as F302's only open child. Feature 295 (MCP data access) is the third, reopened gate.</li>
+    <li><b>Feature 1964</b> (spot-crypto execution engine) — optional; only needed if certification under Feature 2098 should cover crypto. Skip it to shorten the critical path.</li>
+    <li><b>Regime lane:</b> Feature 2374, Phase 2 probabilistic modeling, including Story 2375 (PIT ML training/scoring foundations) and Story 2390 (economic validation of regime probabilities) — the two stories that later unlock the Clustering program.</li>
+  </ul>
+
+  <h3><span class="ph">P4</span>AA 2.0 foundations — every gate traces to P0–P3</h3>
+  <ul>
+    <li><b>Delivery and contracts:</b> Feature 2092 (seven-repo delivery and runtime truth ← 1107, 2048–2050, 2086) and Feature 2093 (Contracts 8.0 / Runtime-Common 6.0 ← Feature 2037 hygiene and Bug 2024, Resolved; ⚠ its other two recorded predecessors — 2605 PostgreSQL hardening and 2606 audit archive — have both been Removed; confirm that scope is genuinely covered elsewhere before treating those gates as satisfied).</li>
+    <li><b>Runtime ownership and planes:</b> Feature 2095 (workload/DB/identity ownership ← 1232; its other predecessor 2085 closed 07-31; gained stories 2703/2704 on 07-31), Feature 2096 (privilege-separated planes ← 291), Feature 2100 (capital-safety observability ← 2070).</li>
+    <li><b>All five are mutually independent</b> — each starts the moment its own arrows complete; none waits for the others.</li>
+    <li><b>Regime lane:</b> Feature 2398, Phase 3 governed SPY/cash target-weight automation, roughly co-times with this column.</li>
+  </ul>
+
+  <h3><span class="ph">P5</span>AA 2.0 evidence &amp; workstation — needs the P2 evidence stories</h3>
+  <ul>
+    <li><b>Feature 2094</b> (PIT data and immutable evidence plane ← the P2 stories 2614, 2045, 2046, 2082).</li>
+    <li><b>Feature 2099</b> (research workstation and evidence copilot ← MCP actions 302, copilot story 2044, and Feature 295 MCP data access — reopened 08-11, so this gate is live again).</li>
+  </ul>
+
+  <h3><span class="ph">P6</span>Engine, certification &amp; downstream — the critical path ends here</h3>
+  <ul>
+    <li><b>Engine:</b> Feature 2097 (deterministic research, book, risk, TCA, attribution engine ← 2609, 2614, 2022, 257) — the deepest gate set on the board except one.</li>
+    <li><b>Certification, last by construction:</b> Feature 2098 (equities-first certification and policy-bound autonomous execution ← 2610, 265, 1180, optionally 1964). It depends on the paper book's live-forward clock having accumulated runtime, which is why 2610 starts back in P2.</li>
+    <li><b>Queued programs:</b> Epic 2487 (Clustering Research) starts only after Stories 2375 and 2390; Epic 1679 (Commodity Intelligence) is tagged queued-behind-aa-2.0; Epics 174, 196, 275, 309 (UI operator redesign — F727 reopened 08-11, Closed again 09-25) and the remaining Epic 227 UI features (F1516 options backtests also reopened) are demand work — schedule opportunistically, never ahead of the gates above.</li>
+    <li><b>New program (added 07-31):</b> Epic 2633 — Probability and Option-Pricing Analytics (Black-Scholes family), phased as Features 2634–2638 (BS-F0 shared probability-math kernel → BS-F1 local-only quick wins → BS-F2 pricing kernel → BS-F3 opt-in allocation mechanics → BS-F4 data-dependent factor expansion). It has no recorded predecessors, so nothing on the board blocks it — BS-F1 in particular is deliberately local-only. The trade-off is purely capacity: every hour spent here is an hour not spent on the gated critical path.</li>
+    <li><b>New program (added 08-13):</b> Epic 2870 — "Axiom", an evidence-bound autonomous multi-asset reflex lab, Features 2871–2875 (F1 Black Box execution-intent lineage → F2 Shockwave cross-asset event memory → F3 Blast Shield recovery orchestrator → F4 Gatekeeper autonomous promotion → F5 Reflex counterfactual execution). Unlike the BS and CPD programs, Axiom arrived <b>properly sequenced</b>: recorded predecessor links gate the epic behind AA 2.0 (2091) and certification (2098), and its features chain into the AA 2.0 story graph (2094, 2109/2111, 2127/2128, adapter certifications, promotion gates). Nothing to schedule now — it's the clearest statement yet of what comes after AA 2.0.</li>
+    <li><b>New program (added 08-01):</b> Epic 2710 — [CPD] Control-plane decomposition into isolated, maintainable runtime domains, Features 2711–2717 (CPD-F1 target architecture ✓ closed 08-11 → CPD-F2 strip management-plane authority from runtimes → CPD-F3 independent edge API and worker → CPD-F4 one migration owner and least-privilege DB roles → CPD-F5 modular monolith → CPD-F6 private trade-control runtime → CPD-F7 operationalize). Ungated, but <b>⚠ its scope overlaps AA 2.0</b>: CPD-F4 restates the DDL-ownership work of 2095/2114, and CPD-F6 restates the privilege-separated execution plane of 2096/2120. Decide which program owns those outcomes before starting either side, or the two will collide in the same repos.</li>
+  </ul>
+</div>
+
+<script>
+(function () {
+  // Single source of truth for refresh dates — a refresh updates these two
+  // lines and the injected header/tile text follows.
+  var SNAPSHOT = "2026-09-14";
+  var DELTA_FROM = "09-13";
+  // Server clock at pull, not local.
+  var REFRESHED = "13:32 UTC";
+  document.getElementById("snap-date").textContent = SNAPSHOT + " · " + REFRESHED;
+  document.getElementById("delta-range").textContent = DELTA_FROM + " → " + SNAPSHOT.slice(5);
+
+  // Open child stories (and, for epic cards, child features) per board card,
+  // as of SNAPSHOT above. Closed/Removed children are omitted.
+  // Format: [id, "Type", "State", "Title"].
+  var WI_EDIT = "https://dev.azure.com/rdprokes/AdaptiveAssetAllocation/_workitems/edit/";
+  var CHILDREN = {
+    c174: [[184,"F","Active","Economic catalyst jobs"],[189,"F","New","News and sentiment lookup"],[1655,"F","New","Redesign prediction-market jobs to control raw storage growth"],[3295,"US","Active","News sentiment: execute the repaired stage chain end to end, then decide populate or retire"]],
+    c1679: [[1680,"F","New","CI-F1 Commodity contracts and semantic foundation"],[1681,"F","New","CI-F2 Alpha Vantage ingestion and Bronze/Silver data"],[1682,"F","New","CI-F3 Commodity Gold market features and context"],[1683,"F","New","CI-F4 Equity commodity exposure and tailwind features"],[1684,"F","New","CI-F5 Strategy and point-in-time backtesting integration"],[1685,"F","New","CI-F6 Quality, observability, replay, and operations"],[1686,"F","New","CI-F7 Test, deployment, documentation, and staged rollout"]],
+    c1964: [[1970,"US","New","Validate, secure, release, soak, and canary the spot-crypto engine"]],
+    c2045: [[2893,"Task","New","Implement deterministic Research-QA auditor core in jobs"]],
+    c2051: [[2056,"US","New","Validate QQQ 5-minute 5-day/20-day SMA benchmark in paper"]],
+    c2092: [[2101,"US","New","Build-once package provenance"],[2102,"US","New","Hermetic seven-repository compatibility gateway"],[2103,"US","New","Immutable stack manifest and promotion authority"],[2104,"US","New","Typed runtime inventory, drift, and cost evidence"],[2424,"US","New","Seven-repository delivery and runtime-truth rebaseline"]],
+    c2093: [[2105,"US","New","Equity instrument, venue, time, and precision model"],[2106,"US","New","Market-event, publication, and evidence contracts"],[2107,"US","New","Portfolio, risk, execution, and promotion contracts"],[2108,"US","New","Runtime-common modularization and generated-client boundaries"],[2429,"US","New","Research and execution boundary contracts for the seven-repo platform"]],
+    c2094: [[2109,"US","New","Content-addressed dataset registry and correction lineage"],[2110,"US","New","Bitemporal equity security master, corporate actions, and features"],[2111,"US","New","Canonical market-event archive, gap detection, and deterministic replay"],[2112,"US","New","Delta publication and serving consistency"],[2113,"US","New","Experiment evidence and research-promotion gates"],[2434,"US","New","Certified point-in-time 1-minute and 5-minute equities evidence"],[2591,"US","New","Incremental feature engine, checkpoint recovery, and historical/live parity"],[2614,"US","New","Spike: PIT price storage and symbol-identity approach for the evidence plane"]],
+    c2095: [[2114,"US","New","Integrate sole DDL ownership and narrow runtime roles"],[2115,"US","New","Capability-based workload topology and seven-repo catalog"],[2117,"US","New","Durable claims, scheduler consolidation, and outbox recovery"],[2118,"US","New","Managed identities, secrets, and environment contract"],[2439,"US","New","Research and execution workload, identity, and DDL ownership"],[2587,"US","New","Market clock and versioned session-event authority"],[2795,"US","New","Gate deploys on Entra app-role assignment so enforcement cannot ship before the grant"]],
+    c2096: [[2119,"US","New","API v2 query, command, internal, and generated-client boundary"],[2120,"US","New","Human-signed execution-plan kernel and broker-isolated worker"],[2121,"US","New","Control workers, reconciliation, and notifications"],[2122,"US","New","Measured realtime scale, transient state, and quotas"],[2123,"US","New","Capability separation and platform-observer boundary"],[2444,"US","New","Candidate-to-permit authority boundary"]],
+    c2097: [[2124,"US","New","Deterministic signal, portfolio, risk, and accounting kernels"],[2125,"US","New","Authoritative expected, paper, and live book accounting"],[2126,"US","New","Aggregate risk, exposure, and scenario controls"],[2127,"US","New","Equity execution simulator, TCA, capacity, liquidity, and borrow"],[2128,"US","New","Out-of-sample validation, attribution, and human-signed promotion engine"],[2449,"US","New","Autonomous sandbox experiment factory and model governance"],[2454,"US","New","Authoritative execution books and calibrated Alpaca TCA"],[2459,"US","New","Adaptive multi-strategy equity risk allocator"],[2465,"US","New","Intraday equities frontier laboratory"]],
+    c2098: [[2129,"US","New","Equity adapter interface and certification harness"],[2130,"US","New","Alpaca equities and ETF adapter certification"],[2131,"US","New","Spot FX adapter and multi-currency certification"],[2132,"US","New","Spot crypto 24Ã—7 adapter certification"],[2133,"US","New","Listed-options adapter certification"],[2134,"US","New","Prediction-market adapter certification"],[2135,"US","New","Compressed evidence-gated autonomy, kill switch, and live reconciliation"],[2471,"US","New","Compressed Alpaca equities promotion ladder"]],
+    c2099: [[2137,"US","New","Observe, Research, Design, and Validate workspaces"],[2138,"US","New","Execute and Admin safety workspaces"],[2140,"US","New","Evidence copilot with receipts, evaluations, and no authority"],[2476,"US","New","Research-governance and execution-book operator workspaces"]],
+    c2100: [[2141,"US","New","End-to-end telemetry, SLO, provenance, and cost controls"],[2142,"US","New","Measured private connectivity and stateful-resource resilience"],[2143,"US","New","Full-stack recovery, reconciliation, and kill-switch drills"],[2144,"US","New","Selective state migration and shadow verification"],[2145,"US","New","Evidence-based equity cutover and v1 retirement"],[2481,"US","New","Twenty-four-hour trading operations and on-call control"],[3337,"US","New","Content-aware batch freshness SLOs and Gold publication safety"]],
+    c2374: [[2380,"US","New","Publish calibrated three-head regime-prob-v1 (observe-only)"],[2385,"US","New","Future research: latent-state and multi-horizon regime models"],[2390,"US","New","Validate regime probabilities and SPY/cash economic value"],[2394,"US","New","Observe regime probabilities, data quality, calibration, and drift"]],
+    c2398: [[2399,"US","New","Versioned SPY/cash allocation policy and decision parity"],[2403,"US","New","Evidence-bound staged promotion, suspension, and rollback"],[2407,"US","New","Operator promotion and automated allocation audit UI"],[2410,"US","New","Future: read-only regime evidence through the MCP data server"],[2561,"US","New","Control Plane: materialize immutable daily regime allocation decisions"],[2565,"US","New","Control Plane: execute and reconcile bounded SPY reductions"]],
+    c2487: [[2488,"F","New","CR-F1 - Shared clustering contracts and research foundation"],[2497,"F","New","CR-F2 - Daily and five-minute market-state clustering"],[2517,"F","New","CR-F3 - Asset correlation clustering"],[2525,"F","New","CR-F4 - Strategy behavior clustering"],[2534,"F","New","CR-F5 - Validation, lineage, and research guardrails"]],
+    c2609: [[2905,"Task","New","Persist and surface experimentContext through control-plane backtest submission"],[3425,"Task","New","Persist immutable OOS fold evidence and expose governance readback"],[3426,"Task","New","Orchestrate locked walk-forward folds with restart-safe trial budgets"],[3427,"Task","New","Evaluate locked OOS metric criteria and record deterministic experiment conclusions"]],
+    c2633: [[2634,"F","Active","BS-F0 Phase 0 - Shared probability-math kernel groundwork"],[2635,"F","New","BS-F1 Phase 1 - Local-only quick wins (no shared-contract changes)"],[2636,"F","Active","BS-F2 Phase 2 - Pricing kernel and additive analytics"],[2637,"F","New","BS-F3 Phase 3 - Behavior-changing allocation mechanics (opt-in)"],[2638,"F","New","BS-F4 Phase 4 - Data-dependent factor expansion (Merton DD, implied-vol features)"]],
+    c2710: [[2712,"F","Active","[CPD-F2] Remove management-plane and provisioning authority from runtimes"],[2713,"F","New","[CPD-F3] Harden edge API and durable worker as independent workloads"],[2714,"F","New","[CPD-F4] Enforce one migration owner and least-privilege runtime database roles"],[2715,"F","New","[CPD-F5] Convert the repository into a modular monolith"],[2716,"F","New","[CPD-F6] Introduce a private, privilege-separated trade-control runtime"],[2717,"F","Active","[CPD-F7] Operationalize the decomposition and govern any future extraction"],[3240,"F","Active","Control-plane fences and diet: execute the repo decomposition plan (CPD-F5 phase A)"]],
+    c2870: [[2871,"F","New","F1 - Black Box: Execution-Intent Lineage and Rejected-Alternative Receipts"],[2872,"F","New","F2 - Shockwave: Point-in-Time Cross-Asset Event Memory and Analog Lab"],[2873,"F","New","F3 - Blast Shield: Evidence Blast-Radius and Recovery Orchestrator"],[2874,"F","New","F4 - Gatekeeper: Autonomous Promotion of Pinned Bundles Within a Fixed Constitution"],[2875,"F","New","F5 - Reflex: Counterfactual Cross-Venue Execution and Recovery Engine"]],
+  };
+  Object.keys(CHILDREN).forEach(function (cardId) {
+    var card = document.getElementById(cardId);
+    if (!card) return;
+    var wrap = document.createElement("div");
+    wrap.className = "stories";
+    var activeCount = 0;
+    CHILDREN[cardId].forEach(function (s) {
+      var a = document.createElement("a");
+      var cls = "st", marker = "";
+      if (s[2] === "Active") { cls += " active"; marker = "● "; activeCount++; }
+      else if (s[2] === "Resolved") { cls += " resolved"; marker = "◌ "; }
+      a.className = cls;
+      a.href = WI_EDIT + s[0];
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = marker + s[0];
+      a.title = s[1] + " " + s[0] + " · " + s[2] + " — " + s[3];
+      wrap.appendChild(a);
+    });
+    card.appendChild(wrap);
+    if (activeCount > 0 && !card.querySelector(".pill.act")) {
+      var ids = card.querySelector(".ids");
+      if (ids) {
+        var p = document.createElement("span");
+        p.className = "pill act";
+        p.textContent = "● " + activeCount + " active";
+        ids.insertAdjacentElement("afterend", p);
+      }
+    }
+  });
+
+  // Current state presentation: the refreshed state owns the badge and color.
+  // Curated completion pills remain historical context only while terminal.
+  document.querySelectorAll(".board .card").forEach(function (card) {
+    var st = card.getAttribute("data-state") || (card.classList.contains("done") ? "Closed" : "New");
+    if (st === "none") return;
+    var closed = st === "Closed" || st === "Done";
+    card.classList.toggle("done", closed);
+    card.classList.toggle("removed", st === "Removed");
+    card.querySelectorAll(".pill.done").forEach(function (pill) {
+      // Removed is off the backlog but does not mean the work was delivered.
+      pill.hidden = !closed && !(st === "Removed" && /^removed\b/i.test(pill.textContent.trim()));
+    });
+    var ids = card.querySelector(".ids");
+    if (!ids) return;
+    var b = document.createElement("span");
+    b.className = "stbadge " + st.toLowerCase();
+    b.textContent = st;
+    ids.insertAdjacentElement("afterend", b);
+  });
+  // End current state presentation.
+
+  // ---- Work breakdown. Computed from the board itself (lanes -> 7 phase cells
+  // -> cards, joined to CHILDREN) so every refresh keeps it current for free.
+  // Optional decoration: any failure here must never break the board.
+  try { (function () {
+    var host = document.getElementById("wv-body");
+    if (!host) return;
+    var STATES = ["New", "Active", "Resolved", "Closed"];
+    var CLS = { New: "s1", Active: "s2", Resolved: "s3", Closed: "s4", Removed: "sg" };
+    var phases = [].slice.call(document.querySelectorAll(".board .phasehead")).slice(1).map(function (h) {
+      var n = h.querySelector(".pnum"), p = h.querySelector(".pname");
+      return ((n ? n.textContent : "") + " " + (p ? p.textContent : "")).trim();
+    });
+    var labels = [].slice.call(document.querySelectorAll(".board .lanelabel"));
+    if (!labels.length || !phases.length) return;
+
+    var lanes = labels.map(function (lab) {
+      var name = "";
+      for (var k = 0; k < lab.childNodes.length; k++) {
+        if (lab.childNodes[k].nodeType === 3) name += lab.childNodes[k].textContent;
+      }
+      var cells = [], el = lab.nextElementSibling;
+      while (el && cells.length < phases.length && el.classList && el.classList.contains("cell")) {
+        cells.push(el); el = el.nextElementSibling;
+      }
+      return { name: name.trim(), cells: cells };
+    });
+
+    function zero() { var o = {}; STATES.concat(["Removed"]).forEach(function (s) { o[s] = 0; }); return o; }
+    var byPhase = phases.map(zero), byLane = lanes.map(zero), cardsByLane = lanes.map(zero);
+    var tot = zero(), cardTot = zero(), cardCount = 0, aggregates = 0;
+    lanes.forEach(function (lane, li) {
+      lane.cells.forEach(function (cell, pi) {
+        [].slice.call(cell.querySelectorAll(".card")).forEach(function (card) {
+          cardCount++;
+          // data-state wins over the "done" styling: a Removed card is styled done
+          // (it is off the board) but must not count as delivered.
+          var st = card.getAttribute("data-state") || (card.classList.contains("done") ? "Closed" : "New");
+          if (st === "none") aggregates++;                    // bucket cards: no single state
+          else if (cardTot[st] !== undefined) { cardsByLane[li][st]++; cardTot[st]++; }
+          (CHILDREN[card.id] || []).forEach(function (k) {   // open children only (Closed omitted at source)
+            var ks = k[2];
+            if (tot[ks] !== undefined) { byPhase[pi][ks]++; byLane[li][ks]++; tot[ks]++; }
+          });
+        });
+      });
+    });
+    var openTotal = tot.New + tot.Active + tot.Resolved;
+    var sumOpen = function (o) { return o.New + o.Active + o.Resolved; };
+    var sumCards = function (o) { return o.New + o.Active + o.Resolved + o.Closed + o.Removed; };
+
+    // ---- tooltip (one for the panel; values lead, series follow) ----
+    var tip = document.createElement("div"); tip.className = "wv-tip"; tip.hidden = true; document.body.appendChild(tip);
+    function showTip(evt, rowName, counts, keys, hot) {
+      while (tip.firstChild) tip.removeChild(tip.firstChild);
+      var h = document.createElement("div"); h.textContent = rowName; h.style.color = "var(--ink-faint)"; h.style.fontSize = "11px"; tip.appendChild(h);
+      keys.forEach(function (s) {
+        if (!counts[s]) return;
+        var r = document.createElement("div");
+        var key = document.createElement("i"); key.className = "k"; key.style.background = "var(--wv-" + (CLS[s] === "sg" ? "gray" : CLS[s]) + ")";
+        var v = document.createElement("b"); v.textContent = String(counts[s]);
+        var l = document.createTextNode(" " + s + (s === hot ? " ◂" : ""));
+        r.appendChild(key); r.appendChild(v); r.appendChild(l); tip.appendChild(r);
+      });
+      tip.hidden = false;
+      var x = (evt && evt.clientX != null) ? evt.clientX : 0, y = (evt && evt.clientY != null) ? evt.clientY : 0;
+      if (evt && evt.clientX == null && evt.target && evt.target.getBoundingClientRect) { var rc = evt.target.getBoundingClientRect(); x = rc.left + rc.width / 2; y = rc.top; }
+      tip.style.left = Math.min(x + 12, window.innerWidth - 200) + "px";
+      tip.style.top = Math.max(8, y - 44) + "px";
+    }
+    function hideTip() { tip.hidden = true; }
+
+    // ---- one stacked horizontal bar ----
+    function row(name, counts, keys, max, total) {
+      var r = document.createElement("div"); r.className = "wv-row";
+      var n = document.createElement("div"); n.className = "n"; n.textContent = name; n.title = name; r.appendChild(n);
+      var track = document.createElement("div"); track.className = "wv-track";
+      var bar = document.createElement("div"); bar.className = "wv-bar";
+      keys.forEach(function (s) {
+        var c = counts[s]; if (!c) return;
+        var seg = document.createElement("span");
+        seg.className = "wv-seg " + CLS[s];
+        seg.style.width = (max ? (c / max) * 100 : 0) + "%";
+        seg.tabIndex = 0;
+        seg.setAttribute("role", "img");
+        seg.setAttribute("aria-label", name + ": " + c + " " + s);
+        var on = function (e) { showTip(e, name, counts, keys, s); };
+        seg.addEventListener("pointermove", on); seg.addEventListener("focus", on);
+        seg.addEventListener("pointerleave", hideTip); seg.addEventListener("blur", hideTip);
+        bar.appendChild(seg);
+      });
+      track.appendChild(bar); r.appendChild(track);
+      var t = document.createElement("div"); t.className = "t"; t.textContent = total ? String(total) : "–"; r.appendChild(t);
+      return r;
+    }
+    function chart(title, sub, names, series, keys, sumFn) {
+      var box = document.createElement("div"); box.className = "wv-chart";
+      var h = document.createElement("h4"); h.textContent = title;
+      if (sub) { var sm = document.createElement("small"); sm.textContent = sub; h.appendChild(sm); }
+      box.appendChild(h);
+      var max = 0; series.forEach(function (o) { max = Math.max(max, sumFn(o)); });
+      names.forEach(function (nm, i) { box.appendChild(row(nm, series[i], keys, max, sumFn(series[i]))); });
+      return box;
+    }
+
+    // ---- KPI row ----
+    function kpi(label, value, detail) {
+      var k = document.createElement("div"); k.className = "wv-kpi";
+      var l = document.createElement("div"); l.className = "l"; l.textContent = label;
+      var v = document.createElement("div"); v.className = "v"; v.textContent = value;
+      var d = document.createElement("div"); d.className = "d"; d.textContent = detail;
+      k.appendChild(l); k.appendChild(v); k.appendChild(d); return k;
+    }
+    var kpis = document.createElement("div"); kpis.className = "wv-kpis";
+    var backHalf = 0; byPhase.forEach(function (o, i) { if (i >= 4) backHalf += sumOpen(o); });
+    var frontDone = phases.filter(function (_, i) { return sumOpen(byPhase[i]) === 0; }).length;
+    kpis.appendChild(kpi("Open work items", String(openTotal), tot.Active + " active · " + tot.New + " new" + (tot.Resolved ? " · " + tot.Resolved + " resolved" : "")));
+    kpis.appendChild(kpi("Cards closed", cardTot.Closed + " of " + (cardCount - aggregates), cardTot.Active + " active · " + cardTot.New + " new" + (cardTot.Removed ? " · " + cardTot.Removed + " removed" : "")));
+    kpis.appendChild(kpi("In P4–P6 (AA 2.0)", String(backHalf), openTotal ? Math.round(backHalf / openTotal * 100) + "% of open work" : "–"));
+    kpis.appendChild(kpi("Phases with nothing open", String(frontDone) + " of " + phases.length, "No open children; not delivery proof"));
+    host.appendChild(kpis);
+
+    // ---- charts ----
+    var OPEN = ["New", "Active", "Resolved"], ALL = ["New", "Active", "Resolved", "Closed", "Removed"];
+    var charts = document.createElement("div"); charts.className = "wv-charts";
+    charts.appendChild(chart("Open work by phase", "items under the cards in each column", phases, byPhase, OPEN, sumOpen));
+    charts.appendChild(chart("Open work by lane", "items under the cards in each program", lanes.map(function (l) { return l.name; }), byLane, OPEN, sumOpen));
+    charts.appendChild(chart("Cards by state, per lane", aggregates ? aggregates + " bucket card excluded" : "", lanes.map(function (l) { return l.name; }), cardsByLane, ALL, sumCards));
+    host.appendChild(charts);
+
+    // ---- legend (always present: five series) ----
+    var leg = document.createElement("div"); leg.className = "wv-legend";
+    ALL.forEach(function (s) {
+      var e = document.createElement("span"); var sw = document.createElement("i");
+      sw.style.background = "var(--wv-" + (CLS[s] === "sg" ? "gray" : CLS[s]) + ")";
+      e.appendChild(sw); e.appendChild(document.createTextNode(s)); leg.appendChild(e);
+    });
+    host.appendChild(leg);
+
+    // ---- table twin + note ----
+    var foot = document.createElement("div"); foot.className = "wv-foot";
+    var note = document.createElement("span"); note.textContent = "Bar length is proportional within each chart; totals at the tip. Hover or focus a segment for every value.";
+    var btn = document.createElement("button"); btn.type = "button"; btn.textContent = "Show table";
+    foot.appendChild(note); foot.appendChild(btn); host.appendChild(foot);
+    var table = document.createElement("table"); table.className = "wv-table"; table.hidden = true;
+    function trow(cells, head) {
+      var tr = document.createElement("tr");
+      cells.forEach(function (c) { var td = document.createElement(head ? "th" : "td"); td.textContent = String(c); tr.appendChild(td); });
+      return tr;
+    }
+    table.appendChild(trow(["Group", "New", "Active", "Resolved", "Open total"], true));
+    phases.forEach(function (p, i) { var o = byPhase[i]; table.appendChild(trow([p, o.New, o.Active, o.Resolved, sumOpen(o)])); });
+    lanes.forEach(function (l, i) { var o = byLane[i]; table.appendChild(trow([l.name, o.New, o.Active, o.Resolved, sumOpen(o)])); });
+    table.appendChild(trow(["Cards per lane", "New", "Active", "Resolved", "Closed / Removed"], true));
+    lanes.forEach(function (l, i) { var o = cardsByLane[i]; table.appendChild(trow([l.name, o.New, o.Active, o.Resolved, o.Closed + " / " + o.Removed])); });
+    host.appendChild(table);
+    btn.addEventListener("click", function () { table.hidden = !table.hidden; btn.textContent = table.hidden ? "Show table" : "Hide table"; });
+
+    // ---- summary teaser, from the numbers ----
+    var teaser = document.getElementById("wv-teaser");
+    if (teaser) {
+      teaser.textContent = openTotal + " open items under " + cardCount + " cards · " + cardTot.Closed + " cards Closed · " +
+        backHalf + " of the open items sit in P4–P6" + (frontDone ? " · " + frontDone + " phases have no open children" : "");
+    }
+  })(); } catch (e) { /* breakdown is optional */ }
+
+  // Linkify work-item IDs to Azure Boards. IDs are 3-4 digit runs inside the
+  // scoped containers below. Digit lookarounds (rather than \b) let prefixed
+  // forms like "F2598" or "E2487" match. SKIP holds tokens that look like IDs
+  // but aren't (the year, HTTP status codes in bug prose); date spans carry
+  // class "nolink" and are skipped wholesale.
+  var WI_URL = "https://dev.azure.com/rdprokes/AdaptiveAssetAllocation/_workitems/edit/";
+  var ID_RE = /(?<!\d)\d{3,4}(?!\d)/;
+  var SKIP = { "2026": 1, "200": 1, "403": 1, "429": 1, "500": 1, "503": 1, "504": 1 };
+  var scopes = document.querySelectorAll(".ids, .card .n, .kfact span, .notes li, .notes p, .lanelabel small, .sub");
+  scopes.forEach(function (scope) {
+    var walker = document.createTreeWalker(scope, NodeFilter.SHOW_TEXT, null);
+    var textNodes = [];
+    while (walker.nextNode()) textNodes.push(walker.currentNode);
+    textNodes.forEach(function (node) {
+      if (node.parentNode.closest("a, .nolink")) return;
+      var text = node.nodeValue;
+      if (!ID_RE.test(text)) return;
+      var frag = document.createDocumentFragment();
+      var rest = text, m;
+      var re = new RegExp(ID_RE.source, "g");
+      var last = 0;
+      while ((m = re.exec(text)) !== null) {
+        if (SKIP[m[0]]) continue;
+        frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+        var a = document.createElement("a");
+        a.className = "wi";
+        a.href = WI_URL + m[0];
+        a.target = "_blank";
+        a.rel = "noopener";
+        a.textContent = m[0];
+        frag.appendChild(a);
+        last = m.index + m[0].length;
+      }
+      frag.appendChild(document.createTextNode(text.slice(last)));
+      node.parentNode.replaceChild(frag, node);
+    });
+  });
+
+  var links = [
+    ["c2557", "c2327", true],
+    ["c2598", "c2327", true],
+    ["c2327", "c2346", false],
+    ["c2346", "c2374", false],
+    ["c2374", "c2398", false],
+    ["c2374", "c2487", true],
+    ["c2609", "c2097", true],
+    ["c2611", "c2094", true],
+    ["c2610", "c2098", true],
+    ["c2045", "c2094", true],
+    ["c2612", "c2093", true],
+    ["c2598", "c2093", true],
+    ["c2024", "c2093", true],
+    ["c2085", "c2095", true],
+    ["c2085", "c2092", true],
+    ["c1232", "c2095", true],
+    ["c2022", "c2097", true],
+    ["c257", "c2097", true],
+    ["c265", "c2098", true],
+    ["c291", "c2096", true],
+    ["c291", "c2099", true],
+    ["c1964", "c2098", true],
+    ["c2070", "c2100", true],
+    ["c2098", "c1679", false],
+    ["c2098", "c2870", true],
+    ["c2880", "c3202", false],
+    ["c3220", "c3221", false]
+  ];
+  var svg = document.getElementById("arrows");
+  var board = document.getElementById("board");
+  var NS = "http://www.w3.org/2000/svg";
+
+  function draw() {
+    while (svg.firstChild) svg.removeChild(svg.firstChild);
+    var b = board.getBoundingClientRect();
+    links.forEach(function (l) {
+      var s = document.getElementById(l[0]);
+      var t = document.getElementById(l[1]);
+      if (!s || !t || !s.getClientRects().length || !t.getClientRects().length) return;
+      var sr = s.getBoundingClientRect(), tr = t.getBoundingClientRect();
+      var x1 = sr.right - b.left, y1 = sr.top + sr.height / 2 - b.top;
+      var x2 = tr.left - b.left - 6, y2 = tr.top + tr.height / 2 - b.top;
+      var dx = Math.max(30, (x2 - x1) * 0.35);
+      var p = document.createElementNS(NS, "path");
+      p.setAttribute("d", "M" + x1 + "," + y1 + " C" + (x1 + dx) + "," + y1 + " " + (x2 - dx) + "," + y2 + " " + x2 + "," + y2);
+      if (l[2]) p.setAttribute("class", "gatearrow");
+      svg.appendChild(p);
+      var head = document.createElementNS(NS, "path");
+      head.setAttribute("d", "M" + x2 + "," + y2 + " l-7,-4 l0,8 z");
+      head.setAttribute("style", "fill:" + (l[2] ? "var(--arrow-gate)" : "var(--arrow)") + ";stroke:none");
+      svg.appendChild(head);
+    });
+  }
+  // Phase visibility. Keep the headers as reopen controls and explicitly place
+  // every grid item, so hidden cells cannot pull later lanes into earlier rows.
+  (function () {
+    var KEY = "swimlane.hidden-phases.v1";
+    var headers = [].slice.call(board.querySelectorAll(".phasehead")).slice(1);
+    var labels = [].slice.call(board.querySelectorAll(".lanelabel"));
+    var cells = headers.map(function () { return []; });
+    var hidden = [];
+    try {
+      var saved = JSON.parse(localStorage.getItem(KEY) || "[]");
+      if (Array.isArray(saved)) hidden = saved.filter(function (phase, index) {
+        return typeof phase === "number" && phase % 1 === 0 && phase >= 0 && phase < headers.length &&
+          saved.indexOf(phase) === index;
+      });
+    } catch (e) { /* unavailable or corrupt storage leaves every phase visible */ }
+    board.querySelector(".phasehead").style.gridArea = "1 / 1";
+    labels.forEach(function (label, lane) {
+      label.style.gridArea = (lane + 2) + " / 1";
+      var cell = label.nextElementSibling;
+      headers.forEach(function (_, phase) {
+        if (!cell || !cell.classList.contains("cell")) return;
+        cell.id = "phase-" + phase + "-lane-" + lane;
+        cell.style.gridArea = (lane + 2) + " / " + (phase + 2);
+        cells[phase].push(cell);
+        cell = cell.nextElementSibling;
+      });
+    });
+    function apply() {
+      var columns = ["150px"];
+      var minimum = 150;
+      headers.forEach(function (header, phase) {
+        var collapsed = hidden.indexOf(phase) !== -1;
+        header.classList.toggle("phase-collapsed", collapsed);
+        var button = header.querySelector("button");
+        button.textContent = collapsed ? "Show" : "Hide";
+        button.setAttribute("aria-label", (collapsed ? "Show" : "Hide") + " phase P" + phase);
+        button.setAttribute("aria-expanded", String(!collapsed));
+        cells[phase].forEach(function (cell) { cell.hidden = collapsed; });
+        columns.push(collapsed ? "76px" : "minmax(225px, 1fr)");
+        minimum += collapsed ? 76 : 225;
+      });
+      board.style.gridTemplateColumns = columns.join(" ");
+      board.style.minWidth = minimum + "px";
+      draw();
+    }
+    headers.forEach(function (header, phase) {
+      header.style.gridArea = "1 / " + (phase + 2);
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "phase-toggle";
+      button.setAttribute("aria-controls", cells[phase].map(function (cell) { return cell.id; }).join(" "));
+      button.addEventListener("click", function () {
+        var index = hidden.indexOf(phase);
+        if (index === -1) hidden.push(phase);
+        else hidden.splice(index, 1);
+        try { localStorage.setItem(KEY, JSON.stringify(hidden)); } catch (e) { /* still usable */ }
+        apply();
+      });
+      header.appendChild(button);
+    });
+    apply();
+  })();
+  // End phase visibility.
+  draw();
+  if (typeof ResizeObserver !== "undefined") new ResizeObserver(draw).observe(board);
+  window.addEventListener("resize", draw);
+  if (document.fonts && document.fonts.ready) document.fonts.ready.then(draw);
+})();
+</script>
