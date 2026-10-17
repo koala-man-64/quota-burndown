@@ -238,3 +238,17 @@ def test_ingest_health_recovers_on_clean_batch(paths):
         assert service.state.health["ingest"]["state"] == "healthy"
     finally:
         service.close()
+
+
+def test_swimlane_endpoint(live, tmp_path, monkeypatch):
+    service, server = live
+    fake_swimlane = tmp_path / "swimlane.html"
+    fake_swimlane.write_text("<!doctype html><p>test board</p>", encoding="utf-8")
+    monkeypatch.setenv("ADO_SWIMLANE_HOME", str(tmp_path))
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+    connection.request("GET", "/swimlane")
+    response = connection.getresponse()
+    body = response.read().decode("utf-8")
+    connection.close()
+    assert response.status == 200
+    assert "test board" in body

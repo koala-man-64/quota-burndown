@@ -502,3 +502,18 @@ def test_render_says_when_no_reset_credits_are_left(store, monkeypatch):
     assert "no reset credits left" in html
     assert "reset credit available" not in html
     assert 'class="proj-reset"' not in html
+
+
+def test_render_html_includes_tab_navigation(store):
+    seed(store)
+    html = render.render_html(store, now=NOW)
+    assert 'role="tablist"' in html
+    assert 'id="tab-btn-quota"' in html
+    assert 'id="tab-btn-swimlane"' in html
+    assert 'id="tab-panel-quota"' in html
+    assert 'id="tab-panel-swimlane"' in html
+    assert 'id="swimlane-frame"' in html
+    assert 'data-frame-url="/swimlane"' in html
+    assert 'id="tab-script"' in html
+    assert "src=" not in html
+    assert html.count("<script>") == 1
