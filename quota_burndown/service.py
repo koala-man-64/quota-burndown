@@ -94,6 +94,28 @@ class CapacityService:
         with self._consumer_lock:
             self._last_read = time.monotonic()
 
+    def swimlane_html(self) -> bytes | None:
+        env_home = os.environ.get("ADO_SWIMLANE_HOME")
+        ado_home = Path(env_home).expanduser() if env_home else Path.home() / ".ado-swimlane"
+        rendered = ado_home / "swimlane.html"
+        if rendered.is_file():
+            try:
+                return rendered.read_bytes()
+            except OSError:
+                pass
+        repo_template = Path(__file__).resolve().parent.parent / "ado-swimlane" / "board" / "board.html"
+        if repo_template.is_file():
+            try:
+                text = repo_template.read_text(encoding="utf-8")
+                return (
+                    '<!doctype html><html><head><meta charset="utf-8">'
+                    '<meta name="viewport" content="width=device-width,initial-scale=1">'
+                    f'</head><body>{text}</body></html>'
+                ).encode("utf-8")
+            except OSError:
+                pass
+        return None
+
     def _enqueue(self, event):
         try:
             self.events.put_nowait(event)
@@ -419,6 +441,13 @@ def make_server(service: CapacityService, host="127.0.0.1", port=8787):
                 self._send(200, "application/json", service._legacy_latest)
             elif path == "/status.json":
                 self._send(200, "application/json", service._legacy_status)
+            elif path in ("/swimlane", "/swimlane.html"):
+                service.touch()
+                content = service.swimlane_html()
+                if content:
+                    self._send(200, "text/html; charset=utf-8", content)
+                else:
+                    self._send(404, "text/html; charset=utf-8", b'<!doctype html><meta charset="utf-8"><p>ADO swimlane snapshot not found. Run <code>py ado-swimlane.py refresh</code> to generate it.</p>')
             else:
                 self._send(404, "text/plain", b"not found")
 

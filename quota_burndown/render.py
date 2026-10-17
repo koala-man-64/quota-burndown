@@ -915,6 +915,23 @@ CSS = """
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,"Segoe UI",Roboto,sans-serif}
 header.top{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:18px 24px 6px;flex-wrap:wrap}
 header.top h1{margin:0;font-size:20px}
+.header-main{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.tabs-nav{display:inline-flex;gap:4px;background:var(--grid);padding:3px;border-radius:8px;border:1px solid var(--line)}
+.tab-button{background:transparent;border:none;border-radius:6px;padding:5px 14px;font:inherit;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;transition:all .15s ease}
+.tab-button:hover{color:var(--fg);background:rgba(0,0,0,0.04)}
+@media (prefers-color-scheme: dark){.tab-button:hover{background:rgba(255,255,255,0.06)}}
+.tab-button.active{background:var(--card);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,0.1)}
+.tab-button:focus-visible{outline:2px solid var(--actual);outline-offset:1px}
+.tab-panel[hidden]{display:none!important}
+#tab-panel-swimlane{padding:8px 24px 24px;max-width:1900px;margin:0 auto}
+.swimlane-tab-container{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
+.swimlane-tab-header{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--grid)}
+.swimlane-tab-title{font-weight:600;font-size:13.5px;color:var(--fg)}
+.swimlane-tab-meta{font-size:12px;color:var(--muted);margin-left:8px}
+.swimlane-tab-link{font-size:12px;color:var(--actual);text-decoration:none;font-weight:500}
+.swimlane-tab-link:hover{text-decoration:underline}
+.swimlane-frame-wrapper{width:100%;height:calc(100vh - 170px);min-height:650px;background:var(--bg)}
+.swimlane-frame{width:100%;height:100%;border:none;display:block}
 .meta{color:var(--muted);font-size:12px}
 main{padding:8px 24px 24px;max-width:1900px;margin:0 auto}
 section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
@@ -1716,6 +1733,95 @@ TARGET_SCRIPT = """
 """
 
 
+TAB_NAV_HTML = (
+    '<nav class="tabs-nav" role="tablist" aria-label="Dashboard views">'
+    '<button type="button" role="tab" class="tab-button active" id="tab-btn-quota" aria-selected="true" aria-controls="tab-panel-quota" tabindex="0">Quota Burndown</button>'
+    '<button type="button" role="tab" class="tab-button" id="tab-btn-swimlane" aria-selected="false" aria-controls="tab-panel-swimlane" tabindex="-1">ADO Swimlanes</button>'
+    '</nav>'
+)
+
+SWIMLANE_PANEL_HTML = (
+    '<section id="tab-panel-swimlane" role="tabpanel" aria-labelledby="tab-btn-swimlane" class="tab-panel" hidden>'
+    '<div class="swimlane-tab-container">'
+    '<div class="swimlane-tab-header">'
+    '<div class="swimlane-tab-info">'
+    '<span class="swimlane-tab-title">Backlog Execution Swimlanes</span>'
+    '<span class="swimlane-tab-meta">AdaptiveAssetAllocation</span>'
+    '</div>'
+    '<div class="swimlane-tab-actions">'
+    '<a href="/swimlane" target="_blank" rel="noopener noreferrer" class="swimlane-tab-link" id="swimlane-ext-link">Open standalone ↗</a>'
+    '</div>'
+    '</div>'
+    '<div class="swimlane-frame-wrapper">'
+    '<iframe id="swimlane-frame" class="swimlane-frame" title="ADO Swimlane Board" data-frame-url="/swimlane"></iframe>'
+    '</div>'
+    '</div>'
+    '</section>'
+)
+
+TAB_SCRIPT = """
+(function(){
+  var quotaBtn = document.getElementById('tab-btn-quota');
+  var swimlaneBtn = document.getElementById('tab-btn-swimlane');
+  var quotaPanel = document.getElementById('tab-panel-quota');
+  var swimlanePanel = document.getElementById('tab-panel-swimlane');
+  var frame = document.getElementById('swimlane-frame');
+  var extLink = document.getElementById('swimlane-ext-link');
+  if (!quotaBtn || !swimlaneBtn || !quotaPanel || !swimlanePanel) return;
+
+  function loadFrame(){
+    if (!frame) return;
+    if (!frame.getAttribute('src')) {
+      var url = frame.getAttribute('data-frame-url') || '/swimlane';
+      if (window.location.protocol === 'file:') {
+        url = 'swimlane.html';
+      }
+      frame.setAttribute('src', url);
+      if (extLink) extLink.setAttribute('href', url);
+    }
+  }
+
+  function setTab(name){
+    var isSwimlane = (name === 'swimlane');
+    quotaBtn.classList.toggle('active', !isSwimlane);
+    quotaBtn.setAttribute('aria-selected', !isSwimlane ? 'true' : 'false');
+    quotaBtn.tabIndex = !isSwimlane ? 0 : -1;
+    swimlaneBtn.classList.toggle('active', isSwimlane);
+    swimlaneBtn.setAttribute('aria-selected', isSwimlane ? 'true' : 'false');
+    swimlaneBtn.tabIndex = isSwimlane ? 0 : -1;
+
+    quotaPanel.hidden = isSwimlane;
+    swimlanePanel.hidden = !isSwimlane;
+
+    if (isSwimlane) {
+      loadFrame();
+      try { history.replaceState(null, '', '#swimlane'); } catch(e){}
+    } else {
+      try { history.replaceState(null, '', '#quota'); } catch(e){}
+    }
+  }
+
+  quotaBtn.addEventListener('click', function(){ setTab('quota'); });
+  swimlaneBtn.addEventListener('click', function(){ setTab('swimlane'); });
+
+  [quotaBtn, swimlaneBtn].forEach(function(btn){
+    btn.addEventListener('keydown', function(e){
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        var next = (btn === quotaBtn) ? swimlaneBtn : quotaBtn;
+        next.focus();
+        setTab(next === quotaBtn ? 'quota' : 'swimlane');
+      }
+    });
+  });
+
+  if (window.location.hash === '#swimlane') {
+    setTab('swimlane');
+  }
+})();
+"""
+
+
 def chart_usage(usage_db: Path | None, now: datetime, burndowns: list[Burndown]) -> list[tuple[datetime, str, int]] | None:
     """(ts, model, total tokens) for every exact-count request a chart domain can show; None
     without a ledger, so charts then render without bars instead of with empty ones."""
@@ -1783,15 +1889,16 @@ def render_html(
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
         "" if live else f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">",
         f"<title>Quota Burndown</title><style>{CSS}{credit_ui.CSS}</style></head><body>",
-        f'<header class="top"><h1>Quota burndown</h1><div class="meta" id="dashboard-meta">{esc(mode)} · {len(samples)} historic samples in view</div></header>',
+        f'<header class="top"><div class="header-main"><h1>Quota burndown</h1>{TAB_NAV_HTML}</div><div class="meta" id="dashboard-meta">{esc(mode)} · {len(samples)} historic samples in view</div></header>',
         '<div class="note" id="refresh-status" role="status">Updates every 30 seconds; provider readings may be older.</div>' if live else "",
-        "<main>", banner, target_bar, credit_ui.html(credit_plans, now, live), legend,
+        '<main id="tab-panel-quota" role="tabpanel" aria-labelledby="tab-btn-quota">', banner, target_bar, credit_ui.html(credit_plans, now, live), legend,
         f'<div id="dashboard-data" data-generated-at="{now.isoformat()}">', history,
         daily_models_section_html(usage_db, now) if usage_db is not None else "",
         usage_section_html(usage_db, now, live=live, recent_rows=recent_rows) if usage_db is not None else "",
         efficiency_section_html(usage_db, now) if usage_db is not None else "", "</div></main>",
+        SWIMLANE_PANEL_HTML,
         f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",
-        hover, live_script, target_script,
+        hover, live_script, target_script, f'<script id="tab-script">{TAB_SCRIPT}</script>',
         '<script id="credit-plan-script">' + credit_ui.script(credit_plans) + '</script>', "</body></html>\n",
     ))
 
