@@ -94,12 +94,12 @@ CSS = """
 .credit-plan{min-width:0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
 .credit-plan h3{margin:0 0 8px;font-size:14px}.credit-plan h3 small{font-size:12px;font-weight:400;color:var(--muted)}
 .credit-plan label{display:grid;gap:3px;margin:8px 0;font-size:12px;color:var(--muted)}
-.credit-plan input,.credit-plan select{width:100%;font:inherit;font-size:13px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);color-scheme:light dark;outline:none}
+.credit-plan input,.credit-plan select{width:100%;font:inherit;font-size:13px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);color-scheme:inherit;outline:none}
 .credit-plan input:focus,.credit-plan select:focus{border-color:#f59e0b;box-shadow:0 0 0 1px #f59e0b}
 .credit-plan input:disabled,.credit-plan select:disabled{opacity:.6}
 .credit-actions{display:flex;gap:6px;margin:12px 0 4px}
 .credit-actions button{font:inherit;font-size:12px;padding:3px 12px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;cursor:pointer}
-.credit-actions button[type=submit]{border-color:#f59e0b;color:#d97706;font-weight:600}
+.credit-actions button[type=submit]{border-color:#f59e0b;color:var(--warn);font-weight:600}
 .credit-actions button:hover:not(:disabled){border-color:#f59e0b}
 .credit-actions button:focus-visible{outline:2px solid #f59e0b;outline-offset:1px}
 .credit-actions button:disabled{opacity:.5;cursor:default}
@@ -108,7 +108,7 @@ CSS = """
 .credit-plan-result p{margin:4px 0}
 .credit-plan-result svg{display:block;width:100%;max-width:460px;height:140px;background:var(--card);border:1px solid var(--line);border-radius:6px;margin:8px 0}
 .credit-forecast-overlay{margin:10px 0 0;padding:8px 10px;border-left:3px solid #f59e0b;background:var(--grid);border-radius:0 6px 6px 0;font-size:12px;color:var(--fg)}
-.credit-forecast-overlay strong{display:block;color:#d97706}.credit-forecast-overlay p{margin:3px 0;color:var(--muted)}
+.credit-forecast-overlay strong{display:block;color:var(--warn)}.credit-forecast-overlay p{margin:3px 0;color:var(--muted)}
 .credit-forecast-overlay svg{display:block;width:100%;max-width:460px;height:auto;margin:8px 0;background:var(--card);border:1px solid var(--line);border-radius:6px}
 .cg-goal{stroke:var(--chart-axis);stroke-width:2;stroke-dasharray:6 4}
 .cg-pace{stroke:#f59e0b;stroke-width:2;stroke-dasharray:5 3}
@@ -117,9 +117,6 @@ CSS = """
 .cg-band{fill:#f59e0b;fill-opacity:.2}
 .cg-axis{stroke:var(--chart-axis)}
 .cg-lbl{fill:var(--chart-muted);font-size:11px;font-variant-numeric:tabular-nums}
-@media (prefers-color-scheme: dark){
-  .credit-actions button[type=submit],.credit-forecast-overlay strong{color:#fbbf24}
-}
 """
 
 

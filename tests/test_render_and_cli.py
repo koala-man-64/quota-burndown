@@ -520,3 +520,119 @@ def test_render_html_includes_tab_navigation(store):
     assert 'id="tab-script"' in html
     assert "src=" not in html
     assert html.count("<script>") == 1
+
+
+def test_render_html_includes_dark_mode_toggle(store):
+    seed(store)
+    html = render.render_html(store, now=NOW)
+    assert '<meta name="color-scheme" content="light dark"><script id="theme-init">' in html
+    assert "color-scheme:light dark" in html
+    assert ':root:has(> head > meta[name="color-scheme"][content="dark"])' in html
+    assert ':root:has(> head > meta[name="color-scheme"][content="light"])' in html
+    assert "@supports (color: light-dark(white, black))" in html
+    assert 'id="theme-toggle"' in html
+    assert "Switch to dark theme" in html
+    assert "Switch to light theme" in html
+    assert 'id="theme-script"' in html
+
+
+def test_theme_toggle_script_behavior():
+    import shutil
+    import subprocess
+    import pytest
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required for the theme toggle JS regression")
+
+    harness = r"""
+let sysDark = false;
+let mqListener = null;
+let storageListener = null;
+let blocked = false;
+const store = new Map();
+const localStorage = {
+  getItem(k) { if (blocked) throw new Error('blocked'); return store.has(k) ? store.get(k) : null; },
+  setItem(k, v) { if (blocked) throw new Error('blocked'); store.set(k, String(v)); },
+  removeItem(k) { if (blocked) throw new Error('blocked'); store.delete(k); }
+};
+const meta = {
+  content: 'light dark',
+  getAttribute(k) { return k === 'content' ? this.content : null; },
+  setAttribute(k, v) { if (k === 'content') this.content = v; }
+};
+const docEl = {
+  attrs: {},
+  style: {},
+  setAttribute(k, v) { this.attrs[k] = v; },
+  removeAttribute(k) { delete this.attrs[k]; }
+};
+const frameDocEl = {
+  attrs: {},
+  style: {},
+  setAttribute(k, v) { this.attrs[k] = v; },
+  removeAttribute(k) { delete this.attrs[k]; }
+};
+const messages = [];
+const frame = {
+  contentDocument: { documentElement: frameDocEl },
+  contentWindow: { postMessage(msg) { messages.push(msg); } },
+  addEventListener(ev, fn) { this['on_' + ev] = fn; }
+};
+const btn = {
+  addEventListener(ev, fn) { this['on_' + ev] = fn; },
+  click() { this.on_click(); }
+};
+const window = {
+  matchMedia() {
+    return {
+      get matches() { return sysDark; },
+      addEventListener(ev, fn) { if (ev === 'change') mqListener = fn; }
+    };
+  },
+  addEventListener(ev, fn) { if (ev === 'storage') storageListener = fn; }
+};
+const document = {
+  documentElement: docEl,
+  querySelector(sel) { return sel === 'meta[name="color-scheme"]' ? meta : null; },
+  getElementById(id) {
+    if (id === 'theme-toggle') return btn;
+    if (id === 'swimlane-frame') return frame;
+    return null;
+  }
+};
+""" + render.THEME_SCRIPT + r"""
+const out = [];
+// 1. OS light -> user clicks toggle -> overrides to dark and stores 'dark'
+btn.click();
+out.push({step: 1, meta: meta.content, stored: store.get('color-scheme') || null, theme: docEl.attrs['data-theme'] || null, frameTheme: frameDocEl.attrs['data-theme'] || null});
+// 2. OS changes to dark -> stored 'dark' is kept (not cleared retroactively)
+sysDark = true;
+if (mqListener) mqListener();
+out.push({step: 2, meta: meta.content, stored: store.get('color-scheme') || null});
+// 3. OS changes back to light -> stays dark
+sysDark = false;
+if (mqListener) mqListener();
+out.push({step: 3, meta: meta.content, stored: store.get('color-scheme') || null});
+// 4. User clicks toggle -> target is light (matches OS light), so stored override is removed and meta returns to 'light dark'
+btn.click();
+out.push({step: 4, meta: meta.content, stored: store.get('color-scheme') || null, theme: docEl.attrs['data-theme'] || null, frameTheme: frameDocEl.attrs['data-theme'] || null});
+// 5. Blocked localStorage still applies theme to page
+blocked = true;
+btn.click();
+out.push({step: 5, meta: meta.content, theme: docEl.attrs['data-theme'] || null});
+// 6. Cross-tab storage event updates page
+storageListener({key: 'color-scheme', newValue: 'light'});
+out.push({step: 6, meta: meta.content, theme: docEl.attrs['data-theme'] || null});
+console.log(JSON.stringify(out));
+"""
+    result = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    steps = json.loads(result.stdout)
+    assert steps[0] == {"step": 1, "meta": "dark", "stored": "dark", "theme": "dark", "frameTheme": "dark"}
+    assert steps[1] == {"step": 2, "meta": "dark", "stored": "dark"}
+    assert steps[2] == {"step": 3, "meta": "dark", "stored": "dark"}
+    assert steps[3] == {"step": 4, "meta": "light dark", "stored": None, "theme": None, "frameTheme": None}
+    assert steps[4] == {"step": 5, "meta": "dark", "theme": "dark"}
+    assert steps[5] == {"step": 6, "meta": "light", "theme": "light"}
+
