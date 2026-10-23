@@ -89,7 +89,9 @@ def claude_desktop_history_candidates() -> list[Path]:
     On Windows the app is an MSIX package with AppData virtualization: the file it writes to
     `%APPDATA%\\Claude` really lands under the package's LocalCache, and only processes that
     carry the package identity (the app and its children) see it at the plain path. A
-    scheduled task or a terminal started elsewhere must read the LocalCache copy."""
+    scheduled task or a terminal started elsewhere must read the LocalCache copy. Newer
+    package builds move user data to `%LOCALAPPDATA%\\Claude-Data\\claude_<package id>`,
+    leaving only a `.user-data-left.*` marker in `%APPDATA%\\Claude`."""
     override = os.environ.get("QUOTA_BURNDOWN_CLAUDE_DESKTOP_HISTORY")
     if override:
         return [Path(override).expanduser()]
@@ -97,7 +99,8 @@ def claude_desktop_history_candidates() -> list[Path]:
         roaming = Path(os.environ.get("APPDATA") or (Path.home() / "AppData" / "Roaming"))
         local = Path(os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local"))
         packaged = sorted((local / "Packages").glob("Claude_*/LocalCache/Roaming/Claude/" + HISTORY_NAME))
-        return [roaming / "Claude" / HISTORY_NAME, *packaged]
+        relocated = sorted((local / "Claude-Data").glob("claude_*/" + HISTORY_NAME))
+        return [roaming / "Claude" / HISTORY_NAME, *packaged, *relocated]
     if os.uname().sysname == "Darwin":  # pragma: no cover - not exercised on Windows
         return [Path.home() / "Library" / "Application Support" / "Claude" / HISTORY_NAME]
     return [Path(os.environ.get("XDG_CONFIG_HOME") or (Path.home() / ".config")) / "Claude" / HISTORY_NAME]  # pragma: no cover
