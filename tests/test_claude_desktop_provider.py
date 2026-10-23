@@ -79,6 +79,12 @@ def test_history_path_prefers_newest_existing_copy(tmp_path, monkeypatch):
     assert config.claude_desktop_history() == packaged  # both exist: the newer one wins
     os.utime(plain, None)
     assert config.claude_desktop_history() == plain
+    # Newer package builds relocate user data and stop writing the earlier locations.
+    relocated = tmp_path / "Local" / "Claude-Data" / "claude_abc123" / "plan-usage-history.json"
+    write_history(relocated, [reading(0, 0, 1)])
+    for stale in (plain, packaged):
+        os.utime(stale, (old, old))
+    assert config.claude_desktop_history() == relocated
     monkeypatch.setenv("QUOTA_BURNDOWN_CLAUDE_DESKTOP_HISTORY", str(tmp_path / "x.json"))
     assert config.claude_desktop_history() == tmp_path / "x.json"
 
