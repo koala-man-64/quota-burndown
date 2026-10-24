@@ -29,6 +29,11 @@ STATUS_TEXT = {
     "expired": "window ended · awaiting a fresh sample",
     "idle": "no active window",
 }
+# Verdicts that extrapolate the latest reading to now; a stale reading cannot support them.
+PROJECTED_STATUSES = ("over", "under", "on-pace", "early")
+# Collectors that feed each provider's quota cards, most specific first.
+QUOTA_COLLECTORS = {"claude": ("claude_oauth", "claude"), "codex": ("codex",), "antigravity": ("antigravity",)}
+HEALTHY_STATES = ("healthy", "watching", "starting", "unsupported")
 CHART_W, CHART_H = 800, 320
 PAD_L, PAD_R, PAD_T, PAD_B = 48, 56, 30, 30
 TOKEN_SLOTS = 7  # categorical palette slots 2-8; slot 1 (blue) is the % used line
@@ -417,12 +422,39 @@ def target_bar_html(target_date: datetime | str | None = None, now: datetime | N
     )
 
 
-def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str, usage=None) -> str:
+def collector_issue(capacity: dict | None, provider: str) -> str | None:
+    """Why a provider's quota collector is not producing readings, if it says so."""
+    health = (capacity or {}).get("collector_health")
+    if not isinstance(health, dict):
+        return None
+    for name in QUOTA_COLLECTORS.get(provider, (provider,)):
+        info = health.get(name)
+        if isinstance(info, dict) and info.get("state") not in HEALTHY_STATES and info.get("last_error"):
+            return str(info["last_error"])
+    return None
+
+
+def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str, usage=None,
+              issue: str | None = None) -> str:
     stale = bd.age_min is not None and bd.age_min > STALE_MIN
-    classes = f"card status-{bd.status}" + (" stale" if stale else "")
-    proj_value, proj_label = projection_text(bd)
+    # A stale reading still says what was used then, but pace verdicts and projections built
+    # on it describe a past moment as if it were now, so they are withheld.
+    frozen = stale and bd.status in PROJECTED_STATUSES
+    status = "stale" if frozen else bd.status
+    classes = f"card status-{status}" + (" stale" if stale else "")
+    proj_value, proj_label = ("—", "no projection from a stale reading") if frozen else projection_text(bd)
+    badge = f"stale reading · {fmt_minutes(bd.age_min)} old" if frozen else badge_text(bd)
     title = window_title(bd.window)
-    if bd.status == "idle":
+    if frozen:
+        resets = fmt_local(bd.resets_at) if bd.resets_at else "?"
+        left_value, left_label = fmt_minutes(bd.remaining_min), f"left · resets {resets}"
+        stats = (
+            f'<div><b>{bd.used:.0f}%</b><span>used as of {esc(fmt_local(bd.sample_ts))}</span></div>'
+            f'<div><b>{bd.pace:.0f}%</b><span>linear pace</span></div>'
+            f'<div><b>{esc(left_value)}</b><span>{esc(left_label)}</span></div>'
+            f'<div><b>{esc(proj_value)}</b><span>{esc(proj_label)}</span></div>'
+        )
+    elif bd.status == "idle":
         left_value, left_label = "—", "time left"
         stats = (
             f'<div><b>{bd.used:.0f}%</b><span>used</span></div>'
@@ -472,11 +504,13 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str,
         # left" indistinguishable from "credits not reported", which is how a used
         # credit went unnoticed.
         reset_badge = '<span class="badge reset-badge none">no reset credits left</span>'
-    header_badge = f'<div class="badges"><span class="badge status-badge">{esc(badge_text(bd))}</span>{reset_badge}</div>' if reset_badge else f'<span class="badge status-badge">{esc(badge_text(bd))}</span>'
+    header_badge = f'<div class="badges"><span class="badge status-badge">{esc(badge)}</span>{reset_badge}</div>' if reset_badge else f'<span class="badge status-badge">{esc(badge)}</span>'
     age = f"{bd.age_min:.0f} min ago" if bd.age_min is not None else "never"
     foot = f"last sample {esc(age)} via {esc(bd.source or '?')} · {len(bd.samples)} samples this window"
     if stale:
         foot += " · <b>stale</b>: no recent quota observation"
+        if issue:
+            foot += f" ({esc(issue)})"
     efficiency_val = f"{data.token_efficiency.tokens_per_point:.1f}" if data and data.token_efficiency else ""
     return (
         f'<article class="{classes}" data-card-id="{esc(chart_id)}" '
@@ -488,8 +522,8 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str,
         f'data-rate="{bd.rate_per_hour:.4f}" '
         f'data-stale="{"true" if stale else "false"}" '
         f'data-std-pace="{bd.pace:.2f}" '
-        f'data-std-status="{bd.status}" '
-        f'data-std-badge="{esc(badge_text(bd))}" '
+        f'data-std-status="{status}" '
+        f'data-std-badge="{esc(badge)}" '
         f'data-std-left-val="{esc(left_value)}" '
         f'data-std-left-lbl="{esc(left_label)}" '
         f'data-std-proj-val="{esc(proj_value)}" '
@@ -1535,7 +1569,7 @@ TARGET_SCRIPT = """
     var stdStatus = card.getAttribute('data-std-status');
     var isStale = card.getAttribute('data-stale') === 'true';
 
-    if (stdStatus === 'idle' || !start) return;
+    if (stdStatus === 'idle' || stdStatus === 'stale' || !start) return;
 
     var totalTargetMs = targetDate.getTime() - start.getTime();
     var elapsedMs = now.getTime() - start.getTime();
@@ -2001,7 +2035,9 @@ def render_html(
     # One grid cell per weekly chart
     weekly = [bd for bd in burndowns if bd.window_min != 300]
     usage = chart_usage(usage_db, now, weekly)
-    cells = [(history_group(bd), card_html(bd, by_key.get(bd.key, []), now, f"c{index}", usage)) for index, bd in enumerate(weekly, 1)]
+    cells = [(history_group(bd), card_html(bd, by_key.get(bd.key, []), now, f"c{index}", usage,
+                                           issue=collector_issue(capacity, bd.provider)))
+             for index, bd in enumerate(weekly, 1)]
     chart_count = len(weekly)
     stamp = esc(to_local(now).strftime("%Y-%m-%d %H:%M"))
     sections = [
