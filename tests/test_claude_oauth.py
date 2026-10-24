@@ -45,9 +45,13 @@ def http_error(code, retry_after=None):
     return urllib.error.HTTPError(claude_oauth.ENDPOINT, code, "error", headers, io.BytesIO(b""))
 
 
-def run(home, fetch, limit=1):
+def no_refresh():
+    pytest.fail("a valid token asked the CLI to refresh")
+
+
+def run(home, fetch, limit=1, refresh=no_refresh):
     published, health, stop = [], [], Stop(limit)
-    run_claude_oauth(stop, published.extend, lambda *args: health.append(args), claude_home=home, fetch=fetch)
+    run_claude_oauth(stop, published.extend, lambda *args: health.append(args), claude_home=home, fetch=fetch, refresh=refresh)
     return published, health, stop.waits
 
 
@@ -100,13 +104,93 @@ def test_poll_publishes_into_the_shared_claude_pool(tmp_path):
     assert freshness_seconds("oauth-usage") == 600
 
 
-def test_expired_token_is_not_used_or_refreshed(tmp_path):
+def test_expired_token_is_not_sent_and_is_handed_to_the_cli_once(tmp_path):
     path = write_credentials(tmp_path, expires_in_s=-60)
     before = path.read_text(encoding="utf-8")
-    published, health, waits = run(tmp_path, lambda token: pytest.fail("expired token was sent"))
-    assert published == [] and waits == [60.0]
-    assert health[-1][1] == "unavailable" and "expired" in health[-1][2]
+    refreshes = []
+    published, health, waits = run(tmp_path, lambda token: pytest.fail("expired token was sent"), limit=2,
+                                   refresh=lambda: refreshes.append(1))
+    assert published == [] and waits == [60.0, 60.0]
+    assert refreshes == [1]
+    assert health[1] == ("claude_oauth", "unavailable", "sign-in token expired; asking Claude Code to refresh it")
+    assert health[-1][1] == "unavailable" and "Claude Code did not refresh it" in health[-1][2]
+    # The poller itself never writes the credentials file.
     assert path.read_text(encoding="utf-8") == before
+
+
+def test_cli_refresh_lets_the_next_poll_use_the_new_token(tmp_path):
+    write_credentials(tmp_path, expires_in_s=-60)
+    tokens = []
+    published, health, waits = run(tmp_path, lambda token: tokens.append(token) or USAGE,
+                                   refresh=lambda: write_credentials(tmp_path, token="sk-ant-oat-refreshed") and None)
+    assert tokens == ["sk-ant-oat-refreshed"]
+    assert waits == [300.0] and len(published) == 2
+    assert health[-1] == ("claude_oauth", "healthy", None)
+
+
+def test_failed_cli_refresh_is_reported_and_retried_after_cooldown(tmp_path, monkeypatch):
+    import quota_burndown.integrations as integrations
+    write_credentials(tmp_path, expires_in_s=-60)
+    clock = [1000.0]
+    monkeypatch.setattr(integrations.time, "monotonic", lambda: clock[0])
+
+    class Clocked(Stop):
+        def wait(self, seconds):
+            clock[0] += seconds
+            return super().wait(seconds)
+
+    refreshes = []
+    published, health, stop = [], [], Clocked(31)
+    run_claude_oauth(stop, published.extend, lambda *args: health.append(args), claude_home=tmp_path,
+                     fetch=lambda token: pytest.fail("expired token was sent"),
+                     refresh=lambda: refreshes.append(clock[0]) or "claude CLI not found")
+    # One attempt, 30 one-minute checks during the cooldown, then a second attempt.
+    assert refreshes == [1000.0, 2800.0]
+    assert "Claude Code refresh failed (claude CLI not found)" in health[2][2]
+    assert all(TOKEN not in str(item) for item in health)
+
+
+def test_cli_environment_drops_auth_overrides_but_keeps_the_config_dir():
+    environ = {"PATH": "bin", "CLAUDE_CONFIG_DIR": "cfg", "CLAUDECODE": "1", "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH": "1",
+               "CLAUDE_CODE_OAUTH_TOKEN": "host-token", "ANTHROPIC_API_KEY": "key", "anthropic_base_url": "x"}
+    assert claude_oauth.cli_environment(environ) == {"PATH": "bin", "CLAUDE_CONFIG_DIR": "cfg"}
+
+
+def test_refresh_via_cli_runs_the_local_usage_command_and_reports_safely(tmp_path, monkeypatch):
+    import subprocess
+    calls = []
+    outcome = [subprocess.CompletedProcess([], 0)]
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        if isinstance(outcome[0], BaseException):
+            raise outcome[0]
+        return outcome[0]
+
+    monkeypatch.setattr(claude_oauth.subprocess, "run", fake_run)
+    monkeypatch.setattr(claude_oauth.shutil, "which", lambda name, path=None: "C:/bin/claude.exe")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    assert claude_oauth.refresh_via_cli() is None
+    command, kwargs = calls[0]
+    assert command == ["C:/bin/claude.exe", *claude_oauth.REFRESH_ARGS] and command[1:3] == ["-p", "/usage"]
+    assert kwargs["stdout"] is subprocess.DEVNULL and kwargs["stdin"] is subprocess.DEVNULL
+    assert "ANTHROPIC_API_KEY" not in kwargs["env"] and kwargs["timeout"] == claude_oauth.REFRESH_TIMEOUT_S
+
+    outcome[0] = subprocess.CompletedProcess([], 1)
+    assert claude_oauth.refresh_via_cli() == "claude CLI exited 1"
+    outcome[0] = subprocess.TimeoutExpired("claude", 120)
+    assert claude_oauth.refresh_via_cli() == "claude CLI timed out"
+    outcome[0] = FileNotFoundError("gone")
+    assert claude_oauth.refresh_via_cli() == "claude CLI failed to start (FileNotFoundError)"
+
+    monkeypatch.setattr(claude_oauth.shutil, "which", lambda name, path=None: None)
+    monkeypatch.setattr(claude_oauth.Path, "home", lambda: tmp_path)
+    assert claude_oauth.refresh_via_cli() == "claude CLI not found"
+    native = tmp_path / ".local" / "bin" / ("claude.exe" if os.name == "nt" else "claude")
+    native.parent.mkdir(parents=True)
+    native.write_bytes(b"")
+    outcome[0] = subprocess.CompletedProcess([], 0)
+    assert claude_oauth.refresh_via_cli() is None and calls[-1][0][0] == str(native)
 
 
 def test_rejected_token_waits_for_new_credentials(tmp_path):

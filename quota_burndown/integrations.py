@@ -485,9 +485,11 @@ def run_claude_oauth(
     claude_home: Path | None = None,
     fetch: Callable[[str], dict] | None = None,
     publish_credits: Callable | None = None,
+    refresh: Callable[[], str | None] | None = None,
 ) -> None:
     """Poll Claude's account usage every five minutes; see providers.claude_oauth for the
-    credential rules. Errors back off up to 30 minutes and never stop other collectors."""
+    credential rules. An expired token asks Claude Code to refresh it at most every 30
+    minutes. Errors back off up to 30 minutes and never stop other collectors."""
     import http.client
     import urllib.error
     from dataclasses import replace
@@ -496,8 +498,11 @@ def run_claude_oauth(
 
     path = claude_oauth.credentials_path(claude_home or default_claude_home())
     fetch = fetch or claude_oauth.fetch
+    refresh = refresh or claude_oauth.refresh_via_cli
     backoff = CLAUDE_OAUTH_INTERVAL_S
     rejected_mtime: float | None = None
+    next_refresh = 0.0
+    refresh_failure: str | None = None
     health("claude_oauth", "starting", None)
     while not stop.is_set():
         wait = CLAUDE_OAUTH_INTERVAL_S
@@ -534,6 +539,16 @@ def run_claude_oauth(
             else:
                 health("claude_oauth", "degraded", "usage response had no windows")
             backoff = CLAUDE_OAUTH_INTERVAL_S
+        except claude_oauth.Expired:
+            if time.monotonic() >= next_refresh:
+                next_refresh = time.monotonic() + CLAUDE_OAUTH_MAX_BACKOFF_S
+                health("claude_oauth", "unavailable", "sign-in token expired; asking Claude Code to refresh it")
+                refresh_failure = refresh()
+                continue
+            outcome = f"Claude Code refresh failed ({refresh_failure})" if refresh_failure else "Claude Code did not refresh it"
+            health("claude_oauth", "unavailable",
+                   f"sign-in token expired; {outcome}; retrying every 30 min, or run `claude` in a terminal to sign in")
+            wait = 60.0
         except claude_oauth.Unavailable as exc:
             health("claude_oauth", "unavailable", exc.reason)
             wait = 60.0
