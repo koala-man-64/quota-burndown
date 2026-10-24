@@ -153,7 +153,8 @@ class CapacityService:
             self._spawn("capacity-codex", lambda: run_codex(self.stop_event, self.publish, self.health, self.active, context))
             self._spawn("capacity-files", lambda: run_files(self.stop_event, self.publish, self.health, self.paths, context))
             self._spawn("capacity-claude-oauth", lambda: run_claude_oauth(self.stop_event, self.publish, self.health,
-                                                                       publish_credits=self.publish_credits))
+                                                                       publish_credits=self.publish_credits,
+                                                                       refresh_dir=Path(self.paths.home) / "claude-refresh"))
             self._spawn("capacity-antigravity", lambda: run_antigravity(self.stop_event, self.publish, self.health, self.active))
         return self
 

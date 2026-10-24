@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import platform
 import queue
 import shutil
@@ -476,6 +477,8 @@ def run_files(stop: threading.Event, publish: Callable[[list[Observation]], None
 
 CLAUDE_OAUTH_INTERVAL_S = 300.0
 CLAUDE_OAUTH_MAX_BACKOFF_S = 1800.0
+CLAUDE_REFRESH_MIN_S = 1800.0
+CLAUDE_REFRESH_MAX_S = 21600.0
 
 
 def run_claude_oauth(
@@ -485,19 +488,28 @@ def run_claude_oauth(
     claude_home: Path | None = None,
     fetch: Callable[[str], dict] | None = None,
     publish_credits: Callable | None = None,
+    refresh: Callable[[], str | None] | None = None,
+    refresh_dir: Path | None = None,
 ) -> None:
     """Poll Claude's account usage every five minutes; see providers.claude_oauth for the
-    credential rules. Errors back off up to 30 minutes and never stop other collectors."""
+    credential rules. An expired token asks Claude Code to refresh it, first after 30 minutes
+    and then backing off to 6 hours while that does not help. Errors back off up to 30
+    minutes and never stop other collectors."""
     import http.client
     import urllib.error
     from dataclasses import replace
-    from .config import claude_home as default_claude_home
+    from .config import claude_home as default_claude_home, default_home
     from .providers import claude_oauth
 
     path = claude_oauth.credentials_path(claude_home or default_claude_home())
     fetch = fetch or claude_oauth.fetch
+    workdir = refresh_dir or default_home() / "claude-refresh"
+    refresh = refresh or (lambda: claude_oauth.refresh_via_cli(workdir, stop))
     backoff = CLAUDE_OAUTH_INTERVAL_S
     rejected_mtime: float | None = None
+    next_refresh = 0.0
+    refresh_delay = CLAUDE_REFRESH_MIN_S
+    refresh_failure: str | None = None
     health("claude_oauth", "starting", None)
     while not stop.is_set():
         wait = CLAUDE_OAUTH_INTERVAL_S
@@ -534,6 +546,22 @@ def run_claude_oauth(
             else:
                 health("claude_oauth", "degraded", "usage response had no windows")
             backoff = CLAUDE_OAUTH_INTERVAL_S
+            refresh_delay = CLAUDE_REFRESH_MIN_S
+        except claude_oauth.Expired:
+            if time.monotonic() >= next_refresh:
+                next_refresh = time.monotonic() + refresh_delay
+                refresh_delay = min(refresh_delay * 2, CLAUDE_REFRESH_MAX_S)
+                health("claude_oauth", "unavailable", "sign-in token expired; asking Claude Code to refresh it")
+                try:
+                    refresh_failure = refresh()
+                except Exception as exc:  # the poller thread must outlive any refresh failure
+                    refresh_failure = f"claude CLI failed ({exc.__class__.__name__})"
+                continue
+            outcome = f"Claude Code refresh failed ({refresh_failure})" if refresh_failure else "Claude Code did not refresh it"
+            minutes = math.ceil((next_refresh - time.monotonic()) / 60)
+            health("claude_oauth", "unavailable",
+                   f"sign-in token expired; {outcome}; next try in {minutes} min, or run `claude` in a terminal to sign in")
+            wait = 60.0
         except claude_oauth.Unavailable as exc:
             health("claude_oauth", "unavailable", exc.reason)
             wait = 60.0
