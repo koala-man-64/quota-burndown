@@ -23,7 +23,7 @@ import math
 import os
 import shutil
 import subprocess
-import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -37,9 +37,13 @@ SOURCE = "oauth-usage"
 WINDOWS = {"five_hour": 300, "seven_day": 10080}
 _MAX_BYTES = 262_144
 # `/usage` is a local command, so no model is called. The model, tool and MCP flags only
-# bound what a future CLI could do if it ever sent the text to a model instead.
-REFRESH_ARGS = ["-p", "/usage", "--no-session-persistence", "--model", "haiku", "--tools", "", "--strict-mcp-config"]
-REFRESH_TIMEOUT_S = 120.0
+# bound what a future CLI could do if it ever sent the text to a model instead. Project-only
+# settings from an empty work directory keep the user's hooks and plugins from running
+# unattended; the sign-in itself is not a setting.
+REFRESH_ARGS = ["-p", "/usage", "--no-session-persistence", "--model", "haiku", "--tools", "", "--strict-mcp-config",
+                "--setting-sources", "project"]
+REFRESH_TIMEOUT_S = 300.0
+_KEEP_ENV = {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_GIT_BASH_PATH"}
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -91,21 +95,28 @@ def cli_environment(environ: Mapping[str, str]) -> dict[str, str]:
     """The service's environment without Claude/Anthropic overrides. A service started from a
     desktop Code-tab shell inherits the app's host-auth variables, and an API key would select
     key auth; either way the CLI would not refresh the subscription sign-in in this file.
-    CLAUDE_CONFIG_DIR stays so the CLI refreshes the same credentials this poller reads."""
-    return {key: value for key, value in environ.items()
-            if key.upper() == "CLAUDE_CONFIG_DIR" or not key.upper().startswith(("CLAUDE", "ANTHROPIC"))}
+    CLAUDE_CONFIG_DIR stays, made absolute because the CLI runs elsewhere, so the CLI refreshes
+    the same credentials this poller reads; the git-bash location stays so the CLI can start."""
+    kept = {key: value for key, value in environ.items()
+            if key.upper() in _KEEP_ENV or not key.upper().startswith(("CLAUDE", "ANTHROPIC"))}
+    for key in kept:
+        if key.upper() == "CLAUDE_CONFIG_DIR" and kept[key]:
+            kept[key] = os.path.abspath(os.path.expanduser(kept[key]))
+    return kept
 
 
 def cli_command(environ: Mapping[str, str]) -> list[str] | None:
-    executable = shutil.which("claude", path=environ.get("PATH"))
-    if not executable:
-        # The native installer's location, which a service's PATH may not include.
-        native = Path.home() / ".local" / "bin" / ("claude.exe" if os.name == "nt" else "claude")
-        executable = str(native) if native.is_file() else None
-    return [executable, *REFRESH_ARGS] if executable else None
+    """The native install first, else an absolute PATH hit: Windows lookups also search the
+    current directory, which must never supply the executable."""
+    native = Path.home() / ".local" / "bin" / ("claude.exe" if os.name == "nt" else "claude")
+    if native.is_file():
+        return [str(native), *REFRESH_ARGS]
+    found = shutil.which("claude", path=environ.get("PATH"))
+    return [found, *REFRESH_ARGS] if found and Path(found).is_absolute() else None
 
 
-def refresh_via_cli(timeout: float = REFRESH_TIMEOUT_S) -> str | None:
+def refresh_via_cli(workdir: Path, stop: threading.Event | None = None,
+                    timeout: float = REFRESH_TIMEOUT_S) -> str | None:
     """Ask Claude Code to refresh its own expired token. Returns None when the CLI ran
     cleanly, else a reason safe to surface. Output is discarded; the poller re-reads the
     credentials file to learn whether the token actually changed."""
@@ -114,14 +125,24 @@ def refresh_via_cli(timeout: float = REFRESH_TIMEOUT_S) -> str | None:
     if command is None:
         return "claude CLI not found"
     try:
-        result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                cwd=tempfile.gettempdir(), env=environ, timeout=timeout,
-                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except subprocess.TimeoutExpired:
-        return "claude CLI timed out"
-    except OSError as exc:
+        workdir.mkdir(parents=True, exist_ok=True)
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   cwd=workdir, env=environ, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    except (OSError, ValueError) as exc:
         return f"claude CLI failed to start ({exc.__class__.__name__})"
-    return None if result.returncode == 0 else f"claude CLI exited {result.returncode}"
+    deadline = time.monotonic() + timeout
+    while process.poll() is None:
+        if stop is not None and stop.is_set():
+            # Left to finish: killing it could interrupt the CLI while it stores a rotated token.
+            return "service stopping"
+        if time.monotonic() >= deadline:
+            process.kill()
+            try: process.wait(timeout=5)
+            except subprocess.TimeoutExpired: pass
+            return "claude CLI timed out"
+        if stop is not None: stop.wait(0.25)
+        else: time.sleep(0.25)
+    return None if process.returncode == 0 else f"claude CLI exited {process.returncode}"
 
 
 def fetch(token: str, timeout: float = 15.0) -> dict:

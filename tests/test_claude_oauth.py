@@ -146,51 +146,78 @@ def test_failed_cli_refresh_is_reported_and_retried_after_cooldown(tmp_path, mon
                      refresh=lambda: refreshes.append(clock[0]) or "claude CLI not found")
     # One attempt, 30 one-minute checks during the cooldown, then a second attempt.
     assert refreshes == [1000.0, 2800.0]
-    assert "Claude Code refresh failed (claude CLI not found)" in health[2][2]
+    assert health[2][2] == ("sign-in token expired; Claude Code refresh failed (claude CLI not found); "
+                            "next try in 30 min, or run `claude` in a terminal to sign in")
+    # The second failure doubles the wait.
+    assert "next try in 60 min" in health[-1][2]
     assert all(TOKEN not in str(item) for item in health)
 
 
-def test_cli_environment_drops_auth_overrides_but_keeps_the_config_dir():
-    environ = {"PATH": "bin", "CLAUDE_CONFIG_DIR": "cfg", "CLAUDECODE": "1", "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH": "1",
-               "CLAUDE_CODE_OAUTH_TOKEN": "host-token", "ANTHROPIC_API_KEY": "key", "anthropic_base_url": "x"}
-    assert claude_oauth.cli_environment(environ) == {"PATH": "bin", "CLAUDE_CONFIG_DIR": "cfg"}
+def test_a_raising_refresh_does_not_stop_the_poller(tmp_path):
+    write_credentials(tmp_path, expires_in_s=-60)
+
+    def refresh():
+        raise ValueError("embedded null character")
+
+    published, health, waits = run(tmp_path, lambda token: pytest.fail("expired token was sent"), limit=2, refresh=refresh)
+    assert waits == [60.0, 60.0]
+    assert "Claude Code refresh failed (claude CLI failed (ValueError))" in health[-1][2]
 
 
-def test_refresh_via_cli_runs_the_local_usage_command_and_reports_safely(tmp_path, monkeypatch):
-    import subprocess
-    calls = []
-    outcome = [subprocess.CompletedProcess([], 0)]
+def test_cli_environment_drops_auth_overrides_but_keeps_what_the_cli_needs():
+    environ = {"PATH": "bin", "CLAUDE_CONFIG_DIR": "cfg", "CLAUDE_CODE_GIT_BASH_PATH": "bash.exe", "CLAUDECODE": "1",
+               "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH": "1", "CLAUDE_CODE_OAUTH_TOKEN": "host-token",
+               "ANTHROPIC_API_KEY": "key", "anthropic_base_url": "x"}
+    # The CLI runs from another directory, so a relative config dir is resolved here.
+    assert claude_oauth.cli_environment(environ) == {"PATH": "bin", "CLAUDE_CONFIG_DIR": os.path.abspath("cfg"),
+                                                     "CLAUDE_CODE_GIT_BASH_PATH": "bash.exe"}
 
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        if isinstance(outcome[0], BaseException):
-            raise outcome[0]
-        return outcome[0]
 
-    monkeypatch.setattr(claude_oauth.subprocess, "run", fake_run)
-    monkeypatch.setattr(claude_oauth.shutil, "which", lambda name, path=None: "C:/bin/claude.exe")
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
-    assert claude_oauth.refresh_via_cli() is None
-    command, kwargs = calls[0]
-    assert command == ["C:/bin/claude.exe", *claude_oauth.REFRESH_ARGS] and command[1:3] == ["-p", "/usage"]
-    assert kwargs["stdout"] is subprocess.DEVNULL and kwargs["stdin"] is subprocess.DEVNULL
-    assert "ANTHROPIC_API_KEY" not in kwargs["env"] and kwargs["timeout"] == claude_oauth.REFRESH_TIMEOUT_S
-
-    outcome[0] = subprocess.CompletedProcess([], 1)
-    assert claude_oauth.refresh_via_cli() == "claude CLI exited 1"
-    outcome[0] = subprocess.TimeoutExpired("claude", 120)
-    assert claude_oauth.refresh_via_cli() == "claude CLI timed out"
-    outcome[0] = FileNotFoundError("gone")
-    assert claude_oauth.refresh_via_cli() == "claude CLI failed to start (FileNotFoundError)"
-
-    monkeypatch.setattr(claude_oauth.shutil, "which", lambda name, path=None: None)
-    monkeypatch.setattr(claude_oauth.Path, "home", lambda: tmp_path)
-    assert claude_oauth.refresh_via_cli() == "claude CLI not found"
-    native = tmp_path / ".local" / "bin" / ("claude.exe" if os.name == "nt" else "claude")
+def test_cli_command_never_comes_from_the_current_directory(tmp_path, monkeypatch):
+    home, elsewhere = tmp_path / "home", tmp_path / "elsewhere"
+    monkeypatch.setattr(claude_oauth.Path, "home", lambda: home)
+    # Windows lookups answer with a relative name when the hit is in the current directory.
+    monkeypatch.setattr(claude_oauth.shutil, "which", lambda name, path=None: ".\\claude.EXE")
+    assert claude_oauth.cli_command({"PATH": ""}) is None
+    absolute = str(elsewhere / "claude.exe")
+    monkeypatch.setattr(claude_oauth.shutil, "which", lambda name, path=None: absolute)
+    assert claude_oauth.cli_command({"PATH": ""}) == [absolute, *claude_oauth.REFRESH_ARGS]
+    native = home / ".local" / "bin" / ("claude.exe" if os.name == "nt" else "claude")
     native.parent.mkdir(parents=True)
     native.write_bytes(b"")
-    outcome[0] = subprocess.CompletedProcess([], 0)
-    assert claude_oauth.refresh_via_cli() is None and calls[-1][0][0] == str(native)
+    assert claude_oauth.cli_command({"PATH": ""})[0] == str(native)
+    # The empty tools list survives Windows argument quoting.
+    import subprocess
+    assert '--tools ""' in subprocess.list2cmdline(claude_oauth.REFRESH_ARGS)
+
+
+def child(monkeypatch, code):
+    import sys
+    monkeypatch.setattr(claude_oauth, "cli_command", lambda environ: [sys.executable, "-c", code])
+
+
+def test_refresh_via_cli_runs_in_its_workdir_without_auth_overrides(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    child(monkeypatch, "import os, sys; open('seen.txt', 'w').write(os.getcwd()); "
+                       "sys.exit(3 if 'ANTHROPIC_API_KEY' in os.environ else 0)")
+    workdir = tmp_path / "claude-refresh"
+    assert claude_oauth.refresh_via_cli(workdir) is None
+    assert os.path.samefile((workdir / "seen.txt").read_text(), workdir)
+    child(monkeypatch, "import sys; sys.exit(3)")
+    assert claude_oauth.refresh_via_cli(workdir) == "claude CLI exited 3"
+
+
+def test_refresh_via_cli_reports_missing_hung_and_unstartable_clis(tmp_path, monkeypatch):
+    import threading
+    monkeypatch.setattr(claude_oauth, "cli_command", lambda environ: None)
+    assert claude_oauth.refresh_via_cli(tmp_path) == "claude CLI not found"
+    child(monkeypatch, "import time; time.sleep(5)")
+    assert claude_oauth.refresh_via_cli(tmp_path, timeout=0.5) == "claude CLI timed out"
+    stop = threading.Event()
+    stop.set()
+    assert claude_oauth.refresh_via_cli(tmp_path, stop) == "service stopping"
+    monkeypatch.setattr(claude_oauth, "cli_command", lambda environ: [str(tmp_path / "missing.exe")])
+    assert claude_oauth.refresh_via_cli(tmp_path) == "claude CLI failed to start (FileNotFoundError)"
 
 
 def test_rejected_token_waits_for_new_credentials(tmp_path):
