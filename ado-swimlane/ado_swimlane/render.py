@@ -102,7 +102,10 @@ LIVE_SCRIPT = """
     try { data = JSON.parse(event.data); } catch (e) { return; }
     if (data.status === "error") { say("collector: " + (data.detail || "error"), "down"); return; }
     if (data.revision && data.revision !== REVISION) { remember(); location.reload(); return; }
-    say("live · " + String(data.revision || REVISION).slice(11, 19) + "Z");
+    var stamp = String(data.revision || REVISION).slice(11, 19) + "Z";
+    // A render that failed its checks is still served, but must not read as live.
+    if (data.status === "degraded") { say("checks failed · " + stamp, "down"); return; }
+    say("live · " + stamp);
   };
   source.onerror = function () { say("reconnecting…", "stale"); };
   setInterval(function () {
@@ -181,13 +184,40 @@ def server_moment(snapshot: dict) -> datetime:
     return now_utc()
 
 
-def live_page(body: str, revision: str) -> str:
-    return _wrap(body, LIVE_STYLE, LIVE_SCRIPT.replace("__REVISION__", revision))
+# A render that failed its checks is still served, so a reader can see what the
+# board said; this banner says not to trust it. The colours are the board's own
+# tokens, so it follows the light and dark themes.
+ALERT_STYLE = """
+<style>
+  .render-alert {
+    padding: 10px 20px; font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+    background: var(--danger-soft, #f7e3e1); color: var(--ink, #1c2530);
+    border-bottom: 2px solid var(--danger, #b3382e);
+  }
+  .render-alert b { color: var(--danger, #b3382e); }
+</style>
+"""
 
 
-def static_page(body: str, refresh_s: int = STATIC_REFRESH) -> str:
+def _alert(degraded: str | None) -> tuple[str, str]:
+    """Style and banner for a render that failed its checks; empty when it passed."""
+    if not degraded:
+        return "", ""
+    banner = ('<div class="render-alert" role="alert"><b>This page failed its own checks.</b> '
+              "Treat what it says as unverified until the next good refresh: "
+              f"{template.escape(degraded)}</div>")
+    return ALERT_STYLE, banner
+
+
+def live_page(body: str, revision: str, degraded: str | None = None) -> str:
+    style, banner = _alert(degraded)
+    return _wrap(banner + body, LIVE_STYLE + style, LIVE_SCRIPT.replace("__REVISION__", revision))
+
+
+def static_page(body: str, refresh_s: int = STATIC_REFRESH, degraded: str | None = None) -> str:
     meta = f'<meta http-equiv="refresh" content="{refresh_s}">'
-    return _wrap(body, meta)
+    style, banner = _alert(degraded)
+    return _wrap(banner + body, meta + style)
 
 
 def artifact_page(body: str) -> str:
