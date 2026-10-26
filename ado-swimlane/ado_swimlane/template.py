@@ -203,8 +203,10 @@ def inject(html: str, snapshot: dict, *, snapshot_date: str, delta_from: str, re
     html = VAR_DELTA.sub(lambda m: m.group(1) + delta_from + m.group(2), html, count=1)
     html = VAR_REFRESHED.sub(lambda m: m.group(1) + refreshed + m.group(2), html, count=1)
 
-    open_ef = len(snapshot.get("openEF") or [])
-    if open_ef:
+    # An empty list is the query's real answer, so zero is written too; only a
+    # snapshot without the query leaves the curated number alone.
+    if snapshot.get("openEF") is not None:
+        open_ef = len(snapshot["openEF"])
         html = OPEN_EF_COUNT.sub(lambda m: m.group(1) + str(open_ef) + m.group(2), html, count=1)
 
     return html, report
