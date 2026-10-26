@@ -57,7 +57,8 @@ def run(paths: Paths, *, client: ado.Client | None = None, source: Path | None =
     )
 
     kids = ado.open_children_of(snapshot)
-    body, report = render.compose(curated, snapshot, kids=kids)
+    previous_page = paths.artifact.read_text(encoding="utf-8-sig") if paths.artifact.exists() else None
+    body, report = render.compose(curated, snapshot, kids=kids, previous_page=previous_page)
     checks = validate.check(body, snapshot, expected_children=len(snapshot.get("children") or []))
     known = {int(k): v for k, v in (read_json(paths.states, {}) or {}).items()}
     board_diff = diff.compare(previous, snapshot, known)
