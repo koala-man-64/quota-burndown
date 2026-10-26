@@ -102,7 +102,10 @@ LIVE_SCRIPT = """
     try { data = JSON.parse(event.data); } catch (e) { return; }
     if (data.status === "error") { say("collector: " + (data.detail || "error"), "down"); return; }
     if (data.revision && data.revision !== REVISION) { remember(); location.reload(); return; }
-    say("live · " + String(data.revision || REVISION).slice(11, 19) + "Z");
+    var stamp = String(data.revision || REVISION).slice(11, 19) + "Z";
+    // A render that failed its checks is still served, but must not read as live.
+    if (data.status === "degraded") { say("checks failed · " + stamp, "down"); return; }
+    say("live · " + stamp);
   };
   source.onerror = function () { say("reconnecting…", "stale"); };
   setInterval(function () {
@@ -119,13 +122,19 @@ def _wrap(body: str, extra_head: str = "", extra_body: str = "") -> str:
 
 
 def compose(template_html: str, snapshot: dict, *, kids: dict[int, list[dict]],
-            moment: datetime | None = None, delta_from: str | None = None) -> tuple[str, template.Report]:
-    """Inject one snapshot into the template and return the body plus a report."""
+            moment: datetime | None = None, delta_from: str | None = None,
+            previous_page: str | None = None) -> tuple[str, template.Report]:
+    """Inject one snapshot into the template and return the body plus a report.
+
+    `previous_page` is the last rendered page. The "changed since" window rolls
+    from its dates, because the template is never written back and its own
+    dates never move.
+    """
     moment = moment or server_moment(snapshot)
     snapshot_date = moment.strftime("%Y-%m-%d")
     refreshed = moment.strftime("%H:%M UTC")
     if not delta_from:
-        delta_from = _delta_window(template_html, snapshot_date)
+        delta_from = _delta_window(previous_page or template_html, snapshot_date)
     return template.inject(
         template_html,
         snapshot,
@@ -141,17 +150,17 @@ def _var(html: str, pattern) -> str | None:
     return match.group(0).split('"')[1] if match else None
 
 
-def _delta_window(template_html: str, snapshot_date: str) -> str:
-    """The "changed since" label.
+def _delta_window(previous_html: str, snapshot_date: str) -> str:
+    """The "changed since" label, read from the previous render's dates.
 
     It only moves when the calendar day rolls over: several refreshes a day all
     describe movement since the same starting point, and resetting the window on
     every poll would make the delta panel claim a shorter history than it shows.
     """
-    previous = _var(template_html, template.VAR_SNAPSHOT)
+    previous = _var(previous_html, template.VAR_SNAPSHOT)
     if previous and previous != snapshot_date:
         return previous[5:]
-    return _var(template_html, template.VAR_DELTA) or snapshot_date[5:]
+    return _var(previous_html, template.VAR_DELTA) or snapshot_date[5:]
 
 
 def server_moment(snapshot: dict) -> datetime:
@@ -175,13 +184,40 @@ def server_moment(snapshot: dict) -> datetime:
     return now_utc()
 
 
-def live_page(body: str, revision: str) -> str:
-    return _wrap(body, LIVE_STYLE, LIVE_SCRIPT.replace("__REVISION__", revision))
+# A render that failed its checks is still served, so a reader can see what the
+# board said; this banner says not to trust it. The colours are the board's own
+# tokens, so it follows the light and dark themes.
+ALERT_STYLE = """
+<style>
+  .render-alert {
+    padding: 10px 20px; font: 13px/1.45 "Segoe UI", system-ui, sans-serif;
+    background: var(--danger-soft, #f7e3e1); color: var(--ink, #1c2530);
+    border-bottom: 2px solid var(--danger, #b3382e);
+  }
+  .render-alert b { color: var(--danger, #b3382e); }
+</style>
+"""
 
 
-def static_page(body: str, refresh_s: int = STATIC_REFRESH) -> str:
+def _alert(degraded: str | None) -> tuple[str, str]:
+    """Style and banner for a render that failed its checks; empty when it passed."""
+    if not degraded:
+        return "", ""
+    banner = ('<div class="render-alert" role="alert"><b>This page failed its own checks.</b> '
+              "Treat what it says as unverified until the next good refresh: "
+              f"{template.escape(degraded)}</div>")
+    return ALERT_STYLE, banner
+
+
+def live_page(body: str, revision: str, degraded: str | None = None) -> str:
+    style, banner = _alert(degraded)
+    return _wrap(banner + body, LIVE_STYLE + style, LIVE_SCRIPT.replace("__REVISION__", revision))
+
+
+def static_page(body: str, refresh_s: int = STATIC_REFRESH, degraded: str | None = None) -> str:
     meta = f'<meta http-equiv="refresh" content="{refresh_s}">'
-    return _wrap(body, meta)
+    style, banner = _alert(degraded)
+    return _wrap(banner + body, meta + style)
 
 
 def artifact_page(body: str) -> str:

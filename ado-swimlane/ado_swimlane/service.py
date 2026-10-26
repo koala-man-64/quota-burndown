@@ -105,7 +105,8 @@ class SwimlaneService:
     # -- state ---------------------------------------------------------------
 
     def publish(self, result: refresh.RefreshResult) -> None:
-        page = render.live_page(result.body, result.revision).encode("utf-8")
+        detail = None if result.ok else "; ".join(result.checks.notes)
+        page = render.live_page(result.body, result.revision, degraded=detail).encode("utf-8")
         with self.lock:
             self.revision = result.revision
             self.page = page
@@ -114,7 +115,7 @@ class SwimlaneService:
                 "state": "healthy" if result.ok else "degraded",
                 "revision": result.revision,
                 "checked": iso(now_utc()),
-                "detail": None if result.ok else "; ".join(result.checks.notes),
+                "detail": detail,
                 "cards": result.checks.totals.get("cards"),
                 "openChildren": result.checks.totals.get("openChildren"),
                 "changes": len(result.board_diff.changes),
