@@ -119,13 +119,19 @@ def _wrap(body: str, extra_head: str = "", extra_body: str = "") -> str:
 
 
 def compose(template_html: str, snapshot: dict, *, kids: dict[int, list[dict]],
-            moment: datetime | None = None, delta_from: str | None = None) -> tuple[str, template.Report]:
-    """Inject one snapshot into the template and return the body plus a report."""
+            moment: datetime | None = None, delta_from: str | None = None,
+            previous_page: str | None = None) -> tuple[str, template.Report]:
+    """Inject one snapshot into the template and return the body plus a report.
+
+    `previous_page` is the last rendered page. The "changed since" window rolls
+    from its dates, because the template is never written back and its own
+    dates never move.
+    """
     moment = moment or server_moment(snapshot)
     snapshot_date = moment.strftime("%Y-%m-%d")
     refreshed = moment.strftime("%H:%M UTC")
     if not delta_from:
-        delta_from = _delta_window(template_html, snapshot_date)
+        delta_from = _delta_window(previous_page or template_html, snapshot_date)
     return template.inject(
         template_html,
         snapshot,
@@ -141,17 +147,17 @@ def _var(html: str, pattern) -> str | None:
     return match.group(0).split('"')[1] if match else None
 
 
-def _delta_window(template_html: str, snapshot_date: str) -> str:
-    """The "changed since" label.
+def _delta_window(previous_html: str, snapshot_date: str) -> str:
+    """The "changed since" label, read from the previous render's dates.
 
     It only moves when the calendar day rolls over: several refreshes a day all
     describe movement since the same starting point, and resetting the window on
     every poll would make the delta panel claim a shorter history than it shows.
     """
-    previous = _var(template_html, template.VAR_SNAPSHOT)
+    previous = _var(previous_html, template.VAR_SNAPSHOT)
     if previous and previous != snapshot_date:
         return previous[5:]
-    return _var(template_html, template.VAR_DELTA) or snapshot_date[5:]
+    return _var(previous_html, template.VAR_DELTA) or snapshot_date[5:]
 
 
 def server_moment(snapshot: dict) -> datetime:
