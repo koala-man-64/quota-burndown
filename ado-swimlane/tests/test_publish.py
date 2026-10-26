@@ -1,8 +1,9 @@
+import argparse
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from ado_swimlane import publish
+from ado_swimlane import cli, publish
 from ado_swimlane.config import Paths
 
 NOW = datetime(2026, 9, 14, 22, 0, tzinfo=timezone.utc)
@@ -244,3 +245,27 @@ def test_auth_failure_is_reported_as_auth_not_as_boilerplate():
     detail = publish._failure(Done(), "Failed to authenticate. API Error: 401 sign-in has been revoked.")
     assert "claude /login" in detail and "revoked" in detail
     assert "Permission allow rule" not in detail
+
+
+def _publish_args(home, force=False):
+    return argparse.Namespace(home=str(home), force=force, dry_run=False, label=None)
+
+
+@pytest.mark.parametrize("force", [False, True])
+def test_cli_publish_refuses_a_page_that_fails_its_checks(tmp_path, board, monkeypatch, capsys, force):
+    """A refresh writes its page whether or not the checks passed, so the CLI must
+    re-run them: a stale Artifact is recoverable, a confidently wrong one is not.
+    --force overrides the publish gates, never the checks."""
+    Paths(tmp_path).artifact.write_text(board.replace("c200: [[201", "c999: [[201"), encoding="utf-8")
+    monkeypatch.setattr(publish, "run_if_due", lambda *a, **k: pytest.fail("must not publish"))
+    assert cli._run_publish(_publish_args(tmp_path, force=force)) == 2
+    err = capsys.readouterr().err
+    assert "fails its own checks" in err and "c999" in err
+
+
+def test_cli_publish_ships_a_page_that_passes_its_checks(tmp_path, board, monkeypatch):
+    Paths(tmp_path).artifact.write_text(board, encoding="utf-8")
+    shipped = []
+    monkeypatch.setattr(publish, "run_if_due", lambda paths, body, **k: shipped.append(body) or (True, "published"))
+    assert cli._run_publish(_publish_args(tmp_path)) == 0
+    assert shipped == [board]

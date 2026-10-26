@@ -95,3 +95,13 @@ def test_memory_does_not_resurrect_the_fetch_window_false_positives():
     # Still fetched-nowhere, still unchanged: not a change, and never "vanished"
     # because a bare fetch union is not a tracked set.
     assert diff.compare(before, after, known).changes == []
+
+
+def test_removal_is_a_state_change_but_not_a_closure():
+    """Removed takes an item off the board without delivering it, so the change
+    report must not count it among the closures."""
+    before = snapshot([item(3, "Feature", "Active")], open_ef=[3])
+    after = snapshot([item(3, "Feature", "Removed")], open_ef=[])
+    result = diff.compare(before, after)
+    assert [(c.id, c.kind, c.after) for c in result.changes] == [(3, "state", "Removed")]
+    assert result.closed == []

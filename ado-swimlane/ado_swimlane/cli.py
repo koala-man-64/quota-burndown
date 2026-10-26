@@ -59,6 +59,15 @@ def _run_publish(args) -> int:
         print(f"{paths.artifact} does not exist; run `refresh` first", file=sys.stderr)
         return 1
     body = paths.artifact.read_text(encoding="utf-8-sig")
+    # A refresh writes its page whether or not the checks passed, so re-run them
+    # here: --force overrides the publish gates, never the checks.
+    snapshot = read_json(paths.snapshot)
+    expected = len(snapshot.get("children") or []) if snapshot else None
+    checks = validate.check(body, snapshot, expected_children=expected)
+    if not checks.ok:
+        print("not published: the page fails its own checks", file=sys.stderr)
+        print(str(checks), file=sys.stderr)
+        return 2
     state = publish_mod.PublishState.load(paths)
     decision = publish_mod.decide(state, body, force=args.force)
     print(f"decision: {'publish' if decision.publish else 'hold'} - {decision.reason}")
@@ -189,7 +198,8 @@ def build_parser() -> argparse.ArgumentParser:
     serve.set_defaults(func=_run_serve)
 
     pub = sub.add_parser("publish", help="republish the Artifact if the page would look different")
-    pub.add_argument("--force", action="store_true", help="publish even if unchanged or debounced")
+    pub.add_argument("--force", action="store_true",
+                     help="publish even if unchanged or debounced (never past failed checks)")
     pub.add_argument("--dry-run", action="store_true", help="say what would happen, publish nothing")
     pub.add_argument("--label", help="Artifact label (60 characters max)")
     pub.set_defaults(func=_run_publish)

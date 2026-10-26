@@ -157,7 +157,8 @@ served or published:
 - every inline script parses (`node --check`, when node is on PATH).
 
 A failed check marks the service `degraded` and says why, in `/v1/status` and in
-`refresh`'s output.
+`refresh`'s output. `publish` re-runs the checks on the page it is about to ship
+and refuses one that fails them, `--force` or not.
 
 ## Reading what changed
 
