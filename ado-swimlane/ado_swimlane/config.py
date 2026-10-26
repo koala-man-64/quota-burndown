@@ -50,6 +50,9 @@ def artifact_url() -> str:
 
 # States that mean the item is off the board.
 DONE_STATES = frozenset({"Closed", "Removed", "Done"})
+# States that mean the work was delivered. Removed is off the board too, but
+# nothing was delivered, so it never counts as a closure.
+CLOSED_STATES = frozenset({"Closed", "Done"})
 
 
 def is_open(state: str | None) -> bool:
