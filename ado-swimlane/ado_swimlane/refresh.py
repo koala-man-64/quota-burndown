@@ -57,7 +57,8 @@ def run(paths: Paths, *, client: ado.Client | None = None, source: Path | None =
     )
 
     kids = ado.open_children_of(snapshot)
-    body, report = render.compose(curated, snapshot, kids=kids)
+    previous_page = paths.artifact.read_text(encoding="utf-8-sig") if paths.artifact.exists() else None
+    body, report = render.compose(curated, snapshot, kids=kids, previous_page=previous_page)
     checks = validate.check(body, snapshot, expected_children=len(snapshot.get("children") or []))
     known = {int(k): v for k, v in (read_json(paths.states, {}) or {}).items()}
     board_diff = diff.compare(previous, snapshot, known)
@@ -73,7 +74,7 @@ def run(paths: Paths, *, client: ado.Client | None = None, source: Path | None =
     # The template is the source of truth for prose and is never written back
     # to; the injected page is an output.
     atomic_write_text(paths.artifact, render.artifact_page(body))
-    atomic_write_text(paths.html, render.static_page(body))
+    atomic_write_text(paths.html, render.static_page(body, degraded=None if checks.ok else "; ".join(checks.notes)))
     with open(paths.changes, "a", encoding="utf-8") as handle:
         handle.write(json.dumps({"revision": revision, **board_diff.as_dict()}, separators=(",", ":")) + "\n")
 
