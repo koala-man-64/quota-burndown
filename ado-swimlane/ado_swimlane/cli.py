@@ -17,13 +17,14 @@ from . import (
     validate,
 )
 from .config import COLLECT_INTERVAL, DEFAULT_PORT, get_paths, template_path
-from .util import read_json
+from .util import WriterLease, read_json
 
 
 def _run_refresh(args) -> int:
     paths = get_paths(args.home)
     try:
-        result = refresh_mod.run(paths, source=Path(args.template) if args.template else None)
+        with WriterLease(paths.home, ".refresh.lock"):
+            result = refresh_mod.run(paths, source=Path(args.template) if args.template else None)
     except RuntimeError as exc:
         print(f"refresh skipped: {exc}", file=sys.stderr)
         return 1

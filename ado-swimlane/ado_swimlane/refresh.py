@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 from . import ado, diff, render, template, validate
@@ -55,10 +56,20 @@ def run(paths: Paths, *, client: ado.Client | None = None, source: Path | None =
         since=_since(previous),
         client=client,
     )
+    try:
+        provider_moment = parsedate_to_datetime(snapshot.get("serverDate") or "")
+        if provider_moment.tzinfo is None:
+            raise ValueError("provider clock has no timezone")
+    except (TypeError, ValueError, OverflowError):
+        raise ado.AdoError("provider snapshot has no valid server Date") from None
 
     kids = ado.open_children_of(snapshot)
     body, report = render.compose(curated, snapshot, kids=kids)
     checks = validate.check(body, snapshot, expected_children=len(snapshot.get("children") or []))
+    if report.missing:
+        checks.fail("provider omitted card states: " + ", ".join(report.missing))
+    if not checks.ok:
+        raise ado.AdoError("render validation failed: " + "; ".join(checks.notes))
     known = {int(k): v for k, v in (read_json(paths.states, {}) or {}).items()}
     board_diff = diff.compare(previous, snapshot, known)
     revision = render.revision_of(snapshot)
@@ -73,7 +84,7 @@ def run(paths: Paths, *, client: ado.Client | None = None, source: Path | None =
     # The template is the source of truth for prose and is never written back
     # to; the injected page is an output.
     atomic_write_text(paths.artifact, render.artifact_page(body))
-    atomic_write_text(paths.html, render.static_page(body))
+    atomic_write_text(paths.html, render.static_page(body, revision=revision))
     with open(paths.changes, "a", encoding="utf-8") as handle:
         handle.write(json.dumps({"revision": revision, **board_diff.as_dict()}, separators=(",", ":")) + "\n")
 

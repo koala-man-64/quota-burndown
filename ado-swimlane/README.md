@@ -127,15 +127,15 @@ fallbacks, because the first one needs rights you may not have:
 
 ## Authentication
 
-There is no PAT. `az account get-access-token --resource <the Azure DevOps
-application id>` mints a short-lived credential from the Azure CLI's existing
-sign-in, refreshed a minute before expiry. Two consequences worth knowing:
+The collector uses the existing `AZURE_DEVOPS_EXT_PAT` inherited by its process.
+It sends Basic authentication directly to Azure DevOps and does not persist the
+PAT or use an Azure login fallback. Missing or rejected credentials report an
+error and retry after one minute. Restore the authorized PAT environment to
+recover. Credentials and raw provider error bodies never reach the page or logs.
 
-- when the CLI session lapses, the collector reports `state: error` with the
-  `az` message and keeps retrying on a one-minute backoff — it does not die, and
-  it does not prompt; you run `az login` and the next poll recovers;
-- nothing secret can reach the page, because the page is built only from work
-  item fields.
+Manual `refresh` and `serve` share the same writer lease. A validation failure
+aborts before replacing the last good snapshot, state history or rendered files.
+Generated card notes separate retained prose from current referenced-item state.
 
 The server binds to loopback, rejects any request whose `Host` or `Origin` is
 not the loopback endpoint, and exposes no write path.

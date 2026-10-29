@@ -4,6 +4,21 @@ The standalone Azure DevOps swimlane application is in [ado-swimlane](ado-swimla
 It has its own launcher, configuration, and test suite. Run each application's
 tests from its own directory.
 
+The dashboard's `serve` process refreshes its embedded backlog immediately and
+every five minutes using the bundled swimlane `refresh` command. This reads
+Azure Boards and writes local files only. It never invokes `publish`.
+The inherited `AZURE_DEVOPS_EXT_PAT` is required. Quota and backlog freshness
+are independent: `/v1/swimlane/status` and the board banner report the provider
+snapshot time, refresh failures and stale data. A failed pull or failed render
+retains the last good board and retries after one minute.
+
+`ADO_SWIMLANE_HOME` selects the backlog data directory (default
+`~/.ado-swimlane`). An optional `refresh-config.json` there may contain
+`{"template":"C:/path/to/curated/board.html"}` to retain an existing prose source
+while running the service from a managed checkout. `refresh-status.json` records
+the latest attempt; the template itself is never written. Card notes remain
+historical, with separate current reference states from Azure Boards.
+
 A local capacity service and live dashboard for Codex and Claude, with a token activity ledger for Antigravity. Python 3.10+, standard library only. The service reports observations and guidance; an orchestrator owns scheduling.
 
 ## Start and install

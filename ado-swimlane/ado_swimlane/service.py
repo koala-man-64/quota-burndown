@@ -24,7 +24,7 @@ from urllib.parse import urlsplit
 
 from . import ado, publish as publish_mod, refresh, render
 from .config import COLLECT_INTERVAL, DEFAULT_PORT, Paths, SUPERVISE_INTERVAL
-from .util import WriterLease, atomic_write_text, iso, now_utc, read_json
+from .util import LeaseContentionError, WriterLease, atomic_write_text, iso, now_utc, read_json
 
 LOG_MAX_BYTES = 1_000_000
 HEARTBEAT_S = 15
@@ -180,7 +180,7 @@ class SwimlaneService:
                 log(self.paths, f"refresh {result.revision} {result.checks.totals.get('openChildren')} open children "
                                 f"{len(result.board_diff.changes)} changes ok={result.ok}")
                 self._maybe_publish(result)
-            except RuntimeError:
+            except LeaseContentionError:
                 # A manual `refresh` holds the lease; its result lands on disk and
                 # the next poll picks it up.
                 wait = min(self.interval, 30)
@@ -304,7 +304,7 @@ def serve(paths: Paths, host: str = "127.0.0.1", port: int = DEFAULT_PORT,
     """Run until interrupted. One writer at a time, enforced by the lease."""
     try:
         lease = WriterLease(paths.home, ".service.lock").__enter__()
-    except RuntimeError:
+    except LeaseContentionError:
         print(f"a swimlane service is already running; open http://{host}:{port}/")
         return
     service = SwimlaneService(paths, interval=interval, collect=collect, publish=publish)

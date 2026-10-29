@@ -1,20 +1,15 @@
-"""Azure DevOps access: token, WIQL, and batched work-item detail.
-
-Auth deliberately borrows the Azure CLI's existing sign-in rather than storing a
-PAT. Nothing secret is written to disk by this module, and nothing secret can
-reach the rendered page, because the page is built from work-item fields only.
-"""
+"""Azure DevOps reads using an inherited PAT; no credentials are persisted."""
 from __future__ import annotations
 
+import base64
 import json
-import shutil
-import subprocess
+import os
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
 
-from .config import ADO_RESOURCE, is_open, org, project
+from .config import is_open, org, project
 
 FIELDS = [
     "System.Id",
@@ -37,61 +32,29 @@ class AdoError(RuntimeError):
 
 
 class AuthError(AdoError):
-    """The Azure CLI has no usable session; a human has to run `az login`."""
-
-
-def _az_executable() -> str:
-    # On Windows `az` is a .cmd shim, which subprocess will not find without the
-    # extension; shutil.which resolves it using PATHEXT.
-    found = shutil.which("az")
-    if not found:
-        raise AuthError("azure-cli not found on PATH; install it or run `az login`")
-    return found
-
-
-def fetch_token() -> tuple[str, float]:
-    """Return (token, expiry_epoch_seconds) from the Azure CLI's cached login."""
-    try:
-        result = subprocess.run(
-            [_az_executable(), "account", "get-access-token", "--resource", ADO_RESOURCE, "-o", "json"],
-            capture_output=True,
-            text=True,
-            timeout=90,
-        )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise AuthError(f"az token fetch failed: {type(exc).__name__}") from exc
-    if result.returncode:
-        raise AuthError(f"az token fetch failed ({result.returncode}): {(result.stderr or result.stdout).strip()[:200]}")
-    try:
-        payload = json.loads(result.stdout)
-    except ValueError as exc:
-        raise AuthError("az returned non-JSON token output") from exc
-    token = payload.get("accessToken")
-    if not token:
-        raise AuthError("az returned no accessToken")
-    # expires_on is epoch seconds; expiresOn is a local-time string. Prefer the
-    # unambiguous one and fall back to a conservative short lifetime.
-    try:
-        expiry = float(payload.get("expires_on"))
-    except (TypeError, ValueError):
-        expiry = time.time() + 600
-    return token, expiry
+    """The collector has no usable PAT or the provider rejected it."""
 
 
 @dataclass
 class Client:
-    """One ADO session. Holds the access token and the server clock."""
+    """One ADO session. Optional token injection is an in-memory PAT for tests."""
 
-    token: str | None = None
+    token: str | None = field(default=None, repr=False)
     expiry: float = 0.0
     server_date: str | None = None
     _urlopen: object = field(default=None, repr=False)
 
     def _auth(self) -> str:
-        # Refresh a minute early so a long batch never straddles the expiry.
-        if not self.token or time.time() >= self.expiry - 60:
-            self.token, self.expiry = fetch_token()
-        return self.token
+        # Read the inherited PAT each time so rotation needs no cached credential.
+        # Never fall back to Entra/az account: the dedicated CLI config is PAT-only.
+        pat = os.environ.get("AZURE_DEVOPS_EXT_PAT") or self.token
+        if not pat or not pat.strip():
+            raise AuthError(
+                "AZURE_DEVOPS_EXT_PAT is missing; start the collector from the "
+                "authorized PAT environment (Azure CLI config: "
+                "C:/Users/rdpro/.codex/azure-cli-pat). Entra fallback is disabled."
+            )
+        return "Basic " + base64.b64encode((":" + pat).encode("utf-8")).decode("ascii")
 
     def _open(self, request):
         opener = self._urlopen or urllib.request.urlopen
@@ -102,7 +65,7 @@ class Client:
         last: Exception | None = None
         for attempt in range(attempts):
             request = urllib.request.Request(url, data=data, method="POST")
-            request.add_header("Authorization", "Bearer " + self._auth())
+            request.add_header("Authorization", self._auth())
             # rdprokes is an MSA-backed organization: without this header the
             # REST API answers 203 with a sign-in page instead of JSON.
             request.add_header("X-VSS-ForceMsaPassThrough", "true")
@@ -114,21 +77,19 @@ class Client:
             except urllib.error.HTTPError as exc:
                 last = exc
                 if exc.code in (401, 403):
-                    # Force a new credential once, then give up rather than spin.
-                    self.token, self.expiry = None, 0.0
-                elif exc.code not in (429, 500, 502, 503, 504):
-                    # ADO puts the actual complaint in the body; without it a 400
-                    # says nothing about which clause it rejected.
-                    try:
-                        detail = json.loads(exc.read().decode("utf-8")).get("message", "")
-                    except (ValueError, OSError):
-                        detail = ""
-                    raise AdoError(f"ADO HTTP {exc.code} for {url}: {detail[:300]}") from exc
+                    raise AuthError(
+                        f"ADO HTTP {exc.code}: PAT rejected or missing required read access; "
+                        "restore the authorized PAT environment."
+                    ) from None
+                if exc.code not in (429, 500, 502, 503, 504):
+                    # Provider bodies/URLs can echo credentials; keep errors bounded
+                    # to status codes, including tracebacks written by the service.
+                    raise AdoError(f"ADO HTTP {exc.code}") from None
             except (OSError, ValueError) as exc:
                 last = exc
             else:
                 if payload.get("message") and not payload.get("value") and not payload.get("workItems"):
-                    raise AdoError("ADO error: " + str(payload["message"])[:200])
+                    raise AdoError("ADO returned an error response")
                 return payload
             time.sleep(2 ** attempt)
         raise AdoError(f"ADO request failed after {attempts} attempts: {type(last).__name__}")

@@ -1,6 +1,7 @@
 """Small shared helpers: clocks, atomic writes, and a single-writer lease."""
 from __future__ import annotations
 
+import errno
 import json
 import os
 from contextlib import AbstractContextManager
@@ -41,6 +42,10 @@ def write_json(path: Path, payload) -> None:
     atomic_write_text(path, json.dumps(payload, separators=(",", ":")))
 
 
+class LeaseContentionError(RuntimeError):
+    """Another writer holds the nonblocking lease."""
+
+
 class WriterLease(AbstractContextManager):
     """OS-held lock released on process death, so a crashed writer never wedges
     the next one and two overlapping collectors never race the same snapshot."""
@@ -66,10 +71,12 @@ class WriterLease(AbstractContextManager):
                 import fcntl
 
                 fcntl.flock(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
+        except OSError as exc:
             self.file.close()
             self.file = None
-            raise RuntimeError("another ado-swimlane writer holds the lease") from None
+            if exc.errno in (errno.EACCES, errno.EAGAIN, errno.EDEADLK):
+                raise LeaseContentionError("another ado-swimlane writer holds the lease") from None
+            raise
         return self
 
     def __exit__(self, *_):

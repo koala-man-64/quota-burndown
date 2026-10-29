@@ -126,7 +126,7 @@ def compose(template_html: str, snapshot: dict, *, kids: dict[int, list[dict]],
     refreshed = moment.strftime("%H:%M UTC")
     if not delta_from:
         delta_from = _delta_window(template_html, snapshot_date)
-    return template.inject(
+    body, report = template.inject(
         template_html,
         snapshot,
         snapshot_date=snapshot_date,
@@ -134,6 +134,7 @@ def compose(template_html: str, snapshot: dict, *, kids: dict[int, list[dict]],
         refreshed=refreshed,
         kids=kids,
     )
+    return template.annotate_notes(body, snapshot), report
 
 
 def _var(html: str, pattern) -> str | None:
@@ -179,8 +180,10 @@ def live_page(body: str, revision: str) -> str:
     return _wrap(body, LIVE_STYLE, LIVE_SCRIPT.replace("__REVISION__", revision))
 
 
-def static_page(body: str, refresh_s: int = STATIC_REFRESH) -> str:
+def static_page(body: str, refresh_s: int = STATIC_REFRESH, *, revision: str | None = None) -> str:
     meta = f'<meta http-equiv="refresh" content="{refresh_s}">'
+    if revision:
+        meta += '<meta name="ado-snapshot-at" content="' + template.escape(revision) + '">'
     return _wrap(body, meta)
 
 

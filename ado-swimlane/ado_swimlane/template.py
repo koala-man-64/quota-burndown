@@ -27,6 +27,9 @@ CARD_TAG = re.compile(r'<div class="card(?P<classes>[^"]*)" id="(?P<id>c\d+)"(?P
 DATA_STATE = re.compile(r'\s*data-state="(?P<state>[^"]*)"')
 CHILD_ROW = re.compile(r'\[(\d+),"([^"]+)","([^"]+)","')
 CHILDREN_LINE = re.compile(r"^\s*(c\d+):\s*(\[\[.*)$", re.MULTILINE)
+CARD_NOTE = re.compile(r'(<div class="n">)([\s\S]*?)(</div>)')
+REFERENCE_ID = re.compile(r'(?<!\d)\d{3,4}(?!\d)')
+NON_IDS = {200, 403, 429, 500, 503, 504, 2026}
 
 CHILDREN_OPEN = "var CHILDREN = {"
 CHILDREN_CLOSE = "\n  };"
@@ -112,7 +115,33 @@ def known_ids(html: str) -> list[int]:
     ids = set(card_ids(html))
     for kids in read_children(html).values():
         ids.update(kids)
+    # Card-note references are linkified by the page too. Fetch their state even
+    # after Closed children fall out of CHILDREN and the changed-since window.
+    for _start, note, _end in CARD_NOTE.findall(html):
+        ids.update(note_ids(note))
     return sorted(ids)
+
+
+def note_ids(note: str) -> set[int]:
+    text = html_mod.unescape(re.sub(r"<[^>]+>", " ", note))
+    return {int(match[0]) for match in REFERENCE_ID.finditer(text)} - NON_IDS
+
+
+def annotate_notes(body: str, snapshot: dict) -> str:
+    """Keep curated claims intact, but separate them from provider-backed state."""
+    states = {item["id"]: item.get("state") for item in snapshot.get("items", [])}
+    def note(match):
+        prose = match[2]
+        refs = [f'{wid}: {states.get(wid) or "unavailable"}' for wid in sorted(note_ids(prose))]
+        current = ('<span class="ado-reference-states" style="display:block;margin-top:4px;font-weight:600">'
+                   'Current ADO: ' + escape("; ".join(refs)) + '</span>') if refs else ""
+        return match[1] + '<span style="font-weight:600">Retained note: </span>' + prose + current + match[3]
+    body = CARD_NOTE.sub(note, body)
+    marker = '<div class="kfacts">'
+    explanation = ('<p class="ado-retained-analysis" style="padding:8px 0;font-size:12px">'
+                   'Retained analysis below is historical. Current card badges, child lists and '
+                   'Current ADO reference states come from the snapshot; prose claims are not refreshed.</p>')
+    return body.replace(marker, explanation + marker, 1)
 
 
 def _js_string(value: str) -> str:

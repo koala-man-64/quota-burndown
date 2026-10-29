@@ -10,15 +10,12 @@ SERVICE_TASK_NAME = "AdoSwimlaneService"
 WATCHDOG_TASK_NAME = "AdoSwimlaneWatchdog"
 DEFAULT_PORT = 8799
 
-# Azure DevOps. The resource GUID is the fixed first-party application id for
-# Azure DevOps; `az account get-access-token --resource <it>` mints a token from
-# the CLI's existing sign-in, so nothing here stores or needs a PAT.
-ADO_RESOURCE = "499b84ac-1321-427f-aa17-267ca6975798"
+# Azure DevOps. Authentication uses the inherited AZURE_DEVOPS_EXT_PAT.
 DEFAULT_ORG = "https://dev.azure.com/rdprokes"
 DEFAULT_PROJECT = "AdaptiveAssetAllocation"
 
 # Poll cadences, in seconds. The board moves on a human/agent timescale (minutes
-# at best), so polling faster than this only burns API calls and az sign-in use.
+# at best), so polling faster than this only burns API calls.
 COLLECT_INTERVAL = 300
 SUPERVISE_INTERVAL = 60
 # Static pages have no push channel; they reload themselves on this cadence.

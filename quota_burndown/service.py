@@ -85,6 +85,8 @@ class CapacityService:
         self._lease = None
         self.max_publication_latency_ms = 0.0
         self._storage_error_op = None
+        from .swimlane import SwimlaneRefresh
+        self.swimlane = SwimlaneRefresh(enabled=collectors, clock=clock)
 
     def active(self):
         with self._consumer_lock:
@@ -100,18 +102,18 @@ class CapacityService:
         rendered = ado_home / "swimlane.html"
         if rendered.is_file():
             try:
-                return rendered.read_bytes()
+                return self.swimlane.decorate(rendered.read_bytes(), rendered=True)
             except OSError:
                 pass
         repo_template = Path(__file__).resolve().parent.parent / "ado-swimlane" / "board" / "board.html"
         if repo_template.is_file():
             try:
                 text = repo_template.read_text(encoding="utf-8")
-                return (
+                return self.swimlane.decorate((
                     '<!doctype html><html><head><meta charset="utf-8">'
                     '<meta name="viewport" content="width=device-width,initial-scale=1">'
                     f'</head><body>{text}</body></html>'
-                ).encode("utf-8")
+                ).encode("utf-8"), rendered=False)
             except OSError:
                 pass
         return None
@@ -170,6 +172,7 @@ class CapacityService:
         # Build pages/usage independently. Never perform this work in HTTP handlers.
         self._spawn("capacity-ledger", self._ledger)
         if self.collectors:
+            self._spawn("backlog-refresh", lambda: self.swimlane.run(self.stop_event))
             from .integrations import AdapterContext, run_antigravity, run_claude_oauth, run_codex, run_files
             context = AdapterContext(publish_credits=self.publish_credits)
             self._spawn("capacity-codex", lambda: run_codex(self.stop_event, self.publish, self.health, self.active, context))
@@ -442,6 +445,10 @@ def make_server(service: CapacityService, host="127.0.0.1", port=8787):
                 self._send(200, "application/json", service._legacy_latest)
             elif path == "/status.json":
                 self._send(200, "application/json", service._legacy_status)
+            elif path == "/v1/swimlane/status":
+                status = service.swimlane.status()
+                status["label"] = service.swimlane.label(status, status["has_rendered"])
+                self._send(200, "application/json", json.dumps(status).encode())
             elif path in ("/swimlane", "/swimlane.html"):
                 service.touch()
                 content = service.swimlane_html()
