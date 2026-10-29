@@ -7,14 +7,13 @@ import json
 import os
 import re
 import subprocess
-import sys
 import threading
 import time
 from datetime import timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
-from .process_job import child_job
+from .process_job import child_job, gated_script_command
 from .util import atomic_write_text, iso, now_utc, read_json
 
 INTERVAL_S = 300
@@ -77,7 +76,7 @@ class SwimlaneRefresh:
             with self.lock:
                 self.attempt = iso(self.clock())
             self._set("refreshing")
-            command = [sys.executable, "-B", str(self.launcher), "--home", str(self.home), "refresh"]
+            command = gated_script_command(self.launcher, "--home", str(self.home), "refresh")
             config_path = self.home / "refresh-config.json"
             config = read_json(config_path, None) if config_path.exists() else {}
             if not isinstance(config, dict):
@@ -88,9 +87,12 @@ class SwimlaneRefresh:
                     raise ValueError("Configured backlog template must be an existing absolute file; retaining last good board.")
                 command.extend(["--template", str(source)])
             flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-            with subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            with subprocess.Popen(command, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                   text=True, encoding="utf-8", errors="replace", creationflags=flags,
                                   env={**os.environ, "PYTHONIOENCODING": "utf-8"}) as child, child_job(child):
+                # The collector cannot execute before child_job owns its lifetime.
+                child.stdin.write("G")
+                child.stdin.flush()
                 deadline = time.monotonic() + TIMEOUT_S
                 while True:
                     try:

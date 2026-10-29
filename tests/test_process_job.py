@@ -49,7 +49,8 @@ def test_job_allows_normal_child_completion():
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows job objects")
-def test_killed_parent_cannot_orphan_its_refresh_child(tmp_path):
+@pytest.mark.parametrize("before_assignment", [False, True])
+def test_killed_parent_cannot_orphan_its_refresh_child(tmp_path, before_assignment):
     from ctypes import wintypes
     marker = tmp_path / "assigned-child.txt"
     parent_code = """
@@ -60,6 +61,24 @@ with subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']) as 
     with child_job(child):
         Path(sys.argv[1]).write_text(str(child.pid))
         time.sleep(60)
+"""
+    executed = tmp_path / "collector-started.txt"
+    if before_assignment:
+        # Pause the actual refresh path after Popen but before job assignment.
+        # The collector must remain behind its pipe gate, then exit on EOF.
+        collector = tmp_path / "collector.py"
+        collector.write_text(f"from pathlib import Path\nPath({str(executed)!r}).touch()\n")
+        parent_code = """
+import sys, threading, time
+from pathlib import Path
+from quota_burndown import process_job, swimlane
+def pause_before_assignment(child):
+    Path(sys.argv[1]).write_text(str(child.pid))
+    time.sleep(60)
+    raise RuntimeError('test did not terminate parent')
+process_job._create_job = pause_before_assignment
+swimlane.SwimlaneRefresh(home=Path(sys.argv[1]).parent / 'data',
+                        launcher=Path(sys.argv[1]).parent / 'collector.py').refresh(threading.Event())
 """
     kernel = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
@@ -82,9 +101,11 @@ with subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']) as 
         child_handle = kernel.OpenProcess(0x00100000 | 0x0001, False, int(marker.read_text()))
         assert child_handle
         assert kernel.WaitForSingleObject(child_handle, 0) == 258  # still running
+        assert not executed.exists()
         parent.kill()  # Windows TerminateProcess skips every Python finally block.
         parent.wait(timeout=10)
         assert kernel.WaitForSingleObject(child_handle, 10000) == 0
+        assert not executed.exists()
     finally:
         if parent.poll() is None:
             parent.kill()

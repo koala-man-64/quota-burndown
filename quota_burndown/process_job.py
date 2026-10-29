@@ -4,7 +4,25 @@ from __future__ import annotations
 import ctypes
 import os
 import subprocess
+import sys
 from contextlib import contextmanager
+
+
+def gated_script_command(script, *args: str) -> list[str]:
+    """Wait for the parent's go byte before executing any collector code.
+
+    If the parent dies before assigning the Windows job, its pipe closes and
+    this bootstrap exits on EOF without running the collector.
+    """
+    bootstrap = """import sys
+if sys.stdin.buffer.read(1) != b'G':
+    raise SystemExit(1)
+import os, runpy
+sys.argv = sys.argv[1:]
+sys.path.insert(0, os.path.dirname(os.path.abspath(sys.argv[0])))
+runpy.run_path(sys.argv[0], run_name='__main__')
+"""
+    return [sys.executable, "-B", "-c", bootstrap, os.fspath(script), *args]
 
 
 def _create_job(child: subprocess.Popen):
@@ -75,6 +93,8 @@ def child_job(child: subprocess.Popen):
     """On Windows, kill the supplied child if this parent exits or scope ends.
 
     Enter immediately after Popen and keep this scope around communicate/wait.
+    Use gated_script_command and release its stdin gate only inside this scope
+    when the child must not run before job assignment.
     Failed job setup kills and reaps the child before propagating the error.
     Other platforms leave process lifetime management to the caller.
     """
