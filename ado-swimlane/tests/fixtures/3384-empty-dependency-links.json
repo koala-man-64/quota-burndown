@@ -1,0 +1,11 @@
+{
+  "queryType": "oneHop",
+  "queryResultType": "workItemLink",
+  "asOf": "2026-10-29T15:10:52.08Z",
+  "columns": [{"referenceName": "System.Id", "name": "ID", "url": "https://example.invalid/_apis/wit/fields/System.Id"}],
+  "sortColumns": [
+    {"field": {"referenceName": "System.Id", "name": "ID", "url": "https://example.invalid/_apis/wit/fields/System.Id"}, "descending": false},
+    {"field": {"referenceName": "System.Id", "name": "ID", "url": "https://example.invalid/_apis/wit/fields/System.Id"}, "descending": false}
+  ],
+  "workItemRelations": []
+}

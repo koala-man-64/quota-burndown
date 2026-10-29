@@ -45,7 +45,7 @@ def test_item_row_retains_needed_fields_and_relations_without_system_id():
         "tags": "backlog; tracked", "iter": "AdaptiveAssetAllocation\\Current",
         "priority": 2, "priorityReturned": True,
         "assignedTo": "Rudy", "assignedToReturned": True, "iterationReturned": True,
-        "relationsFetched": True,
+        "relationsFetched": False,  # malformed dependency URL leaves coverage unknown
         "relations": [
             {"predecessor": 10, "successor": 20},
             {"predecessor": 30, "successor": 10},
@@ -63,7 +63,7 @@ def test_expanded_batch_obeys_provider_contract_and_chunk_limit():
             self.ids = ids
 
         def read(self):
-            return json.dumps({"value": [_raw(item_id) for item_id in self.ids]}).encode()
+            return json.dumps({"count": len(self.ids), "value": [_raw(item_id) for item_id in self.ids]}).encode()
 
         def __enter__(self):
             return self

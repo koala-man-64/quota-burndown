@@ -183,6 +183,29 @@ def check(html: str, snapshot: dict | None = None, *, expected_children: int | N
                 result.fail("dependency relation coverage is unknown for displayed cards")
             elif missing_relations:
                 result.fail("dependency relations not returned for card(s): " + ", ".join(map(str, missing_relations)))
+            fallback = scope.get("cardRelationFallback") or {}
+            if fallback.get("error"):
+                result.fail("dependency fallback failed: " + str(fallback["error"]))
+            requested_fallback = set(fallback.get("sourceIds") or [])
+            if "cardRelationLiteralIds" in scope:
+                literal_ids = set(scope["cardRelationLiteralIds"])
+                completed_ids = {int(item_id) for item_id in (fallback.get("observations") or {})}
+                recorded_ids = set(scope.get("cardRelationReturnedIds") or [])
+                displayed_ids = {int(row["id"][1:]) for row in rows}
+                if (recorded_ids != literal_ids | completed_ids or not literal_ids <= displayed_ids
+                        or not requested_fallback <= displayed_ids & set(items)
+                        or any(item_id not in items or not items[item_id].get("relationsFetched") for item_id in literal_ids)):
+                    result.fail("dependency relation coverage disagrees with its recorded provenance")
+            for source_id, observation in (fallback.get("observations") or {}).items():
+                source_id = int(source_id)
+                if (source_id not in requested_fallback or source_id not in items
+                        or source_id not in {int(row["id"][1:]) for row in rows}
+                        or observation.get("sourceId") != source_id
+                        or observation.get("method") != "wiql-workitemlinks"
+                        or observation.get("mode") != "MustContain"
+                        or observation.get("complete") is not True or not observation.get("asOf")
+                        or items[source_id].get("relationEvidence") != observation):
+                    result.fail(f"dependency fallback provenance is invalid for card {source_id}")
             card_set = {int(row["id"][1:]) for row in rows}
             expected_links = {
                 (int(edge["predecessor"]), int(edge["successor"]))
