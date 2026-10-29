@@ -193,6 +193,23 @@ that snapshot passes the current checks; otherwise they show the raw template
 with its unverified timestamp warning. `publish` re-runs the checks on the page
 it is about to ship and refuses one that fails them, `--force` or not.
 
+Each rejected render atomically replaces `failed-attempt.latest.json` in the
+data home. This local diagnostic is explicitly unaccepted and unserved: it
+contains the attempted normalized snapshot, response revision, capture time,
+and validation notes. It never replaces an accepted snapshot, previous
+snapshot, state memory, Artifact, or change log, and no HTTP route exposes it.
+It preserves only the latest rejected render, not raw HTTP bytes or earlier
+failures; successful renders do not promote or consume it. A diagnostic write
+failure is reported alongside the validation failure without hiding it.
+An omitted `relations` field remains unknown on its own. Only returned displayed
+cards with an absent field qualify for a bounded dependency-only WorkItemLinks
+MustContain query, one source per query. A valid, complete, uncontinued response
+can establish that source's dependency edges, including an explicit empty result.
+Missing records, malformed literal relations, failed or incomplete queries remain
+unknown and fail the gate. The snapshot records each fallback's source, method,
+completion and `asOf`; batch details and link queries are independent observations,
+not one atomic transaction. Off-view endpoint IDs do not cause detail fetches.
+
 ## Reading what changed
 
 `refresh` prints a change report and appends it to `changes.jsonl`; `changes`

@@ -23,7 +23,7 @@ COLD_START_DAYS = 2
 class RefreshResult:
     revision: str  # attempted ADO response revision
     body: str  # accepted render, or last-good/raw fallback when checks fail
-    snapshot: dict  # attempted pull; persisted only if its render passes checks
+    snapshot: dict  # attempted pull; accepted state only when its render passes checks
     board_diff: diff.BoardDiff
     report: template.Report
     checks: validate.Result
@@ -84,6 +84,22 @@ def run(paths: Paths, *, client: ado.Client | None = None, source: Path | None =
             handle.write(json.dumps({"revision": revision, **board_diff.as_dict()}, separators=(",", ":")) + "\n")
         served_revision = revision
     else:
+        # Preserve rejected evidence separately from every accepted-state file.
+        # One atomic latest file bounds retention; no route serves this diagnostic.
+        try:
+            write_json(paths.home / "failed-attempt.latest.json", {
+                "schema": "ado-swimlane-rejected-normalized-attempt-v1",
+                "accepted": False,
+                "served": False,
+                "capturedAt": iso(now_utc()),
+                "attemptedRevision": revision,
+                "snapshot": snapshot,
+                "validation": {"ok": False, "notes": checks.notes, "totals": checks.totals},
+            })
+        except OSError:
+            # Evidence storage failure must not hide the failed checks or retire
+            # the last-good fallback path. No rejected state becomes accepted.
+            checks.note("failed-attempt diagnostic write failed (OSError)")
         # Never replace accepted state with a pull whose page failed validation.
         # Re-render the retained snapshot against the current template and checks;
         # if it no longer qualifies, fail closed to the raw unverified template.

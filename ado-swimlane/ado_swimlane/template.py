@@ -322,7 +322,19 @@ def _relation_panel(snapshot: dict, displayed: set[int]) -> str:
     returned = len(scope.get("cardRelationReturnedIds") or [])
     card_count = len(scope.get("cardIds") or snapshot.get("cardIds") or displayed)
     missing = sorted(int(item_id) for item_id in scope.get("cardRelationMissingIds") or [])
-    coverage = f"ADO Relations expansion returned for {returned} of {card_count} displayed cards."
+    coverage = f"ADO dependency evidence returned for {returned} of {card_count} displayed cards."
+    fallback = scope.get("cardRelationFallback") or {}
+    observations = fallback.get("observations") or {}
+    if fallback.get("sourceIds"):
+        literal_count = len(scope.get("cardRelationLiteralIds") or [])
+        query_count = len(observations)
+        coverage += (
+            f" Item responses covered {literal_count} {'card' if literal_count == 1 else 'cards'}. "
+            f"Explicit dependency queries covered {query_count} {'card' if query_count == 1 else 'cards'}."
+        )
+        for source_id, observation in sorted(observations.items(), key=lambda pair: int(pair[0])):
+            coverage += f" #{source_id} link query as of {observation['asOf']}."
+        coverage += " Item details and links were read separately and may reflect different moments."
     if missing:
         coverage += " Missing relation responses for displayed card IDs: " + ", ".join(f"#{i}" for i in missing) + "."
     coverage += (

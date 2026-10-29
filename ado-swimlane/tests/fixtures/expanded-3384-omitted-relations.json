@@ -1,0 +1,20 @@
+{
+  "count": 1,
+  "value": [
+    {
+      "id": 3384,
+      "rev": 2,
+      "fields": {
+        "System.WorkItemType": "Bug",
+        "System.State": "Closed",
+        "System.Title": "Sanitized observed closed bug",
+        "System.ChangedDate": "2026-09-02T06:32:08.883Z",
+        "System.IterationPath": "ExampleProject",
+        "Microsoft.VSTS.Common.Priority": 2
+      },
+      "multilineFieldsFormat": {},
+      "commentVersionRef": {},
+      "url": "https://example.invalid/_apis/wit/workItems/3384"
+    }
+  ]
+}
