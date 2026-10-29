@@ -19,19 +19,6 @@ from .config import ADO_RESOURCE, is_open, org, project
 
 PRIORITY_FIELD = "Microsoft.VSTS.Common.Priority"
 
-FIELDS = [
-    "System.Id",
-    "System.WorkItemType",
-    "System.State",
-    "System.Title",
-    "System.ChangedDate",
-    "System.Parent",
-    "System.Tags",
-    "System.IterationPath",
-    PRIORITY_FIELD,
-    "System.AssignedTo",
-]
-
 # workitemsbatch caps at 200 ids; 190 leaves room without a second round trip.
 BATCH_SIZE = 190
 NOT_DONE = "[System.State] NOT IN ('Closed','Removed','Done')"
@@ -154,7 +141,8 @@ class Client:
             chunk = ids[start:start + BATCH_SIZE]
             payload = self.post(url, {
                 "ids": chunk,
-                "fields": FIELDS,
+                # ADO rejects fields together with $expand. Normalize only the
+                # needed fields from the provider's expanded default response.
                 "$expand": "Relations",
                 "errorPolicy": "omit",
             })

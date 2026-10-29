@@ -1,4 +1,5 @@
 import json
+import urllib.error
 
 from ado_swimlane import ado
 
@@ -20,9 +21,10 @@ def _raw(item_id, *, parent=None, relations=(), assigned=None, priority=2, rev=7
     return {"id": item_id, "rev": rev, "fields": fields, "relations": list(relations)}
 
 
-def test_item_row_normalizes_live_owner_priority_revision_and_link_direction():
+def test_item_row_retains_needed_fields_and_relations_without_system_id():
     raw = _raw(
         10,
+        parent=99,
         assigned={"displayName": "Rudy", "uniqueName": "rudy@example.invalid"},
         relations=[
             {"rel": "System.LinkTypes.Dependency-Forward", "url": "https://dev.azure.com/o/_apis/wit/workItems/20"},
@@ -31,28 +33,37 @@ def test_item_row_normalizes_live_owner_priority_revision_and_link_direction():
             {"rel": "System.LinkTypes.Dependency-Forward", "url": "not-an-item-url"},
         ],
     )
+    del raw["fields"]["System.Id"]
+    raw["fields"]["System.Tags"] = "backlog; tracked"
+    raw["fields"]["System.Description"] = "unselected provider field"
 
     row = ado.item_row(raw)
 
-    assert row["revision"] == 7
-    assert row["priority"] == 2 and row["priorityReturned"]
-    assert row["assignedTo"] == "Rudy" and row["assignedToReturned"]
-    assert row["iter"] == "AdaptiveAssetAllocation\\Current" and row["iterationReturned"]
-    assert row["relationsFetched"]
-    assert row["relations"] == [
-        {"predecessor": 10, "successor": 20},
-        {"predecessor": 30, "successor": 10},
-    ]
+    assert row == {
+        "id": 10, "revision": 7, "type": "Feature", "state": "Active",
+        "title": "Item 10", "parent": 99, "changed": "2026-10-29T06:00:00Z",
+        "tags": "backlog; tracked", "iter": "AdaptiveAssetAllocation\\Current",
+        "priority": 2, "priorityReturned": True,
+        "assignedTo": "Rudy", "assignedToReturned": True, "iterationReturned": True,
+        "relationsFetched": True,
+        "relations": [
+            {"predecessor": 10, "successor": 20},
+            {"predecessor": 30, "successor": 10},
+        ],
+    }
 
 
-def test_batch_requests_relation_expansion_and_narrow_owner_fields():
-    seen = {}
+def test_expanded_batch_obeys_provider_contract_and_chunk_limit():
+    seen = []
 
     class Response:
         headers = {"Date": "Thu, 29 Oct 2026 06:18:03 GMT"}
 
+        def __init__(self, ids):
+            self.ids = ids
+
         def read(self):
-            return json.dumps({"value": []}).encode()
+            return json.dumps({"value": [_raw(item_id) for item_id in self.ids]}).encode()
 
         def __enter__(self):
             return self
@@ -61,15 +72,25 @@ def test_batch_requests_relation_expansion_and_narrow_owner_fields():
             return False
 
     def fake_open(request, timeout=None):
-        seen["body"] = json.loads(request.data)
-        return Response()
+        body = json.loads(request.data)
+        # Reproduce the provider's ConflictingParametersException contract:
+        # the formerly accepted mock shape must fail before any result exists.
+        if "fields" in body and "$expand" in body:
+            raise urllib.error.HTTPError(
+                request.full_url, 400,
+                "The expand parameter can not be used with the fields parameter",
+                {}, None,
+            )
+        seen.append(body)
+        return Response(body["ids"])
 
     client = ado.Client(token="test", expiry=2**40, _urlopen=fake_open)
-    assert client.batch([10]) == []
-    assert seen["body"]["$expand"] == "Relations"
-    assert "Microsoft.VSTS.Common.Priority" in seen["body"]["fields"]
-    assert "System.AssignedTo" in seen["body"]["fields"]
-    assert seen["body"]["errorPolicy"] == "omit"
+    ids = list(range(1, ado.BATCH_SIZE + 2))
+    assert client.batch(ids) == [_raw(item_id) for item_id in ids]
+    assert seen == [
+        {"ids": ids[:ado.BATCH_SIZE], "$expand": "Relations", "errorPolicy": "omit"},
+        {"ids": ids[ado.BATCH_SIZE:], "$expand": "Relations", "errorPolicy": "omit"},
+    ]
 
 
 def test_collect_captures_tracked_ids_scope_and_deduplicated_card_edges():
