@@ -105,29 +105,77 @@ class SwimlaneService:
     # -- state ---------------------------------------------------------------
 
     def publish(self, result: refresh.RefreshResult) -> None:
-        detail = None if result.ok else "; ".join(result.checks.notes)
+        detail = None
+        if not result.ok:
+            if result.health_detail:
+                detail = result.health_detail
+            else:
+                if result.served_revision:
+                    prefix = f"Latest refresh failed validation; showing last-good snapshot {result.served_revision}. "
+                else:
+                    prefix = "Latest refresh failed validation; no retained snapshot passed current checks. "
+                detail = prefix + "; ".join(result.checks.notes)
         page = render.live_page(result.body, result.revision, degraded=detail).encode("utf-8")
         with self.lock:
             self.revision = result.revision
             self.page = page
-            self.last_diff = result.board_diff.as_dict()
+            if result.ok:
+                self.last_diff = result.board_diff.as_dict()
             self.status = {
                 "state": "healthy" if result.ok else "degraded",
                 "revision": result.revision,
+                "servedRevision": result.served_revision,
+                "lastGoodRevision": result.served_revision,
                 "checked": iso(now_utc()),
                 "detail": detail,
-                "cards": result.checks.totals.get("cards"),
-                "openChildren": result.checks.totals.get("openChildren"),
-                "changes": len(result.board_diff.changes),
+                "cards": result.checks.totals.get("cards") if result.ok else None,
+                "openChildren": result.checks.totals.get("openChildren") if result.ok else None,
+                "changes": len(result.board_diff.changes) if result.ok else None,
             }
         self.broadcast({"revision": result.revision, "status": self.status["state"]})
 
     def fail(self, exc: Exception) -> None:
         detail = f"{type(exc).__name__}: {exc}"
+        event_revision = iso(now_utc())
+        served_revision = None
+        health_detail = f"latest ADO collection failed ({type(exc).__name__})"
+        try:
+            body, served_revision, health_detail = refresh.degraded_view(
+                self.paths, health_detail
+            )
+            atomic_write_text(
+                self.paths.html,
+                render.static_page(body, degraded=health_detail),
+            )
+        except Exception as view_exc:
+            # Keep both the live and static entrypoints visibly failed even if
+            # the cached template itself cannot be read or revalidated.
+            log(self.paths, f"could not rebuild degraded page {type(view_exc).__name__}: {view_exc}")
+            body = "<main><h1>Swimlane unavailable</h1><p>The cached view could not be revalidated.</p></main>"
+            health_detail += "; cached view could not be revalidated"
+            try:
+                atomic_write_text(
+                    self.paths.html,
+                    render.static_page(body, degraded=health_detail),
+                )
+            except OSError as write_exc:
+                log(self.paths, f"could not persist degraded page {type(write_exc).__name__}: {write_exc}")
+        page = render.live_page(body, event_revision, degraded=health_detail).encode("utf-8")
         with self.lock:
-            self.status = {**self.status, "state": "error", "detail": detail, "checked": iso(now_utc())}
+            self.revision = event_revision
+            self.page = page
+            self.status = {
+                **self.status,
+                "state": "error",
+                "revision": event_revision,
+                "servedRevision": served_revision,
+                "lastGoodRevision": served_revision,
+                "detail": detail,
+                "healthDetail": health_detail,
+                "checked": event_revision,
+            }
         log(self.paths, "collector error " + detail, traceback.format_exc())
-        self.broadcast({"revision": self.revision, "status": "error", "detail": type(exc).__name__})
+        self.broadcast({"revision": event_revision, "status": "error", "detail": type(exc).__name__})
 
     def broadcast(self, payload: dict) -> None:
         for listener in list(self.listeners):
@@ -178,8 +226,14 @@ class SwimlaneService:
                 with WriterLease(self.paths.home, ".refresh.lock"):
                     result = refresh.run(self.paths, client=self.client)
                 self.publish(result)
-                log(self.paths, f"refresh {result.revision} {result.checks.totals.get('openChildren')} open children "
-                                f"{len(result.board_diff.changes)} changes ok={result.ok}")
+                if result.ok:
+                    log(self.paths, f"refresh accepted {result.revision} "
+                                    f"{result.checks.totals.get('openChildren')} open children "
+                                    f"{len(result.board_diff.changes)} changes")
+                else:
+                    log(self.paths, f"refresh rejected {result.revision}; served="
+                                    f"{result.served_revision or 'unverified template'}; "
+                                    f"{result.health_detail or '; '.join(result.checks.notes)}")
                 self._maybe_publish(result)
             except RuntimeError:
                 # A manual `refresh` holds the lease; its result lands on disk and

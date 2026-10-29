@@ -28,17 +28,28 @@ def _run_refresh(args) -> int:
         print(f"refresh skipped: {exc}", file=sys.stderr)
         return 1
     print(f"revision {result.revision}")
-    print(f"  injected {result.report.summary()}")
-    for dom_id, before, after in result.report.states:
-        print(f"    state {dom_id}: {before} -> {after}")
-    for dom_id, styling, live in result.report.mismatches:
-        # Not an error: the card's styling carries a curated claim that only a
-        # person should change. Reported so the next prose pass can settle it.
-        print(f"    styling {dom_id}: shown as {styling}, live state {live}")
-    for line in result.board_diff.lines():
-        print(line)
+    if result.ok:
+        print(f"  injected {result.report.summary()}")
+        for dom_id, before, after in result.report.states:
+            print(f"    state {dom_id}: {before} -> {after}")
+        for dom_id, styling, live in result.report.mismatches:
+            # Not an error: styling carries a curated claim that only a person
+            # should change. Report it so the next prose pass can settle it.
+            print(f"    styling {dom_id}: shown as {styling}, live state {live}")
+        for line in result.board_diff.lines():
+            print(line)
+    else:
+        print("  attempted render rejected; attempted diff is not recorded or served")
+        print(f"  served last-good snapshot: {result.served_revision or 'none (unverified template)'}")
     print(str(result.checks))
-    print(f"  wrote {paths.artifact}")
+    if result.health_detail:
+        print(f"  health: {result.health_detail}")
+    if result.ok:
+        print(f"  wrote {paths.artifact}")
+    elif paths.artifact.exists():
+        print(f"  preserved last-good Artifact body: {paths.artifact}")
+    else:
+        print("  Artifact body not written: no accepted snapshot exists")
     print(f"  wrote {paths.html}")
     return 0 if result.ok else 2
 
@@ -59,8 +70,8 @@ def _run_publish(args) -> int:
         print(f"{paths.artifact} does not exist; run `refresh` first", file=sys.stderr)
         return 1
     body = paths.artifact.read_text(encoding="utf-8-sig")
-    # A refresh writes its page whether or not the checks passed, so re-run them
-    # here: --force overrides the publish gates, never the checks.
+    # Re-run checks on the retained Artifact body: --force overrides publish
+    # cadence, never the content checks.
     snapshot = read_json(paths.snapshot)
     expected = len(snapshot.get("children") or []) if snapshot else None
     checks = validate.check(body, snapshot, expected_children=expected)
@@ -154,6 +165,9 @@ def _run_changes(args) -> int:
             since=payload.get("since"),
             until=payload.get("until"),
             changes=[diff.Change(**c) for c in payload.get("changes", [])],
+            field_changes=[diff.FieldChange(**c) for c in payload.get("field_changes", [])],
+            dependencies_added=[tuple(edge) for edge in payload.get("dependencies_added", [])],
+            dependencies_gone=[tuple(edge) for edge in payload.get("dependencies_gone", [])],
             children_added={int(k): v for k, v in (payload.get("children_added") or {}).items()},
             children_gone={int(k): v for k, v in (payload.get("children_gone") or {}).items()},
             unparented=payload.get("unparented") or [],

@@ -1,9 +1,10 @@
 # ado-swimlane
 
 The AdaptiveAssetAllocation backlog as execution swimlanes — lanes are programs,
-columns are phases, arrows are recorded `Predecessor/Successor` links — kept
-current by a local service that polls Azure DevOps and pushes updates to the
-open page.
+columns are curated phases, amber arrows are captured Azure Boards
+`Predecessor/Successor` relations, and gray arrows are advisory sequencing hints.
+The configured local service can poll Azure DevOps and push updates to an open
+page; repository source does not prove that a particular installation is running.
 
 It grew out of a hand-run pipeline of PowerShell and Node scripts in a session
 scratchpad. This repository is that pipeline made repeatable: same board, same
@@ -23,26 +24,46 @@ py ado-swimlane.py status           # where everything is, and what is holding
 **The board is a template with a few machine-managed regions.** Everything else
 is prose a person or a Claude session wrote, and a refresh never touches it.
 
-| Written by the machine | Written by a person |
+| Written by the machine from the selected ADO snapshot | Curated by a person |
 | --- | --- |
-| `data-state` on every card | key-fact panels, card notes, the delta panel |
-| the `CHILDREN` map (open children only) | lane and phase names, card placement |
-| `SNAPSHOT` / `DELTA_FROM` / `REFRESHED` | the green "closed 09-10" styling and pills |
-| the open epics/features count | every judgement about what any of it means |
+| Card state, owner/priority/iteration/revision/changed-date attributes | Lane and phase names, card placement, narrative and dated notes |
+| The `CHILDREN` map (open direct children of displayed cards) | Gray sequencing hints and product interpretation |
+| Amber arrows for captured relations whose two endpoints are displayed; full relation list with off-view IDs | The explicit tracked-item list and its expected parent/scope |
+| Snapshot/refresh dates, selected counts, and tracked-item readout | Any approval, rollout, qualification, or acceptance decision |
 
-That split is why this can run unattended. Live state is mechanical; analysis is
-not. The refresh reports disagreements with curated completion styling. In the
-rendered UI, the refreshed state controls every card's badge and color: reopened
-cards lose completion styling and hide old completion pills; Removed cards use
-neutral styling. Dated notes remain curated history and do not establish current
-delivery. An empty child list proves only that no direct children are open.
+The rendered page labels its selected data with the ADO response timestamp and
+shows a warning when there is no response or the snapshot is over 15 minutes
+old (three missed five-minute polls). The raw template starts with an unknown
+timestamp, no child rows, and no amber links, so an embedded fallback does not
+look like a fresh ADO read. The
+collector fetches details for displayed cards, known child IDs, open project
+epics/features and bugs, IDs changed since the previous pull, and open direct
+children of displayed cards. It is not a project-wide detail census. Explicit
+tracked items are fetched by ID even when they are outside the changed-since
+window. In particular, story #4049 is shown as a narrow equity canary under its
+configured parent #2439; its direct open children are refreshed through the
+same child query. Missing records, parent mismatches, or incomplete relation
+coverage fail validation instead of being inferred from old prose. A relation
+can point outside the displayed card set: its endpoint ID stays visible in the
+recorded-relation panel, but linked records are not recursively fetched.
+
+That split keeps facts mechanical and analysis explicit. In the rendered UI,
+refreshed state controls every card's badge and color: reopened cards lose
+completion styling and hide old completion pills; Removed cards use neutral
+styling. Tooltips expose the returned assignment, priority, iteration, changed
+date, and ADO revision. Amber arrows are drawn only when both endpoint cards are
+displayed; the relation panel lists all captured ADO links and flags off-view
+endpoint IDs. Old authored amber links are discarded. Gray hints remain curated
+and are labeled advisory. Recorded links are planning evidence, not an enforced
+gate or an authorization to act. Dated notes remain history; an empty child
+list proves only that no direct children are open in the selected snapshot.
 
 It caught exactly that on its first run: five cards (`1964`, `2095`, `2099`,
 `2633`, `2710`) had been rendering as `New` since 2026-09-10, when a backlog
 audit moved them to `Active`. The old by-hand check only compared *done styling*
 against *Closed*, so New-versus-Active drift was invisible to it for four days.
 
-## How "always current" works
+## Refresh behavior (when the configured service is running)
 
 Each phase header (P0–P6) has a keyboard-accessible **Hide/Show** button.
 Hiding a phase collapses its cells into a narrow header with a **Show** control;
@@ -59,12 +80,14 @@ root (`py -m pytest tests`) to keep the two test configurations isolated.
 
 Two tiers, because they are genuinely different things:
 
-**The loopback page is live.** `serve` runs a supervised process that polls ADO
-every five minutes, re-renders, and pushes the new revision over server-sent
-events to any open page, which reloads itself carrying scroll position and open
-panels across. A chip in the corner shows the revision and goes amber, then red,
-if the service stops answering. No Claude session is involved; this is the tier
-that is actually always current.
+**The intended loopback path polls ADO.** `serve` runs a supervised process
+that polls every five minutes, re-renders, and pushes a revision over
+server-sent events to open pages. The snapshot date is the ADO response time;
+the page warns when that read is over 15 minutes old. Service status/readback
+reports whether collection and validation succeeded.
+No source file, successful test, or embedded raw-template fallback proves that
+an installed process is running or that the displayed snapshot is fresh. Verify
+the specific service, writer, and page before relying on runtime status.
 
 **The published Artifact is republished on a gate.** An Artifact cannot poll your
 Azure DevOps organization — it is a static page hosted elsewhere, it has no route
@@ -151,21 +174,31 @@ served or published:
 - an **independent walk** of the board — string-based, not a second call into
   the rendering code — re-derives the totals the page's own script will compute,
   and they must agree with the live `openChildrenOfCards` count from WIQL;
-- `CHILDREN` never lists closed work (the map is open children only, which is
-  what makes an empty card mean "nothing open" rather than "not checked");
+- `CHILDREN` never lists closed work (the map contains open direct children only;
+  an empty map is meaningful only with a successful, fresh snapshot);
 - no card state disagrees with the snapshot it was rendered from;
+- explicit tracked item #4049 is returned with its configured parent #2439;
+- all displayed cards have captured relation coverage, every captured relation
+  appears in the relation list, and amber arrows equal only the relations whose
+  two endpoints are displayed; legacy amber literals are not trusted;
+- the rendered owner, priority, iteration, revision and changed-date attributes
+  agree with the snapshot;
 - every inline script parses (`node --check`, when node is on PATH).
 
-A failed check marks the service `degraded` and says why, in `/v1/status` and in
-`refresh`'s output. `publish` re-runs the checks on the page it is about to ship
-and refuses one that fails them, `--force` or not.
+A failed check marks the service `degraded` and says why, in `/v1/status`, the
+static page, and `refresh`'s output. The failed pull does not replace the
+accepted snapshot, previous snapshot, state memory, or Artifact body. The static
+and live pages show the last accepted snapshot with a failure banner only after
+that snapshot passes the current checks; otherwise they show the raw template
+with its unverified timestamp warning. `publish` re-runs the checks on the page
+it is about to ship and refuses one that fails them, `--force` or not.
 
 ## Reading what changed
 
 `refresh` prints a change report and appends it to `changes.jsonl`; `changes`
-replays it. The report is deliberately observational — "F2097 went Active" is a
-change, "F2097 jumped its gate" is a conclusion, and conclusions belong in the
-prose a person writes.
+replays it. State, owner, priority, iteration, direct-child and formal-link
+changes are observations — "F2097 went Active" is a change, "F2097 jumped its
+gate" is a conclusion, and conclusions belong in curated interpretation.
 
 Membership changes are computed only over sets with fixed meaning (`openEF`,
 `openBugs`, open children, cards). Each poll fetches the union of several
@@ -202,8 +235,8 @@ ado_swimlane/
   cli.py               the commands
 ```
 
-State lives in `~/.ado-swimlane` (override with `ADO_SWIMLANE_HOME`): the current
-and previous snapshot, `changes.jsonl`, both rendered pages, the service
+State lives in `~/.ado-swimlane` (override with `ADO_SWIMLANE_HOME`): the last
+accepted and previous accepted snapshots, `changes.jsonl`, both rendered pages, the service
 endpoint record, and a bounded log. The repository holds no state and no
 credentials.
 
