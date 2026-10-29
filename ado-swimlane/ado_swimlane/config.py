@@ -8,7 +8,7 @@ from pathlib import Path
 ENV_HOME = "ADO_SWIMLANE_HOME"
 SERVICE_TASK_NAME = "AdoSwimlaneService"
 WATCHDOG_TASK_NAME = "AdoSwimlaneWatchdog"
-DEFAULT_PORT = 8799
+DEFAULT_PORT = 38799
 
 # Azure DevOps. The resource GUID is the fixed first-party application id for
 # Azure DevOps; `az account get-access-token --resource <it>` mints a token from

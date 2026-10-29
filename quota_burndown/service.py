@@ -16,6 +16,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import ledger, render, request_text, usage, usage_report
+from .config import DEFAULT_PORT
 from .plans import Conflict, PlanState, forecast_snapshot
 from .capacity import CapacityState
 from .model import current
@@ -371,7 +372,7 @@ class LocalServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
-def make_server(service: CapacityService, host="127.0.0.1", port=8787):
+def make_server(service: CapacityService, host="127.0.0.1", port=DEFAULT_PORT):
     host = loopback_host(host)
     if ":" in host:
         import socket
@@ -535,7 +536,7 @@ def make_server(service: CapacityService, host="127.0.0.1", port=8787):
     return Server((host, port), Handler)
 
 
-def serve(paths, host="127.0.0.1", port=8787):
+def serve(paths, host="127.0.0.1", port=DEFAULT_PORT):
     host = loopback_host(host)
     if not 0 <= port <= 65535:
         raise ValueError("port must be between 0 and 65535")

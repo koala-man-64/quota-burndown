@@ -9,7 +9,7 @@ A local capacity service and live dashboard for Codex and Claude, with a token a
 ## Start and install
 
 ```powershell
-py -B quota-burndown.py serve                         # http://127.0.0.1:8787/
+py -B quota-burndown.py serve                         # http://127.0.0.1:38787/
 py -B quota-burndown.py capacity --json               # cached snapshot
 py -B quota-burndown.py capacity --watch              # reconnecting JSON-line stream
 py -B quota-burndown.py install --service             # inspect installation
