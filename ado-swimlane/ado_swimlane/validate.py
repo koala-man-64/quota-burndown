@@ -137,14 +137,21 @@ def check(html: str, snapshot: dict | None = None, *, expected_children: int | N
     if snapshot:
         live = {item["id"]: item.get("state") for item in snapshot.get("items", [])}
         mismatched = []
+        unknown = []
         for row in rows:
             if row["state"] == template.AGGREGATE:
                 continue
             actual = live.get(int(row["id"][1:]))
-            if actual and actual != row["state"]:
+            if not actual:
+                unknown.append(row["id"])
+            elif actual != row["state"]:
                 mismatched.append(f"{row['id']} page={row['state']} live={actual}")
         if mismatched:
             result.fail("card state disagrees with live ADO: " + "; ".join(mismatched))
+        if unknown:
+            # The collector asks for every card and ADO omits the ids it cannot
+            # return, so a card missing here shows a state nobody checked.
+            result.fail("card(s) with no live record (deleted, mistyped or unreadable): " + ", ".join(unknown))
 
     node = shutil.which("node")
     if node:

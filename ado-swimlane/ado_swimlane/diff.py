@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 
 from .ado import open_children_of
-from .config import DONE_STATES, is_open
+from .config import CLOSED_STATES, is_open
 
 
 @dataclass
@@ -139,7 +139,7 @@ def compare(previous: dict | None, current: dict, known: dict[int, dict] | None 
             result.changes.append(change)
         elif was.get("state") != item.get("state"):
             result.changes.append(change)
-            if item.get("state") in DONE_STATES:
+            if item.get("state") in CLOSED_STATES:
                 result.closed.append(change)
 
     for item_id in sorted(before_tracked - now_tracked):

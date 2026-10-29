@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -66,13 +67,32 @@ def fmt_minutes(minutes: float) -> str:
     return f"{mins}m"
 
 
+# Windows refuses to replace a file that another handle holds open without
+# delete sharing - a client reading capacity-service.json, an indexer, a virus
+# scan - and the refusal clears as soon as that handle closes. Retry briefly
+# rather than failing the write and, for a starting service, the start itself.
+REPLACE_RETRY_S = 2.0
+
+
+def _replace(src: str, dst: Path) -> None:
+    deadline = time.monotonic() + REPLACE_RETRY_S
+    while True:
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if os.name != "nt" or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.01)
+
+
 def atomic_write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=path.name + ".", dir=str(path.parent))
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(text)
-        os.replace(tmp, path)
+        _replace(tmp, path)
     except BaseException:
         try:
             os.unlink(tmp)

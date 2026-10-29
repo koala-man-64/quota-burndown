@@ -3,7 +3,7 @@ name: Application tests
 on:
   pull_request:
   push:
-    branches: [feat/initial-build]
+    branches: [main, feat/initial-build]
 
 permissions:
   contents: read

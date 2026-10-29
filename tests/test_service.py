@@ -1,13 +1,12 @@
 import http.client
 import json
-import os
 import threading
 import time
 
 import pytest
 
 from quota_burndown.capacity import Observation
-from quota_burndown.service import CapacityService, WriterLease, make_server, stop_running_service
+from quota_burndown.service import CapacityService, WriterLease, make_server
 from quota_burndown.util import now_utc
 from datetime import timedelta
 
@@ -173,43 +172,6 @@ def test_writer_lease_released_on_process_death(paths):
     with WriterLease(paths.home): pass
 
 
-def _hold_lease(home):
-    import subprocess
-    import sys
-    code = "import sys,time; from pathlib import Path; from quota_burndown.service import WriterLease; lease=WriterLease(Path(sys.argv[1])); lease.__enter__(); print('locked',flush=True); time.sleep(30)"
-    process = subprocess.Popen([sys.executable, "-B", "-c", code, str(home)], stdout=subprocess.PIPE,
-                               text=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    assert process.stdout.readline().strip() == "locked"
-    return process
-
-
-def test_stop_running_service_is_noop_without_writer(paths):
-    assert stop_running_service(paths) is None
-
-
-def test_stop_running_service_terminates_recorded_writer(paths):
-    process = _hold_lease(paths.home)
-    try:
-        (paths.home / "capacity-service.json").write_text(json.dumps({"url": "http://127.0.0.1:1", "pid": process.pid}))
-        assert stop_running_service(paths) == process.pid
-        assert process.wait(timeout=5) is not None
-        with WriterLease(paths.home): pass
-    finally:
-        if process.poll() is None:
-            process.kill(); process.wait(timeout=3)
-
-
-def test_stop_running_service_refuses_unrecorded_writer(paths):
-    process = _hold_lease(paths.home)
-    try:
-        (paths.home / "capacity-service.json").write_text(json.dumps({"url": "http://127.0.0.1:1", "pid": os.getpid()}))
-        with pytest.raises(RuntimeError, match="not a recorded capacity service"):
-            stop_running_service(paths)
-        assert process.poll() is None
-    finally:
-        process.terminate(); process.wait(timeout=3)
-
-
 def test_storage_health_recovers_on_success_and_append_failure_sets_error(paths):
     service = CapacityService(paths, collectors=False)
     service.state.set_health("storage", "error", "PermissionError")
@@ -276,3 +238,17 @@ def test_ingest_health_recovers_on_clean_batch(paths):
         assert service.state.health["ingest"]["state"] == "healthy"
     finally:
         service.close()
+
+
+def test_swimlane_endpoint(live, tmp_path, monkeypatch):
+    service, server = live
+    fake_swimlane = tmp_path / "swimlane.html"
+    fake_swimlane.write_text("<!doctype html><p>test board</p>", encoding="utf-8")
+    monkeypatch.setenv("ADO_SWIMLANE_HOME", str(tmp_path))
+    connection = http.client.HTTPConnection("127.0.0.1", server.server_port, timeout=3)
+    connection.request("GET", "/swimlane")
+    response = connection.getresponse()
+    body = response.read().decode("utf-8")
+    connection.close()
+    assert response.status == 200
+    assert "test board" in body

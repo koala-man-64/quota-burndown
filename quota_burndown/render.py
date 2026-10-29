@@ -225,6 +225,7 @@ def chart_svg(data: ChartData, chart_id: str, title: str) -> str:
         parts.append(f'<text class="end-lbl" x="{x + dx:.1f}" y="{y - 8:.1f}" text-anchor="{anchor}">{end.used:.0f}%</text>')
 
     parts.append(f'<line class="crosshair" x1="{PAD_L}" y1="{PAD_T}" x2="{PAD_L}" y2="{plot_bottom:.1f}"/>')
+    parts.append(f'<line class="crosshair crosshair-y" x1="{PAD_L}" y1="{plot_bottom:.1f}" x2="{CHART_W - PAD_R}" y2="{plot_bottom:.1f}"/>')
     parts.append(f'<circle class="hover-dot" cx="{PAD_L}" cy="{plot_bottom:.1f}" r="5"/>')
     label = f"Percent of the {esc(title)} window used, {esc(data.span_label)}"
     return (
@@ -939,16 +940,59 @@ def capacity_matrix_html(capacity: dict | None, live: bool = False) -> str:
 # -- page ------------------------------------------------------------------------------
 
 CSS = """
-:root{--bg:#f6f7f9;--card:#ffffff;--fg:#1c1e21;--muted:#6b7280;--line:#e5e7eb;--grid:#eef0f3;--ideal:#9ca3af;--actual:#2563eb;--over:#dc2626;--under:#16a34a;--warn:#d97706;--now:#111827;
---chart-series:#2a78d6;--chart-grid:#e1e0d9;--chart-axis:#c3c2b7;--chart-muted:#898781;--chart-ink:#0b0b0b;
---tok-1:#eb6834;--tok-2:#1baf7a;--tok-3:#eda100;--tok-4:#e87ba4;--tok-5:#008300;--tok-6:#4a3aa7;--tok-7:#e34948}
-@media (prefers-color-scheme: dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e6e8eb;--muted:#9aa3ad;--line:#2a2f3a;--grid:#232834;--ideal:#6b7280;--actual:#60a5fa;--over:#f87171;--under:#4ade80;--warn:#fbbf24;--now:#e6e8eb;
---chart-series:#3987e5;--chart-grid:#2c2c2a;--chart-axis:#383835;--chart-muted:#898781;--chart-ink:#ffffff;
---tok-1:#d95926;--tok-2:#199e70;--tok-3:#c98500;--tok-4:#d55181;--tok-5:#008300;--tok-6:#9085e9;--tok-7:#e66767}}
+:root{color-scheme:light dark;--color-scheme:light;
+--bg-light:#f6f7f9;--bg-dark:#0f1115;--card-light:#ffffff;--card-dark:#171a21;--fg-light:#1c1e21;--fg-dark:#e6e8eb;--muted-light:#6b7280;--muted-dark:#9aa3ad;--line-light:#e5e7eb;--line-dark:#2a2f3a;--grid-light:#eef0f3;--grid-dark:#232834;--ideal-light:#9ca3af;--ideal-dark:#6b7280;--actual-light:#2563eb;--actual-dark:#60a5fa;--over-light:#dc2626;--over-dark:#f87171;--under-light:#16a34a;--under-dark:#4ade80;--warn-light:#d97706;--warn-dark:#fbbf24;--now-light:#111827;--now-dark:#e6e8eb;
+--chart-series-light:#2a78d6;--chart-series-dark:#3987e5;--chart-grid-light:#e1e0d9;--chart-grid-dark:#2c2c2a;--chart-axis-light:#c3c2b7;--chart-axis-dark:#383835;--chart-muted-light:#898781;--chart-muted-dark:#898781;--chart-ink-light:#0b0b0b;--chart-ink-dark:#ffffff;
+--tok-1-light:#eb6834;--tok-1-dark:#d95926;--tok-2-light:#1baf7a;--tok-2-dark:#199e70;--tok-3-light:#eda100;--tok-3-dark:#c98500;--tok-4-light:#e87ba4;--tok-4-dark:#d55181;--tok-5-light:#008300;--tok-5-dark:#008300;--tok-6-light:#4a3aa7;--tok-6-dark:#9085e9;--tok-7-light:#e34948;--tok-7-dark:#e66767;
+--tab-hover-light:rgba(0,0,0,0.04);--tab-hover-dark:rgba(255,255,255,0.06);
+--bg:var(--bg-light);--card:var(--card-light);--fg:var(--fg-light);--muted:var(--muted-light);--line:var(--line-light);--grid:var(--grid-light);--ideal:var(--ideal-light);--actual:var(--actual-light);--over:var(--over-light);--under:var(--under-light);--warn:var(--warn-light);--now:var(--now-light);
+--chart-series:var(--chart-series-light);--chart-grid:var(--chart-grid-light);--chart-axis:var(--chart-axis-light);--chart-muted:var(--chart-muted-light);--chart-ink:var(--chart-ink-light);
+--tok-1:var(--tok-1-light);--tok-2:var(--tok-2-light);--tok-3:var(--tok-3-light);--tok-4:var(--tok-4-light);--tok-5:var(--tok-5-light);--tok-6:var(--tok-6-light);--tok-7-mode:var(--tok-7-light);--tok-7:var(--tok-7-mode);--tab-hover:var(--tab-hover-light)}
+@media (prefers-color-scheme: dark){:root{--color-scheme:dark;--bg:var(--bg-dark);--card:var(--card-dark);--fg:var(--fg-dark);--muted:var(--muted-dark);--line:var(--line-dark);--grid:var(--grid-dark);--ideal:var(--ideal-dark);--actual:var(--actual-dark);--over:var(--over-dark);--under:var(--under-dark);--warn:var(--warn-dark);--now:var(--now-dark);
+--chart-series:var(--chart-series-dark);--chart-grid:var(--chart-grid-dark);--chart-axis:var(--chart-axis-dark);--chart-muted:var(--chart-muted-dark);--chart-ink:var(--chart-ink-dark);
+--tok-1:var(--tok-1-dark);--tok-2:var(--tok-2-dark);--tok-3:var(--tok-3-dark);--tok-4:var(--tok-4-dark);--tok-5:var(--tok-5-dark);--tok-6:var(--tok-6-dark);--tok-7-mode:var(--tok-7-dark);--tab-hover:var(--tab-hover-dark)}}
+:root:has(> head > meta[name="color-scheme"][content="dark"]),:root[data-theme="dark"]{color-scheme:dark;--color-scheme:dark;--bg:var(--bg-dark);--card:var(--card-dark);--fg:var(--fg-dark);--muted:var(--muted-dark);--line:var(--line-dark);--grid:var(--grid-dark);--ideal:var(--ideal-dark);--actual:var(--actual-dark);--over:var(--over-dark);--under:var(--under-dark);--warn:var(--warn-dark);--now:var(--now-dark);
+--chart-series:var(--chart-series-dark);--chart-grid:var(--chart-grid-dark);--chart-axis:var(--chart-axis-dark);--chart-muted:var(--chart-muted-dark);--chart-ink:var(--chart-ink-dark);
+--tok-1:var(--tok-1-dark);--tok-2:var(--tok-2-dark);--tok-3:var(--tok-3-dark);--tok-4:var(--tok-4-dark);--tok-5:var(--tok-5-dark);--tok-6:var(--tok-6-dark);--tok-7-mode:var(--tok-7-dark);--tab-hover:var(--tab-hover-dark)}
+:root:has(> head > meta[name="color-scheme"][content="light"]),:root[data-theme="light"]{color-scheme:light;--color-scheme:light;--bg:var(--bg-light);--card:var(--card-light);--fg:var(--fg-light);--muted:var(--muted-light);--line:var(--line-light);--grid:var(--grid-light);--ideal:var(--ideal-light);--actual:var(--actual-light);--over:var(--over-light);--under:var(--under-light);--warn:var(--warn-light);--now:var(--now-light);
+--chart-series:var(--chart-series-light);--chart-grid:var(--chart-grid-light);--chart-axis:var(--chart-axis-light);--chart-muted:var(--chart-muted-light);--chart-ink:var(--chart-ink-light);
+--tok-1:var(--tok-1-light);--tok-2:var(--tok-2-light);--tok-3:var(--tok-3-light);--tok-4:var(--tok-4-light);--tok-5:var(--tok-5-light);--tok-6:var(--tok-6-light);--tok-7-mode:var(--tok-7-light);--tab-hover:var(--tab-hover-light)}
+@supports (color: light-dark(white, black)){:root{--bg:light-dark(var(--bg-light),var(--bg-dark));--card:light-dark(var(--card-light),var(--card-dark));--fg:light-dark(var(--fg-light),var(--fg-dark));--muted:light-dark(var(--muted-light),var(--muted-dark));--line:light-dark(var(--line-light),var(--line-dark));--grid:light-dark(var(--grid-light),var(--grid-dark));--ideal:light-dark(var(--ideal-light),var(--ideal-dark));--actual:light-dark(var(--actual-light),var(--actual-dark));--over:light-dark(var(--over-light),var(--over-dark));--under:light-dark(var(--under-light),var(--under-dark));--warn:light-dark(var(--warn-light),var(--warn-dark));--now:light-dark(var(--now-light),var(--now-dark));
+--chart-series:light-dark(var(--chart-series-light),var(--chart-series-dark));--chart-grid:light-dark(var(--chart-grid-light),var(--chart-grid-dark));--chart-axis:light-dark(var(--chart-axis-light),var(--chart-axis-dark));--chart-muted:light-dark(var(--chart-muted-light),var(--chart-muted-dark));--chart-ink:light-dark(var(--chart-ink-light),var(--chart-ink-dark));
+--tok-1:light-dark(var(--tok-1-light),var(--tok-1-dark));--tok-2:light-dark(var(--tok-2-light),var(--tok-2-dark));--tok-3:light-dark(var(--tok-3-light),var(--tok-3-dark));--tok-4:light-dark(var(--tok-4-light),var(--tok-4-dark));--tok-5:light-dark(var(--tok-5-light),var(--tok-5-dark));--tok-6:light-dark(var(--tok-6-light),var(--tok-6-dark));--tok-7:light-dark(var(--tok-7-light),var(--tok-7-dark));--tab-hover:light-dark(var(--tab-hover-light),var(--tab-hover-dark))}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,"Segoe UI",Roboto,sans-serif}
-header.top{display:flex;align-items:baseline;justify-content:space-between;gap:16px;padding:18px 24px 6px;flex-wrap:wrap}
+header.top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px 6px;flex-wrap:wrap}
 header.top h1{margin:0;font-size:20px}
+.header-main{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.header-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.theme-toggle{display:inline-flex;align-items:center;gap:6px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:border-color .15s ease,color .15s ease}
+.theme-toggle:hover{border-color:var(--actual);color:var(--actual)}
+.theme-toggle:focus-visible{outline:2px solid var(--actual);outline-offset:2px}
+.theme-opt{display:inline-flex;align-items:center;gap:5px}
+.theme-opt svg{flex-shrink:0}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+.theme-opt-light{display:none}
+@media (prefers-color-scheme: dark){:root:not(:has(> head > meta[name="color-scheme"][content="light"])):not([data-theme="light"]) .theme-opt-dark{display:none}:root:not(:has(> head > meta[name="color-scheme"][content="light"])):not([data-theme="light"]) .theme-opt-light{display:inline-flex}}
+:root:has(> head > meta[name="color-scheme"][content="dark"]) .theme-opt-dark,:root[data-theme="dark"] .theme-opt-dark{display:none}
+:root:has(> head > meta[name="color-scheme"][content="dark"]) .theme-opt-light,:root[data-theme="dark"] .theme-opt-light{display:inline-flex}
+@container style(--color-scheme: dark){.theme-opt-dark{display:none}.theme-opt-light{display:inline-flex}}
+@container not style(--color-scheme: dark){.theme-opt-dark{display:inline-flex}.theme-opt-light{display:none}}
+.tabs-nav{display:inline-flex;gap:4px;background:var(--grid);padding:3px;border-radius:8px;border:1px solid var(--line)}
+.tab-button{background:transparent;border:none;border-radius:6px;padding:5px 14px;font:inherit;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;transition:all .15s ease}
+.tab-button:hover{color:var(--fg);background:var(--tab-hover)}
+.tab-button.active{background:var(--card);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,0.1)}
+.tab-button:focus-visible{outline:2px solid var(--actual);outline-offset:1px}
+.tab-panel[hidden]{display:none!important}
+#tab-panel-swimlane{padding:8px 24px 24px;max-width:1900px;margin:0 auto}
+.swimlane-tab-container{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
+.swimlane-tab-header{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--grid)}
+.swimlane-tab-title{font-weight:600;font-size:13.5px;color:var(--fg)}
+.swimlane-tab-meta{font-size:12px;color:var(--muted);margin-left:8px}
+.swimlane-tab-link{font-size:12px;color:var(--actual);text-decoration:none;font-weight:500}
+.swimlane-tab-link:hover{text-decoration:underline}
+.swimlane-frame-wrapper{width:100%;height:calc(100vh - 170px);min-height:650px;background:var(--bg)}
+.swimlane-frame{width:100%;height:100%;border:none;display:block}
 .meta{color:var(--muted);font-size:12px}
 main{padding:8px 24px 24px;max-width:1900px;margin:0 auto}
 section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
@@ -1071,7 +1115,7 @@ section.capacity header{display:flex;justify-content:space-between;gap:8px;align
 .target-switch input:focus-visible + .target-slider{outline:2px solid #f59e0b;outline-offset:2px}
 .target-title{font-weight:600;font-size:13px;color:var(--fg)}
 .target-input-group{display:flex;align-items:center}
-.target-date-input{font:inherit;font-size:13px;background:var(--bg);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:3px 8px;outline:none}
+.target-date-input{font:inherit;font-size:13px;background:var(--bg);color:var(--fg);color-scheme:inherit;border:1px solid var(--line);border-radius:6px;padding:3px 8px;outline:none}
 .target-date-input:focus{border-color:#f59e0b;box-shadow:0 0 0 1px #f59e0b}
 .target-presets{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .target-preset{font:inherit;font-size:11px;padding:2px 8px;border:1px solid var(--line);background:var(--grid);color:var(--fg);border-radius:999px;cursor:pointer;transition:border-color .15s}
@@ -1089,11 +1133,8 @@ section.capacity header{display:flex;justify-content:space-between;gap:8px;align
 .target-lbl{fill:#f59e0b;font-size:11px;font-weight:600;pointer-events:none}
 .target-dot{fill:#f59e0b;stroke:var(--card);stroke-width:2;pointer-events:none}
 .legend i.k-target{border-top:2px dashed #f59e0b}
-.target-rate-badge{display:inline-block;font-size:10px;padding:1px 5px;background:rgba(245,158,11,0.15);color:#d97706;border:1px solid #f59e0b;border-radius:4px;margin-top:2px}
+.target-rate-badge{display:inline-block;font-size:10px;padding:1px 5px;background:rgba(245,158,11,0.15);color:var(--warn);border:1px solid #f59e0b;border-radius:4px;margin-top:2px}
 .stats span small{opacity:.8;margin-left:4px}
-@media (prefers-color-scheme: dark){
-  .target-rate-badge{color:#fbbf24}
-}
 """
 
 HOVER_SCRIPT = """
@@ -1110,7 +1151,7 @@ HOVER_SCRIPT = """
     try { data = JSON.parse(dataEl.textContent); } catch (e) { return; }
     var pts = data.points || [];
     if (!pts.length) return;
-    var cross = svg.querySelector('.crosshair'), dot = svg.querySelector('.hover-dot');
+    var cross = svg.querySelector('.crosshair'), crossY = svg.querySelector('.crosshair-y'), dot = svg.querySelector('.hover-dot');
     var vw = Number(svg.getAttribute('data-w')) || 800, vh = Number(svg.getAttribute('data-h')) || 320;
     var idx = -1;
     function viewX(evt){
@@ -1126,6 +1167,7 @@ HOVER_SCRIPT = """
       idx = i;
       var p = pts[i];
       cross.setAttribute('x1', p.x); cross.setAttribute('x2', p.x); cross.style.opacity = 1;
+      if (crossY){ crossY.setAttribute('y1', p.y); crossY.setAttribute('y2', p.y); crossY.style.opacity = 1; }
       dot.setAttribute('cx', p.x); dot.setAttribute('cy', p.y); dot.style.opacity = 1;
       while (tip.firstChild) tip.removeChild(tip.firstChild);
       var v = document.createElement('b'); v.textContent = p.v; tip.appendChild(v);
@@ -1137,7 +1179,7 @@ HOVER_SCRIPT = """
       tip.style.left = Math.max(4, Math.min(sx + 14, window.scrollX + document.documentElement.clientWidth - w - 8)) + 'px';
       tip.style.top = (sy - 36) + 'px';
     }
-    function hide(){ cross.style.opacity = 0; dot.style.opacity = 0; tip.hidden = true; idx = -1; }
+    function hide(){ cross.style.opacity = 0; if (crossY) crossY.style.opacity = 0; dot.style.opacity = 0; tip.hidden = true; idx = -1; }
     svg.addEventListener('pointermove', function(e){ show(nearest(viewX(e))); });
     svg.addEventListener('pointerleave', hide);
     svg.addEventListener('blur', hide);
@@ -1750,6 +1792,211 @@ TARGET_SCRIPT = """
 """
 
 
+THEME_INIT_SCRIPT = (
+    '<script id="theme-init">'
+    'try{document.querySelector(\'meta[name="color-scheme"]\').content=localStorage.getItem("color-scheme")??"light dark";}catch(e){}'
+    '</script>'
+)
+
+THEME_TOGGLE_HTML = (
+    '<button type="button" id="theme-toggle" class="theme-toggle" title="Toggle color scheme">'
+    '<span class="theme-opt theme-opt-dark">'
+    '<svg aria-hidden="true" viewBox="0 0 16 16" width="13" height="13" fill="currentColor">'
+    '<path d="M6 .278a.768.768 0 0 1 .08.858 7.208 7.208 0 0 0-.878 3.46c0 4.021 3.278 7.277 7.318 7.277.527 0 1.04-.055 1.533-.16a.787.787 0 0 1 .81.316.733.733 0 0 1-.031.893A8.349 8.349 0 0 1 8.344 16C3.734 16 0 12.286 0 7.71 0 4.266 2.114 1.312 5.124.06A.752.752 0 0 1 6 .278z"/>'
+    '</svg>'
+    '<span aria-hidden="true">Dark</span>'
+    '<span class="sr-only">Switch to dark theme</span>'
+    '</span>'
+    '<span class="theme-opt theme-opt-light">'
+    '<svg aria-hidden="true" viewBox="0 0 16 16" width="13" height="13" fill="currentColor">'
+    '<path d="M8 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM8 0a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 0zm0 13a.5.5 0 0 1 .5.5v2a.5.5 0 0 1-1 0v-2A.5.5 0 0 1 8 13zm8-5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2a.5.5 0 0 1 .5.5zM3 8a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1 0-1h2A.5.5 0 0 1 3 8zm10.657-5.657a.5.5 0 0 1 0 .707l-1.414 1.415a.5.5 0 1 1-.707-.708l1.414-1.414a.5.5 0 0 1 .707 0zm-9.193 9.193a.5.5 0 0 1 0 .707L3.05 13.657a.5.5 0 0 1-.707-.707l1.414-1.414a.5.5 0 0 1 .707 0zm9.193 2.121a.5.5 0 0 1-.707 0l-1.414-1.414a.5.5 0 0 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .707zM4.464 4.465a.5.5 0 0 1-.707 0L2.343 3.05a.5.5 0 1 1 .707-.707l1.414 1.414a.5.5 0 0 1 0 .708z"/>'
+    '</svg>'
+    '<span aria-hidden="true">Light</span>'
+    '<span class="sr-only">Switch to light theme</span>'
+    '</span>'
+    '</button>'
+)
+
+THEME_SCRIPT = """
+(function(){
+  var meta = document.querySelector('meta[name="color-scheme"]');
+  var btn = document.getElementById('theme-toggle');
+  var frame = document.getElementById('swimlane-frame');
+  if (!meta) return;
+
+  function systemScheme(){
+    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+
+  function resolvedScheme(){
+    var content = meta.getAttribute('content') || 'light dark';
+    if (content === 'dark' || content === 'light') return content;
+    return systemScheme();
+  }
+
+  function syncFrame(){
+    if (!frame) return;
+    var scheme = resolvedScheme();
+    var content = meta.getAttribute('content') || 'light dark';
+    try {
+      var doc = frame.contentDocument;
+      if (doc && doc.documentElement) {
+        if (content === 'dark' || content === 'light') {
+          doc.documentElement.setAttribute('data-theme', content);
+          doc.documentElement.style.colorScheme = content;
+        } else {
+          doc.documentElement.removeAttribute('data-theme');
+          doc.documentElement.style.colorScheme = 'light dark';
+        }
+      }
+    } catch (e) {}
+    try {
+      if (frame.contentWindow) {
+        frame.contentWindow.postMessage({type: 'color-scheme', content: content, resolved: scheme}, '*');
+      }
+    } catch (e) {}
+  }
+
+  function applyScheme(value){
+    var next = (value === 'dark' || value === 'light') ? value : 'light dark';
+    meta.setAttribute('content', next);
+    if (next === 'dark' || next === 'light') {
+      document.documentElement.setAttribute('data-theme', next);
+    } else {
+      document.documentElement.removeAttribute('data-theme');
+    }
+    syncFrame();
+  }
+
+  var initial = meta.getAttribute('content');
+  if (initial === 'dark' || initial === 'light') {
+    document.documentElement.setAttribute('data-theme', initial);
+  }
+
+  if (btn) {
+    btn.addEventListener('click', function(){
+      var sys = systemScheme();
+      var current = resolvedScheme();
+      var target = current === 'dark' ? 'light' : 'dark';
+      if (target !== sys) {
+        try { localStorage.setItem('color-scheme', target); } catch (e) {}
+        applyScheme(target);
+      } else {
+        try { localStorage.removeItem('color-scheme'); } catch (e) {}
+        applyScheme('light dark');
+      }
+    });
+  }
+
+  window.addEventListener('storage', function(e){
+    if (e.key === 'color-scheme') {
+      applyScheme(e.newValue || 'light dark');
+    }
+  });
+
+  if (window.matchMedia) {
+    var mq = window.matchMedia('(prefers-color-scheme: dark)');
+    if (mq.addEventListener) {
+      mq.addEventListener('change', syncFrame);
+    }
+  }
+
+  if (frame) {
+    frame.addEventListener('load', syncFrame);
+  }
+})();
+"""
+
+
+TAB_NAV_HTML = (
+    '<nav class="tabs-nav" role="tablist" aria-label="Dashboard views">'
+    '<button type="button" role="tab" class="tab-button active" id="tab-btn-quota" aria-selected="true" aria-controls="tab-panel-quota" tabindex="0">Quota Burndown</button>'
+    '<button type="button" role="tab" class="tab-button" id="tab-btn-swimlane" aria-selected="false" aria-controls="tab-panel-swimlane" tabindex="-1">ADO Swimlanes</button>'
+    '</nav>'
+)
+
+SWIMLANE_PANEL_HTML = (
+    '<section id="tab-panel-swimlane" role="tabpanel" aria-labelledby="tab-btn-swimlane" class="tab-panel" hidden>'
+    '<div class="swimlane-tab-container">'
+    '<div class="swimlane-tab-header">'
+    '<div class="swimlane-tab-info">'
+    '<span class="swimlane-tab-title">Backlog Execution Swimlanes</span>'
+    '<span class="swimlane-tab-meta">AdaptiveAssetAllocation</span>'
+    '</div>'
+    '<div class="swimlane-tab-actions">'
+    '<a href="/swimlane" target="_blank" rel="noopener noreferrer" class="swimlane-tab-link" id="swimlane-ext-link">Open standalone ↗</a>'
+    '</div>'
+    '</div>'
+    '<div class="swimlane-frame-wrapper">'
+    '<iframe id="swimlane-frame" class="swimlane-frame" title="ADO Swimlane Board" data-frame-url="/swimlane"></iframe>'
+    '</div>'
+    '</div>'
+    '</section>'
+)
+
+TAB_SCRIPT = """
+(function(){
+  var quotaBtn = document.getElementById('tab-btn-quota');
+  var swimlaneBtn = document.getElementById('tab-btn-swimlane');
+  var quotaPanel = document.getElementById('tab-panel-quota');
+  var swimlanePanel = document.getElementById('tab-panel-swimlane');
+  var frame = document.getElementById('swimlane-frame');
+  var extLink = document.getElementById('swimlane-ext-link');
+  if (!quotaBtn || !swimlaneBtn || !quotaPanel || !swimlanePanel) return;
+
+  function loadFrame(){
+    if (!frame) return;
+    if (!frame.getAttribute('src')) {
+      var url = frame.getAttribute('data-frame-url') || '/swimlane';
+      if (window.location.protocol === 'file:') {
+        url = 'swimlane.html';
+      }
+      frame.setAttribute('src', url);
+      if (extLink) extLink.setAttribute('href', url);
+    }
+  }
+
+  function setTab(name){
+    var isSwimlane = (name === 'swimlane');
+    quotaBtn.classList.toggle('active', !isSwimlane);
+    quotaBtn.setAttribute('aria-selected', !isSwimlane ? 'true' : 'false');
+    quotaBtn.tabIndex = !isSwimlane ? 0 : -1;
+    swimlaneBtn.classList.toggle('active', isSwimlane);
+    swimlaneBtn.setAttribute('aria-selected', isSwimlane ? 'true' : 'false');
+    swimlaneBtn.tabIndex = isSwimlane ? 0 : -1;
+
+    quotaPanel.hidden = isSwimlane;
+    swimlanePanel.hidden = !isSwimlane;
+
+    if (isSwimlane) {
+      loadFrame();
+      try { history.replaceState(null, '', '#swimlane'); } catch(e){}
+    } else {
+      try { history.replaceState(null, '', '#quota'); } catch(e){}
+    }
+  }
+
+  quotaBtn.addEventListener('click', function(){ setTab('quota'); });
+  swimlaneBtn.addEventListener('click', function(){ setTab('swimlane'); });
+
+  [quotaBtn, swimlaneBtn].forEach(function(btn){
+    btn.addEventListener('keydown', function(e){
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        var next = (btn === quotaBtn) ? swimlaneBtn : quotaBtn;
+        next.focus();
+        setTab(next === quotaBtn ? 'quota' : 'swimlane');
+      }
+    });
+  });
+
+  if (window.location.hash === '#swimlane') {
+    setTab('swimlane');
+  }
+})();
+"""
+
+
 def chart_usage(usage_db: Path | None, now: datetime, burndowns: list[Burndown]) -> list[tuple[datetime, str, int]] | None:
     """(ts, model, total tokens) for every exact-count request a chart domain can show; None
     without a ledger, so charts then render without bars instead of with empty ones."""
@@ -1813,21 +2060,25 @@ def render_html(
     hover = f'<div id="chart-tooltip" role="status" aria-live="polite" hidden></div><script>{HOVER_SCRIPT}</script>' if chart_count or live else ""
     live_script = f'<script id="live-script">{LIVE_SCRIPT}</script>' if live else ""
     target_script = f'<script id="target-script">{TARGET_SCRIPT}</script>'
+    theme_script = f'<script id="theme-script">{THEME_SCRIPT}</script>'
     mode = "live dashboard" if live else f"static fallback generated {updated}"
     return "".join((
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">",
         "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">",
+        "<meta name=\"color-scheme\" content=\"light dark\">",
+        THEME_INIT_SCRIPT,
         "" if live else f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">",
         f"<title>Quota Burndown</title><style>{CSS}{credit_ui.CSS}</style></head><body>",
-        f'<header class="top"><h1>Quota burndown</h1><div class="meta" id="dashboard-meta">{esc(mode)} · {len(samples)} historic samples in view</div></header>',
+        f'<header class="top"><div class="header-main"><h1>Quota burndown</h1>{TAB_NAV_HTML}</div><div class="header-actions"><div class="meta" id="dashboard-meta">{esc(mode)} · {len(samples)} historic samples in view</div>{THEME_TOGGLE_HTML}</div></header>',
         '<div class="note" id="refresh-status" role="status">Updates every 30 seconds; provider readings may be older.</div>' if live else "",
-        "<main>", banner, target_bar, credit_ui.html(credit_plans, now, live), legend,
+        '<main id="tab-panel-quota" role="tabpanel" aria-labelledby="tab-btn-quota">', banner, target_bar, credit_ui.html(credit_plans, now, live), legend,
         f'<div id="dashboard-data" data-generated-at="{now.isoformat()}">', history,
         daily_models_section_html(usage_db, now) if usage_db is not None else "",
         usage_section_html(usage_db, now, live=live, recent_rows=recent_rows) if usage_db is not None else "",
         efficiency_section_html(usage_db, now) if usage_db is not None else "", "</div></main>",
+        SWIMLANE_PANEL_HTML,
         f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",
-        hover, live_script, target_script,
+        hover, live_script, target_script, theme_script, f'<script id="tab-script">{TAB_SCRIPT}</script>',
         '<script id="credit-plan-script">' + credit_ui.script(credit_plans) + '</script>', "</body></html>\n",
     ))
 

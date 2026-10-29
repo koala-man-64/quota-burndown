@@ -9,7 +9,7 @@ A local capacity service and live dashboard for Codex and Claude, with a token a
 ## Start and install
 
 ```powershell
-py -B quota-burndown.py serve                         # http://127.0.0.1:8787/
+py -B quota-burndown.py serve                         # http://127.0.0.1:38787/
 py -B quota-burndown.py capacity --json               # cached snapshot
 py -B quota-burndown.py capacity --watch              # reconnecting JSON-line stream
 py -B quota-burndown.py install --service             # inspect installation
@@ -18,6 +18,8 @@ py -B quota-burndown.py install --statusline --apply   # Claude quota handoff
 ```
 
 On Windows, `QuotaBurndownService` starts at logon, runs on battery, and restarts after failure. Installation disables the old `QuotaBurndownCollect` five-minute task. The OS writer lease also makes overlapping periodic `collect` delegate to the service. `install --all --apply` installs the service, status line and Codex skill; `--task` retains the legacy periodic option. Other platforms can supervise `serve` with their user service manager.
+
+On Windows, running `serve` again stops the existing service for that data directory and starts fresh, preserving stored history and settings. Startup verifies the saved PID and process creation time before terminating it, then waits for exit before binding the port. Older services are recognized by this checkout's absolute script path and matching `--home`. Unverifiable processes are left running with an error; unrelated port occupants are never killed. Other platforms still require stopping the old service first.
 
 If Task Scheduler denies registration, installation uses a per-user Startup shortcut and starts the same hidden process immediately. This mode starts at sign-in but has no OS crash-restart policy; provider reconnects still work. The old periodic task remains harmless under the writer lease. Uninstall removes the shortcut; stop its running process separately or sign out.
 

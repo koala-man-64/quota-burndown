@@ -16,11 +16,12 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from . import ledger, render, request_text, usage, usage_report
+from .config import DEFAULT_PORT
 from .plans import Conflict, PlanState, forecast_snapshot
 from .capacity import CapacityState
 from .model import current
 from .store import Sample, Store
-from .util import atomic_write_text, now_utc, read_json
+from .util import atomic_write_text, now_utc
 
 
 class WriterLease(AbstractContextManager):
@@ -93,6 +94,28 @@ class CapacityService:
     def touch(self):
         with self._consumer_lock:
             self._last_read = time.monotonic()
+
+    def swimlane_html(self) -> bytes | None:
+        env_home = os.environ.get("ADO_SWIMLANE_HOME")
+        ado_home = Path(env_home).expanduser() if env_home else Path.home() / ".ado-swimlane"
+        rendered = ado_home / "swimlane.html"
+        if rendered.is_file():
+            try:
+                return rendered.read_bytes()
+            except OSError:
+                pass
+        repo_template = Path(__file__).resolve().parent.parent / "ado-swimlane" / "board" / "board.html"
+        if repo_template.is_file():
+            try:
+                text = repo_template.read_text(encoding="utf-8")
+                return (
+                    '<!doctype html><html><head><meta charset="utf-8">'
+                    '<meta name="viewport" content="width=device-width,initial-scale=1">'
+                    f'</head><body>{text}</body></html>'
+                ).encode("utf-8")
+            except OSError:
+                pass
+        return None
 
     def _enqueue(self, event):
         try:
@@ -349,7 +372,7 @@ class LocalServer(ThreadingHTTPServer):
     allow_reuse_address = True
 
 
-def make_server(service: CapacityService, host="127.0.0.1", port=8787):
+def make_server(service: CapacityService, host="127.0.0.1", port=DEFAULT_PORT):
     host = loopback_host(host)
     if ":" in host:
         import socket
@@ -420,6 +443,13 @@ def make_server(service: CapacityService, host="127.0.0.1", port=8787):
                 self._send(200, "application/json", service._legacy_latest)
             elif path == "/status.json":
                 self._send(200, "application/json", service._legacy_status)
+            elif path in ("/swimlane", "/swimlane.html"):
+                service.touch()
+                content = service.swimlane_html()
+                if content:
+                    self._send(200, "text/html; charset=utf-8", content)
+                else:
+                    self._send(404, "text/html; charset=utf-8", b'<!doctype html><meta charset="utf-8"><p>ADO swimlane snapshot not found. Run <code>py ado-swimlane.py refresh</code> to generate it.</p>')
             else:
                 self._send(404, "text/plain", b"not found")
 
@@ -506,78 +536,37 @@ def make_server(service: CapacityService, host="127.0.0.1", port=8787):
     return Server((host, port), Handler)
 
 
-def _python_process(pid: int) -> bool:
-    """True only when pid is a live Python process; guards against killing a reused pid."""
-    if os.name == "nt":
-        import ctypes
-        from ctypes import wintypes
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        handle = kernel32.OpenProcess(0x1000, False, pid)  # PROCESS_QUERY_LIMITED_INFORMATION
-        if not handle:
-            return False
-        try:
-            buffer = ctypes.create_unicode_buffer(32768)
-            size = wintypes.DWORD(len(buffer))
-            if not kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
-                return False
-            image = buffer.value
-        finally:
-            kernel32.CloseHandle(handle)
-    else:
-        import subprocess
-        try:
-            image = subprocess.run(["ps", "-p", str(pid), "-o", "comm="], capture_output=True, text=True, timeout=5).stdout
-        except (OSError, subprocess.SubprocessError):
-            return False
-    return "python" in Path(image.strip()).name.lower()
-
-
-def stop_running_service(paths, timeout: float = 10.0) -> int | None:
-    """Terminate the recorded `serve` writer if it holds the writer lease; return its pid.
-
-    Raises RuntimeError when the lease is held by something other than a recorded service
-    (for example a one-shot collector), rather than killing an unidentified process.
-    """
+def serve(paths, host="127.0.0.1", port=DEFAULT_PORT):
+    host = loopback_host(host)
+    if not 0 <= port <= 65535:
+        raise ValueError("port must be between 0 and 65535")
+    service = None
+    server = None
     try:
-        with WriterLease(paths.home):
-            return None
-    except RuntimeError:
-        pass
-    info = read_json(paths.home / "capacity-service.json", {})
-    pid = info.get("pid") if isinstance(info, dict) else None
-    if type(pid) is not int or pid <= 0 or pid == os.getpid() or not _python_process(pid):
-        raise RuntimeError("quota writer lease is held by a process that is not a recorded capacity service; stop it and retry")
-    import signal
-    try:
-        os.kill(pid, signal.SIGTERM)  # TerminateProcess on Windows; the OS releases the lease.
-    except OSError:
-        pass  # Exited between the check and the signal.
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            with WriterLease(paths.home):
-                return pid
-        except RuntimeError:
-            if time.monotonic() >= deadline:
-                raise RuntimeError(f"existing capacity service (pid {pid}) did not release the writer lease") from None
-            time.sleep(0.1)
-
-
-def serve(paths, host="127.0.0.1", port=8787):
-    stopped = stop_running_service(paths)
-    if stopped:
-        print(f"stopped existing capacity service (pid {stopped})", flush=True)
-    service = CapacityService(paths)
-    server = make_server(service, host, port)
-    try:
-        service.start()
-        authority = f"[{server.server_address[0]}]" if ":" in server.server_address[0] else server.server_address[0]
-        atomic_write_text(paths.home / "capacity-service.json", json.dumps({"url": f"http://{authority}:{server.server_port}", "pid": os.getpid()}))
+        # Serialize replacement through metadata publication. Never delete or
+        # steal the writer lock, and never kill an arbitrary port occupant.
+        with WriterLease(paths.home, ".quota-start.lock"):
+            try:
+                with WriterLease(paths.home):
+                    pass
+            except RuntimeError:
+                from .restart import stop_existing
+                stop_existing(paths.home)
+            service = CapacityService(paths)
+            server = make_server(service, host, port)
+            service.start()
+            authority = f"[{server.server_address[0]}]" if ":" in server.server_address[0] else server.server_address[0]
+            from .restart import current_process_started
+            atomic_write_text(paths.home / "capacity-service.json", json.dumps({
+                "url": f"http://{authority}:{server.server_port}", "pid": os.getpid(),
+                "started": current_process_started(),
+            }))
         print(f"serving http://{host}:{server.server_port}/ (Ctrl+C to stop)", flush=True)
         server.serve_forever()
     except KeyboardInterrupt:
         pass
     finally:
-        server.server_close()
-        service.close()
+        if server is not None:
+            server.server_close()
+        if service is not None:
+            service.close()
