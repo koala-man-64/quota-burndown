@@ -47,6 +47,9 @@ def artifact_url() -> str:
 
 # States that mean the item is off the board.
 DONE_STATES = frozenset({"Closed", "Removed", "Done"})
+# States that mean the work was delivered. Removed is off the board too, but
+# nothing was delivered, so it never counts as a closure.
+CLOSED_STATES = frozenset({"Closed", "Done"})
 
 
 def is_open(state: str | None) -> bool:
@@ -67,17 +70,17 @@ class Paths:
 
     @property
     def snapshot(self) -> Path:
-        """Newest live board pull."""
+        """Newest snapshot whose rendered page passed validation."""
         return self.home / "snapshot.json"
 
     @property
     def previous(self) -> Path:
-        """The pull before it, kept so a refresh can diff without a database."""
+        """The prior accepted snapshot, kept for diffing without a database."""
         return self.home / "snapshot.prev.json"
 
     @property
     def states(self) -> Path:
-        """Last state seen for every work item, across all polls.
+        """Last accepted state for every work item, across successful polls.
 
         A pull only fetches what changed since the previous one, so comparing
         consecutive snapshots misses any item that moves exactly once. This is

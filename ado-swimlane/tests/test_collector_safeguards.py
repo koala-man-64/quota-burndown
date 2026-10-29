@@ -96,22 +96,30 @@ def test_provider_message_error_is_sanitized(monkeypatch):
 
 
 @pytest.mark.parametrize("existing", [False, True])
-def test_invalid_render_preserves_every_last_good_output(tmp_path, board, monkeypatch, existing):
+def test_invalid_render_preserves_accepted_outputs_and_degrades_served_page(tmp_path, board, monkeypatch, existing):
     paths = Paths(tmp_path / "state")
     source = tmp_path / "board.html"
     source.write_text(board)
-    targets = [paths.snapshot, paths.previous, paths.states, paths.changes, paths.html, paths.artifact]
+    targets = [paths.snapshot, paths.previous, paths.states, paths.changes, paths.artifact]
     if existing:
         paths.home.mkdir()
         for target in targets:
             target.write_text('{"serverDate":"Mon, 14 Sep 2026 22:15:00 GMT"}')
+        paths.states.write_text('{}')
     before = {p: p.read_bytes() if p.exists() else None for p in targets}
     snap = snapshot([item(200, "Feature", "Active")])
     monkeypatch.setattr(ado, "collect", lambda *a, **k: snap)
     monkeypatch.setattr(render, "compose", lambda *a, **k: ("<p>broken board</p>", template.Report()))
-    with pytest.raises(ado.AdoError, match="render validation failed:"):
-        refresh.run(paths, source=source)
+    result = refresh.run(paths, source=source)
+    assert not result.ok
+    assert result.served_revision is None
+    assert "failed validation" in result.health_detail
     assert {p: p.read_bytes() if p.exists() else None for p in targets} == before
+    served = paths.html.read_text()
+    assert 'class="render-alert"' in served
+    assert "unverified template" in served
+    assert "broken board" not in served
+    assert 'name="ado-snapshot-at"' not in served
 
 
 @pytest.mark.parametrize("failure", [ado.AuthError("missing PAT"), ado.AdoError("provider failed")])

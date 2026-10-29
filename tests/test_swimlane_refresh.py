@@ -1,7 +1,13 @@
 import json
+import re
+import shutil
+import subprocess
 import threading
 from datetime import timedelta
 from email.utils import format_datetime
+from pathlib import Path
+
+import pytest
 
 from quota_burndown import swimlane
 from quota_burndown.service import CapacityService, WriterLease
@@ -45,6 +51,60 @@ def test_real_child_refresh_and_failure_keep_last_good(tmp_path, monkeypatch):
     assert "retaining last good" in worker.label(status)
     assert (worker.home / "swimlane.html").read_bytes() == before
     assert "test-secret" not in (worker.home / "refresh-status.json").read_text()
+
+
+@pytest.mark.parametrize("failure, expected_detail", [
+    ("auth", "AZURE_DEVOPS_EXT_PAT is missing"),
+    ("network", "ADO request failed"),
+])
+def test_host_failure_banner_keeps_recent_last_good_board(paths, tmp_path, monkeypatch,
+                                                        failure, expected_detail):
+    home = tmp_path / "backlog"
+    monkeypatch.setenv("ADO_SWIMLANE_HOME", str(home))
+    service = CapacityService(paths)
+    worker = service.swimlane
+    worker.launcher = successful_launcher(tmp_path)
+    try:
+        assert worker.refresh(threading.Event()) == 300, worker.status()
+        before = {name: (home / name).read_bytes() for name in ("snapshot.json", "swimlane.html")}
+        revision = worker.status()["rendered_at"]
+        assert worker.status()["stale"] is False
+        assert "Refresh ok." in service.swimlane_html().decode()
+
+        # Exercise the bundled CLI's auth/retry/error path in the real refresh
+        # child. Every provider request is intercepted before any network I/O.
+        bundled_launcher = Path(__file__).resolve().parents[1] / "ado-swimlane" / "ado-swimlane.py"
+        monkeypatch.setenv("ADO_SWIMLANE_TEMPLATE", str(bundled_launcher.parent / "board" / "board.html"))
+        worker.launcher = launcher(tmp_path, f"""
+import runpy, sys, urllib.error
+sys.path.insert(0, {str(bundled_launcher.parent)!r})
+from ado_swimlane import ado
+def fail_network(self, request):
+    raise urllib.error.URLError('simulated offline provider')
+ado.Client._open = fail_network
+ado.time.sleep = lambda seconds: None
+runpy.run_path({str(bundled_launcher)!r}, run_name='__main__')
+""")
+        if failure == "network":
+            monkeypatch.setenv("AZURE_DEVOPS_EXT_PAT", "test-only-pat")
+        else:
+            monkeypatch.delenv("AZURE_DEVOPS_EXT_PAT", raising=False)
+
+        assert worker.refresh(threading.Event()) == 60
+        status = worker.status()
+        assert status["state"] == "error"
+        assert expected_detail in status["detail"]
+        assert status["stale"] is False
+        assert status["snapshot_at"] == status["rendered_at"] == revision
+        page = service.swimlane_html().decode()
+        assert "Refresh failed; retaining last good board." in page
+        assert f'ado-snapshot-at" content="{revision}"' in page
+        assert "current board" in page
+        assert "Refresh ok." not in page
+        assert {name: (home / name).read_bytes() for name in before} == before
+        assert service.threads == []
+    finally:
+        service.close()
 
 
 def test_writer_contention_does_not_launch_child(tmp_path):
@@ -157,3 +217,91 @@ def test_partial_commit_label_stays_bound_to_rendered_revision(tmp_path):
     assert "Refresh failed" in label
     page = worker.decorate((tmp_path / "swimlane.html").read_bytes(), rendered=True).decode()
     assert "if(s.rendered_at===snapshot)el.textContent=s.label" in page
+
+
+@pytest.mark.parametrize("storage_available", [True, False])
+def test_embedded_board_preserves_details_and_scroll_on_refresh(tmp_path, storage_available):
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node is required to execute the embedded refresh script")
+    revision = "2026-10-29T12:00:00Z"
+    content = (
+        f'<html><head><meta name="ado-snapshot-at" content="{revision}"></head><body>'
+        '<details id="tracked-snapshot-details"></details>'
+        '<details id="relation-snapshot-details" open></details></body></html>'
+    ).encode()
+    page = swimlane.SwimlaneRefresh(home=tmp_path).decorate(content, rendered=True).decode()
+    script = re.findall(r"<script>(.*?)</script>", page, re.S)[-1]
+    harness = r"""
+const assert = require('node:assert/strict');
+const vm = require('node:vm');
+const script = __SCRIPT__, storageAvailable = __STORAGE_AVAILABLE__;
+const key = 'swimlane.view';
+const tracked = {id:'tracked-snapshot-details', tagName:'DETAILS', open:false};
+const relations = {id:'relation-snapshot-details', tagName:'DETAILS', open:true};
+const banner = {textContent:''};
+const elements = {[tracked.id]:tracked, [relations.id]:relations, 'ado-refresh-status':banner};
+const saved = {y:0, open:[tracked.id], closed:[relations.id]};
+const values = new Map([[key, JSON.stringify(saved)]]);
+const sessionStorage = {};
+for (const method of ['getItem','setItem','removeItem']) {
+  sessionStorage[method] = function(k, value) {
+    if (!storageAvailable) throw Error('storage unavailable');
+    if (method === 'getItem') return values.get(k) || null;
+    if (method === 'setItem') values.set(k, value);
+    if (method === 'removeItem') values.delete(k);
+  };
+}
+let timer, reloads = 0, scrolled = null;
+const listeners = {};
+const status = {rendered_at:__REVISION__, label:'current'};
+const window = {
+  scrollY:99,
+  scrollTo:(x,y) => {scrolled=[x,y];},
+  addEventListener:(name, callback) => {listeners[name]=callback;}
+};
+const context = {
+  document:{getElementById:id => elements[id], querySelectorAll:selector => {
+    assert.equal(selector, 'details[id]');
+    return [tracked, relations];
+  }},
+  window, sessionStorage,
+  fetch:() => Promise.resolve({ok:true, json:() => Promise.resolve({...status})}),
+  setInterval:callback => {timer=callback;},
+  location:{reload:() => {reloads++;}}
+};
+async function main() {
+  vm.runInNewContext(script, context);
+  await new Promise(setImmediate);
+  assert.equal(banner.textContent, 'current');
+  assert.equal(reloads, 0);
+  if (storageAvailable) {
+    assert.equal(tracked.open, true);
+    assert.equal(relations.open, false);
+    assert.deepEqual(scrolled, [0,0]);
+    assert.equal(values.has(key), false);
+  }
+  // pagehide captures changes for the static page's meta refresh too.
+  tracked.open=false; relations.open=true; window.scrollY=321;
+  listeners.pagehide();
+  if (storageAvailable) {
+    assert.deepEqual(JSON.parse(values.get(key)),
+      {y:321, open:[relations.id], closed:[tracked.id]});
+    values.delete(key);
+  }
+  // A provider revision change captures the current view before reloading.
+  tracked.open=true; relations.open=false; window.scrollY=654;
+  status.rendered_at='next-revision';
+  timer();
+  await new Promise(setImmediate);
+  assert.equal(reloads, 1);
+  if (storageAvailable) assert.deepEqual(JSON.parse(values.get(key)),
+    {y:654, open:[tracked.id], closed:[relations.id]});
+}
+main().catch(error => {console.error(error); process.exitCode=1;});
+"""
+    harness = (harness.replace("__SCRIPT__", json.dumps(script))
+               .replace("__STORAGE_AVAILABLE__", json.dumps(storage_available))
+               .replace("__REVISION__", json.dumps(revision)))
+    result = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stdout + result.stderr

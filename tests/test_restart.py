@@ -25,10 +25,14 @@ def test_legacy_identity_requires_checkout_command_and_home(tmp_path):
     assert not _matches_service(["python.exe", "quota-burndown.py", "serve"], tmp_path)
 
 
-def wait_metadata(home, process):
+def wait_metadata(home, process, log_path):
+    # The service's own output says why it died; without it CI shows only an
+    # exit code.
     deadline = time.monotonic() + 20
     while time.monotonic() < deadline:
-        assert process.poll() is None, "service exited before publishing metadata"
+        if process.poll() is not None:
+            pytest.fail(f"service exited with code {process.returncode} before publishing metadata; "
+                        f"its log:\n{log_path.read_text(errors='replace')}")
         try:
             metadata = json.loads((home / "capacity-service.json").read_text())
             if metadata["pid"] == process.pid:
@@ -36,7 +40,7 @@ def wait_metadata(home, process):
         except (OSError, ValueError):
             pass
         time.sleep(0.05)
-    pytest.fail("service did not publish metadata in 20 seconds")
+    pytest.fail(f"service did not publish metadata in 20 seconds; its log:\n{log_path.read_text(errors='replace')}")
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows service replacement")
@@ -48,7 +52,8 @@ def test_serve_replaces_live_process_and_reuses_port(tmp_path, legacy):
     for key in ("CODEX_HOME", "CLAUDE_CONFIG_DIR", "QUOTA_BURNDOWN_ANTIGRAVITY_HOME"):
         env[key] = str(tmp_path / key)
     processes = []
-    with (tmp_path / "service.log").open("w") as log:
+    log_path = tmp_path / "service.log"
+    with log_path.open("w") as log:
         def launch(port, absolute=False):
             process = subprocess.Popen(
                 [sys.executable, "-B", str(SCRIPT) if absolute else "quota-burndown.py",
@@ -59,13 +64,13 @@ def test_serve_replaces_live_process_and_reuses_port(tmp_path, legacy):
             return process
         try:
             first = launch(0, absolute=legacy)
-            metadata = wait_metadata(home, first)
+            metadata = wait_metadata(home, first, log_path)
             assert isinstance(metadata["started"], int)
             if legacy:
                 del metadata["started"]
                 (home / "capacity-service.json").write_text(json.dumps(metadata))
             second = launch(int(metadata["url"].rsplit(":", 1)[1]))
-            fresh = wait_metadata(home, second)
+            fresh = wait_metadata(home, second, log_path)
             first.wait(timeout=5)
             assert fresh["url"] == metadata["url"]
             with urlopen(fresh["url"] + "/v1/capacity", timeout=5) as response:
@@ -73,7 +78,7 @@ def test_serve_replaces_live_process_and_reuses_port(tmp_path, legacy):
                 assert "revision" in json.load(response)
             # A second replacement covers relative invocation and persisted identity.
             third = launch(int(fresh["url"].rsplit(":", 1)[1]))
-            wait_metadata(home, third)
+            wait_metadata(home, third, log_path)
             second.wait(timeout=5)
         finally:
             for process in processes:

@@ -82,3 +82,19 @@ def test_children_escaping_survives_quotes_and_script_ends(board):
 def test_delta_window_only_moves_when_the_day_rolls_over(board):
     assert render._delta_window(board, "2026-09-01") == "08-31"   # same day: keep
     assert render._delta_window(board, "2026-09-14") == "09-01"   # rolled: previous snapshot
+
+
+def test_a_true_zero_open_count_is_written(board):
+    """An empty openEF is the query's real answer; leaving the template's number
+    in place would claim work that is no longer open."""
+    out, _ = template.inject(board, snapshot([item(200, "Feature", "Closed")], open_ef=[]),
+                             snapshot_date="2026-09-14", delta_from="09-13", refreshed="22:15 UTC", kids={})
+    assert "&middot; 0 open epics/features" in out
+
+
+def test_a_snapshot_without_the_query_leaves_the_count_alone(board):
+    snap = snapshot([item(200, "Feature", "New")])
+    del snap["openEF"]
+    out, _ = template.inject(board, snap, snapshot_date="2026-09-14", delta_from="09-13",
+                             refreshed="22:15 UTC", kids={})
+    assert "&middot; 7 open epics/features" in out

@@ -110,3 +110,13 @@ def test_wiql_asks_for_time_precision():
     assert client.wiql("SELECT [System.Id] FROM WorkItems") == [5]
     assert "timePrecision=true" in seen["url"]
     assert client.server_date == "Mon, 14 Sep 2026 22:15:00 GMT"
+
+
+def test_check_fails_when_a_card_has_no_live_record(board):
+    """The collector asks for every card and ADO omits ids it cannot return, so a
+    card missing from the snapshot was deleted, mistyped or is unreadable: its
+    badge shows a state nobody checked."""
+    snap = snapshot([item(100, "Feature", "Closed"), item(300, "Feature", "Active")])
+    result = validate.check(board, snap)
+    assert not result.ok
+    assert any("no live record" in note and "c200" in note for note in result.notes)

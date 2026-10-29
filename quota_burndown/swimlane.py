@@ -140,8 +140,26 @@ class SwimlaneRefresh:
                   + html.escape(label) + '</div>')
         script = """<script>(function(){
 var snapshot=__SNAPSHOT__, el=document.getElementById('ado-refresh-status');
+var key='swimlane.view';
+try{
+  var saved=JSON.parse(sessionStorage.getItem(key)||'null');
+  if(saved){
+    (saved.open||[]).forEach(function(id){var d=document.getElementById(id);if(d&&d.tagName==='DETAILS')d.open=true;});
+    (saved.closed||[]).forEach(function(id){var d=document.getElementById(id);if(d&&d.tagName==='DETAILS')d.open=false;});
+    if(typeof saved.y==='number')window.scrollTo(0,saved.y);
+    sessionStorage.removeItem(key);
+  }
+}catch(e){/* Unavailable storage must not stop refreshes. */}
+function remember(){
+  try{
+    var open=[],closed=[];
+    document.querySelectorAll('details[id]').forEach(function(d){(d.open?open:closed).push(d.id);});
+    sessionStorage.setItem(key,JSON.stringify({y:window.scrollY,open:open,closed:closed}));
+  }catch(e){/* Ignore unavailable storage. */}
+}
+window.addEventListener('pagehide',remember);
 function check(){fetch('/v1/swimlane/status',{cache:'no-store'}).then(function(r){if(!r.ok)throw Error();return r.json();}).then(function(s){
-  if(s.rendered_at && s.rendered_at!==snapshot){location.reload();return;}
+  if(s.rendered_at && s.rendered_at!==snapshot){remember();location.reload();return;}
   if(s.rendered_at===snapshot)el.textContent=s.label;
 }).catch(function(){el.textContent='Backlog refresh service unavailable; showing the last saved board.';});}
 check();setInterval(check,15000);
