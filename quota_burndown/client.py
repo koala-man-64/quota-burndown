@@ -8,6 +8,7 @@ import urllib.request
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from .config import DEFAULT_PORT
 from .util import now_utc, parse_iso, read_json
 
 
@@ -19,7 +20,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 def service_url(home: Path, override: str | None = None) -> str:
     from .service import loopback_host
     info = read_json(home / "capacity-service.json", {})
-    url = override or (info.get("url") if isinstance(info, dict) else None) or "http://127.0.0.1:8787"
+    url = override or (info.get("url") if isinstance(info, dict) else None) or f"http://127.0.0.1:{DEFAULT_PORT}"
     parsed = urlsplit(url)
     if parsed.scheme != "http" or parsed.username or parsed.password or parsed.path not in ("", "/") or parsed.query or parsed.fragment:
         raise ValueError("capacity URL must be a loopback HTTP origin")

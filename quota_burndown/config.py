@@ -7,7 +7,7 @@ from pathlib import Path
 
 ENV_HOME = "QUOTA_BURNDOWN_HOME"
 TASK_NAME = "QuotaBurndownCollect"
-DEFAULT_PORT = 8787
+DEFAULT_PORT = 38787
 
 # Known window lengths in minutes, keyed by the short label used in samples and the UI.
 WINDOW_MINUTES = {"1h": 60, "5h": 300, "1d": 1440, "7d": 10080}

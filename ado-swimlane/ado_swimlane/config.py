@@ -8,7 +8,7 @@ from pathlib import Path
 ENV_HOME = "ADO_SWIMLANE_HOME"
 SERVICE_TASK_NAME = "AdoSwimlaneService"
 WATCHDOG_TASK_NAME = "AdoSwimlaneWatchdog"
-DEFAULT_PORT = 8799
+DEFAULT_PORT = 38799
 
 # Azure DevOps. Authentication uses the inherited AZURE_DEVOPS_EXT_PAT.
 DEFAULT_ORG = "https://dev.azure.com/rdprokes"

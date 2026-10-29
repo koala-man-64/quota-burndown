@@ -15,6 +15,6 @@ Report shared pools, remaining/reserve-adjusted allowance, constraining window, 
 
 For token accounting, run `usage --days 7`, optionally `--by model_effort,session`, date filters, or CSV/JSON exports. Raw accounting is preserved; dashboard input normalizes Codex cache-inclusive totals. Antigravity inferred tokens remain outside exact totals and its quota is unknown.
 
-Open the existing loopback URL in `~/.quota-burndown/capacity-service.json`, default `http://127.0.0.1:8787/`. If unavailable, `capacity` labels its persisted snapshot disconnected. For an authorized live dashboard request, start `serve` once. `render` produces a dated fallback.
+Open the existing loopback URL in `~/.quota-burndown/capacity-service.json`, default `http://127.0.0.1:38787/`. If unavailable, `capacity` labels its persisted snapshot disconnected. For an authorized live dashboard request, start `serve` once. `render` produces a dated fallback.
 
 Installation changes settings/tasks only when setup is requested: `install --service --apply`, `install --statusline --apply`, or `install --all --apply`. Identical Claude redraws do not renew freshness. Native Codex read completion and provider reporting delay are separate facts.
