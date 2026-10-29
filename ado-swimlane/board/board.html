@@ -151,6 +151,12 @@
   }
   .sub { color: var(--ink-soft); margin: 0 0 18px; max-width: 78ch; }
   .sub code, .kfacts code { font-family: var(--mono); font-size: 12.5px; }
+  .snapshot-warning {
+    max-width: 1500px; margin: 0 auto 14px; padding: 9px 12px;
+    border-left: 4px solid var(--danger); background: var(--panel);
+    color: var(--danger); font-weight: 600;
+  }
+  .snapshot-warning[hidden] { display: none; }
 
   .kfacts {
     max-width: 1500px;
@@ -442,6 +448,7 @@
   .stbadge.closed { background: var(--ok); color: var(--pill-ink); }
   .stbadge.done { background: var(--ok); color: var(--pill-ink); }
   .stbadge.removed { color: var(--queued); border: 1px solid var(--line); }
+  .stbadge.unknown { color: var(--danger); border: 1px dashed var(--danger); background: transparent; }
 
   svg.arrows {
     position: absolute; inset: 0;
@@ -513,18 +520,28 @@
 
 <header>
   <h1>Backlog execution swimlanes — order of work &amp; parallelism</h1>
-  <p class="sub">AdaptiveAssetAllocation, snapshot <span id="snap-date" class="nolink">…</span> · 86 open epics/features. Lanes are programs; columns are execution phases. Amber arrows are actual <code>Predecessor/Successor</code> links recorded in Azure Boards — a card cannot start until its inbound arrows are done. Gray arrows are implied ordering only (program phase sequence, queued-behind). Green cards were completed since the <span class="nolink">07-28</span> baseline.</p>
+  <p class="sub">AdaptiveAssetAllocation · ADO response <span id="snap-date" class="nolink">…</span> · unknown open epics/features (project query). Lanes are programs; columns are curated phases, not a schedule or authorization. Amber arrows reflect recorded ADO predecessor/successor links in the displayed snapshot; they describe planning relationships and do not enforce a start gate. Gray arrows are advisory ordering hints. If the warning below is visible, card states and child chips are template placeholders, not live data. Card notes and dated panels are curated context, not current state.</p>
 </header>
 
 <div class="kfacts">
-  <details class="kfact ok"><summary><b style="color:var(--ok)">Audit corrections retained</b><span class="teaser">F2070 and F2598 remain Closed. Their records retain the correction of the earlier audit's false reopenings.</span></summary><span class="body">Both features were restored to Closed on 09-10 after their children were checked; default-privilege and preset bugs 2784 and 2822 under F2598 are also Closed (10-15 and 10-10).</span></details>
-  <details class="kfact crit"><summary><b style="color:var(--danger)">Readiness probe reopened</b><span class="teaser">Bug 3527 (under US 1180) is Active again since 10-09: the intraday monitor revision processes events while readiness remains 503.</span></summary><span class="body">The earlier 09-10 demand-symbol and health-response serialization fix was reopened on 10-09. Separate intraday-monitor parking and crypto-adjustment bugs (4038, 4058) were Closed on 10-16; 3527 itself remains Active.</span></details>
-  <details class="kfact ok"><summary><b style="color:var(--ok)">Relay cutover &amp; follow-ups</b><span class="teaser">F3202 and all follow-up relay bugs (2880, 3213, 3496, 4041, 4042, 4043) are Closed.</span></summary><span class="body">Single-owner provider streaming, relay-owner lease recovery (3496, Closed 10-15), heartbeat/relay decoupling (4043, Closed 10-16), non-retryable price-event rejection handling (4041, Closed 10-18) and stale ownership page replay conflict handling (4042, Closed 10-18) are all Closed with zero open children under F3202.</span></details>
-  <details class="kfact"><summary><b>Critical path</b><span class="teaser">F2097 is Active with its four recorded gates Closed. F2099 is Active while all three of its recorded gates remain New.</span></summary><span class="body"><b>Engine:</b> 2609, 2614, F2022 and F257 are Closed; the recorded prerequisites of F2097 are clear, while implementation and certification remain separate.<br><br><b>Workstation:</b> F302, 2044 and F295 remain New and are the open gates of F2099.<br><br><b>Evidence:</b> F2094 and the four evidence producers (2609, 2610, 2611, 2614) are Closed. Stories 2046 and 2082, still listed as predecessors of F2094, remain New; their scope needs reconciliation before treating the dependency graph as complete.</span></details>
-  <details class="kfact"><summary><b>Watch list</b><span class="teaser">7 open bugs (down from 33); 1 has no parent and 0 are Resolved. All 7 Resolved bugs closed; auth/role and pool-starvation bugs are New.</span></summary><span class="body"><b>Reviewed 2026-10-18, 19:21 UTC.</b> These prose counts match the current Azure DevOps backlog (0 Resolved items remain).<br><br><b>Data &amp; storage:</b> Bugs 3884 (metadata lost updates), 3797 (frozen Gold Market root tables), 3628 (runner-risk coverage) and 3629 (self-derived expected counts) are Closed, along with blob lifecycle story 3795, Gold Market pruning story 3796, and PIT vendor evaluation spike 2041 (10-18).<br><br><b>Trading &amp; crypto:</b> Bugs 3855 (IOC partial-fill legs), 3863 (Schwab fills missing from blotter) and 3885 (reduction-only exit reconciliation, 10-18) are Closed. Crypto operator reduce-only close-out task 3903 and deploy task 4007 are Closed (10-15), and intraday-monitor crypto bugs 4038 and 4058 are Closed (10-16). Live 10 USD BTC canary 2296 remains New (deferred).<br><br><b>Readiness &amp; control plane:</b> Bugs 3547 (cp-0192 staged online migration, 10-18), 3900 (cp-0192 writer epoch), 3877 (bg-worker 503 restart episode), 4021 (API event loop blocked by sync DB work), and relay bugs 4041 &amp; 4042 (10-18) are Closed. Follow-up Bug 4031 (<code>api-private</code> final-reconcile 2-connection pool self-starvation, under 4021) is New; Bug 3527 is Active.<br><br><b>Security &amp; auth:</b> Bugs 3814 (<code>infra-ci</code> def 42), 3505 (broker re-auth state token logged), and Control Plane TradeDesk foundation Bugs 2584 &amp; 2585 (10-18; downstream AA 2.0 execution-host tasks tracked in 2204, 2457, 3574) are Closed. Under Active CPD story 2728, Bugs 4035 (intraday monitor role checks invisible to published permission projection) and 4036 (E*TRADE and Schwab session routes require only <code>TradeDesk.Read</code>) are New (10-15).<br><br><b>Tooling &amp; operations:</b> Hook bugs 3899 and 3901, sandbox build provenance bug 3836 (10-18), agent-browser task 4183 (10-18) and jobs deploy duration task 4185 (10-18) are Closed. Open items: 3957 (unreachable internal market-clock job-operate routes, New), 4013 (shell guard Python one-liner, New under 3690) and 4032 (reset stale delivery intent, Active under 3993).</span></details>
-  <details class="kfact"><summary><b>F2100 resilience</b><span class="teaser">F2100 remains New, with stories 2141, 2142, 2143, 2481, 3337 and 3973 now Closed; cutover task 3861 is Active and stories 2144–2145 remain New.</span></summary><span class="body"><b>Recovery &amp; connectivity:</b> 2143 and 2142 (measured private connectivity and stateful-resource resilience, Closed 10-12) are Closed, along with reconcile-after-restart bug 3866 (Closed 10-13).<br><br><b>Operations:</b> Story 2481 (Closed 10-11) and unified console task 2486 (Closed 10-16) are Closed alongside dead-man alert bug 3881.<br><br><b>Freshness &amp; backfill:</b> Story 3337 (Closed 10-09) and data-gap backfill reconciler story 3973 (Closed 10-11) are Closed; per-dataset cutover task 3861 remains Active.<br><br><b>Plan recovery &amp; telemetry:</b> Tasks 3886 and 3880 (Closed 10-10) and telemetry story 2141 (Closed 10-11, with producer/consumer task 2267) are Closed. Remaining open stories under F2100 are 2144 (state migration/shadow verification) and 2145 (equity cutover and v1 retirement), both New.</span></details>
-  <details class="kfact par"><summary><b>Recent changes <span id="delta-range" class="nolink">…</span></b><span class="teaser">26 bugs and 25+ stories/tasks closed since 10-09 (0 Resolved remain); F3202 relay follow-ups, F2100 stories and crypto close-out 3903/4007 landed; CPD story 2728 and Log Analytics story 3776 are Active.</span></summary><span class="body"><b>Editorial review: 2026-10-18, 19:21 UTC.</b> Live work-item states from Azure DevOps.<br><br><b>Closed:</b> Story 2041 (PIT market-data vendor evaluation spike, 10-18), Tasks 4185 (jobs deploy-prod speedup, 10-18), 4183 &amp; 4184 (agent-browser and PreToolUse safety hooks, 10-18), 4050 (equity canary contracts 16.3.0), 3903 &amp; 4007 (crypto operator reduce-only close-out end to end, 10-15), 2486 (incident/recovery console, 10-16), 2193 (gateway realtime routing), 2767 (CPD-T6.2 Investment Control package), 3743 (fail-closed dispatch, under F2092), 3623 (dispatch claim dedupe), 3630 &amp; 3631 (runner-risk index and coverage high-water mark), 3777/3781/3783/1317 (Log Analytics volume &amp; cap), 3795 &amp; 3796 (blob/Gold retention), 2141, 2142, 2481, 3337 &amp; 3973 (F2100 resilience stories), and Bugs 2584, 2585, 2784, 2822, 2848, 3496, 3505, 3508, 3547, 3628, 3629, 3797, 3814, 3836, 3855, 3863, 3866, 3877, 3884, 3885, 3899, 3900, 3901, 4020, 4021, 4038, 4041, 4042, 4043, 4058.<br><br><b>Resolved:</b> None (0 Resolved work items remain in the project).<br><br><b>Active:</b> CPD story 2728 (Investment Control &amp; Execution privileges) and story 2724 (workload-scoped DB credentials), Log Analytics story 3776, account-balance Feature 3979, F2095 story 2439 (reopened for live rails canary 4049), Bug 3527, and Bug 4032.<br><br><b>New:</b> Bugs 4031 (under 4021), 4035 &amp; 4036 (under 2728), 3957, 4013; story 4049 (10 USD live equity round-trip canary under 2439); off-project tooling Epics 3992, 3995, 3998, 4001.<br><br><b>Snapshot totals:</b> 90 open epics/features, 7 open bugs (1 unparented, 0 Resolved) and 78 open children of board cards.</span></details>
+  <details class="kfact ok"><summary><b style="color:var(--ok)">Audit corrections retained</b><span class="teaser">Historical review: F2070 and F2598 were restored to Closed on 09-10 after their children were checked.</span></summary><span class="body">This note preserves the correction of the earlier audit's false reopenings. Bugs 2784 and 2822 under F2598 were also recorded Closed on 10-15 and 10-10. Current states and children come from the selected ADO snapshot.</span></details>
+  <details class="kfact crit"><summary><b style="color:var(--danger)">Readiness probe · historical note</b><span class="teaser">Bug 3527's reopening was recorded on 2026-10-09; check its live ADO badge before acting.</span></summary><span class="body">The earlier 09-10 demand-symbol and health-response serialization fix was reopened on 10-09. Separate intraday-monitor parking and crypto-adjustment bugs 4038 and 4058 were recorded Closed on 10-16. The live state badge and latest owner receipt determine current disposition.</span></details>
+  <details class="kfact ok"><summary><b style="color:var(--ok)">Relay cutover · historical note</b><span class="teaser">F3202 follow-up dispositions were reviewed through 2026-10-18; current state comes from ADO.</span></summary><span class="body">The prior review recorded single-owner provider streaming and follow-ups 2880, 3213, 3496, 4041, 4042, and 4043 as Closed between 09-10 and 10-18. The refreshed child list and ADO state badge are the current selected facts; this note does not establish operational acceptance.</span></details>
+  <details class="kfact"><summary><b>Equity-first delivery flow</b><span class="teaser">#4049 is the bounded equity canary; #2098 remains broader certification under the #2091 personal-lab north star.</span></summary><span class="body"><b>1 · Readiness and source:</b> Reconcile current owners and candidate compatibility for #4049/#4051–4055; reuse merged source and review receipts without treating them as deployed or accepted. Execution is the intended sole broker-order writer. The swimlane is a read-only view.<br><br><b>2 · Safety and research:</b> Keep applicable capital-safety, authorization, and freshness decisions with the existing #2100/#3861 owners. Run #3423/#3424 chronology and metric-reproduction evidence in parallel; neither turns the canary into a broad certification or grants permission to trade.<br><br><b>3 · Acceptance:</b> #4056 paper acceptance has its own human choices and independent review. #4057 is a separate bounded live checkpoint with its own approval and observation; #4049 alone does not authorize either step.<br><br><b>4 · Migration:</b> #2144/#2145 follow only after scoped acceptance, one writer, rollback, observation, and retention gates mature. A Closed predecessor is not operational acceptance. #2098 remains the broader equity certification path; optional crypto work is not a #4049 prerequisite.</span></details>
+  <details class="kfact"><summary><b>Watch list</b><span class="teaser">Historical review 2026-10-22: 9 open bugs, 3 unparented, 0 Resolved; these are dated counts, not current totals.</span></summary><span class="body"><b>Review snapshot: 2026-10-22, 13:44 UTC.</b> Counts and states below were recorded then. The selected ADO snapshot supplies current card states and counts; its query scope is not a project-wide denominator.<br><br><b>Readiness and security:</b> The review recorded 4188 Closed with follow-up 4189 New; follow-up 4190 was also New. CPD story 2728 was Active, with bugs 4035 New and 4036 Active. Bug 4031's October review state is superseded by the later owner receipt that its source fix merged; operational acceptance remains pending.<br><br><b>Capital safety and runtime:</b> The 2026-10-12 trip-1 attempt for #3574 recorded 0/3; that is historical evidence, not current runtime qualification. Keep the #2100/#3861, authorization, and freshness decisions with their existing owners.<br><br>Use refreshed badges and attributable owner receipts before acting. Historical closure or source-merge notes do not establish deployment, qualification, approval, or operational acceptance.</span></details>
+  <details class="kfact"><summary><b>Capital safety, freshness &amp; migration</b><span class="teaser">#2100/#3861 stay with their existing owners; #2144/#2145 remain later acceptance work.</span></summary><span class="body">Current ADO badges and child lists are refreshed independently from these decisions. The 2026-09-26 #2100 decision records the accepted Postgres posture: single availability zone, seven-day retention, and no HA or geo-backup requirement; this is accepted posture, not an open architecture finding. Keep any applicable G0/authorization decision with its existing owner. Source PRs #4474/#4475 for #3861 merged 2026-10-28; that proves source integration only, not deployment or operational acceptance. Its freshness lane remains distinct from canary readiness. Source changes, CI, and a healthy process do not clear those gates. Stage #2144 state migration and #2145 equity cutover/v1 retirement only after the chosen scope meets one-writer, rollback, observation, and retention gates. This panel is sequencing guidance, not a new gate or authorization.</span></details>
+  <details class="kfact par"><summary><b>Recent changes <span id="delta-range" class="nolink">…</span></b><span class="teaser">Historical editorial review 2026-10-22; live state and selected open-child totals come from the current snapshot.</span></summary><span class="body"><b>Editorial review: 2026-10-22, 13:44 UTC; historical, not current status.</b> That review recorded 27 bugs and 50+ stories/tasks closed since 10-09, including the F2100 resilience work, relay follow-ups, CPD updates, and monitoring/tooling changes. It noted 4188 Closed with follow-ups 4189 and 4190 New, CPD story 2728 and Log Analytics story 3776 Active, and monitor task 2485 Closed. These are dated editorial facts, not current project counts or runtime evidence. Current item states appear in refreshed badges and child chips; source, CI, release, deployment, qualification, and operational acceptance remain separate evidence stages.<br><br><b>Current-state reminder:</b> “Closed” on a parent never hides an open child. See the explicitly tracked #4049 record and refreshed children for its canonical parent chain. No dated count from this note is a current product denominator.</span></details>
 </div>
+
+<div class="snapshot-warning" id="snapshot-warning" role="status" aria-live="polite">No verified ADO response. Card states, child chips, and relationship arrows below are template placeholders.</div>
+
+<!-- ado-swimlane:relation-snapshot:start -->
+<div class="kfacts relation-snapshot" id="relation-snapshot">
+  <details class="kfact par" id="relation-snapshot-details" open><summary><b>Recorded ADO dependency links</b><span class="teaser">No verified relation snapshot</span></summary>
+    <span class="body">No verified ADO relation snapshot. Off-view endpoint details are not fetched solely by following a relation.</span>
+  </details>
+</div>
+<!-- ado-swimlane:relation-snapshot:end -->
 
 <details class="workviz" id="workviz" open><summary><b>Work breakdown</b><span class="teaser" id="wv-teaser">Open work by phase, by lane, and card states — computed from the board below.</span></summary>
   <div class="wv-body" id="wv-body"></div>
@@ -535,13 +552,13 @@
 <div class="board" id="board">
   <!-- header row -->
   <div class="phasehead"></div>
-  <div class="phasehead"><span class="pnum">P0</span><span class="pname">Unblock</span><div class="pwhen">days — live fires first</div></div>
-  <div class="phasehead"><span class="pnum">P1</span><span class="pname">Foundations</span><div class="pwhen">weeks — reliability &amp; delivery truth</div></div>
-  <div class="phasehead"><span class="pnum">P2</span><span class="pname">Evidence plane</span><div class="pwhen">jumps the queue — feeds every gate</div></div>
-  <div class="phasehead"><span class="pnum">P3</span><span class="pname">Platform predecessors</span><div class="pwhen">the AA 2.0 entry tickets</div></div>
-  <div class="phasehead"><span class="pnum">P4</span><span class="pname">AA 2.0 foundations</span><div class="pwhen">gates trace to P0–P3 · all parallel</div></div>
-  <div class="phasehead"><span class="pnum">P5</span><span class="pname">AA 2.0 evidence &amp; workstation</span><div class="pwhen">needs the P2 evidence stories</div></div>
-  <div class="phasehead"><span class="pnum">P6</span><span class="pname">Engine, certification &amp; downstream</span><div class="pwhen">critical path ends at 2098</div></div>
+  <div class="phasehead"><span class="pnum">P0</span><span class="pname">Unblock</span><div class="pwhen">current fires and named decisions</div></div>
+  <div class="phasehead"><span class="pnum">P1</span><span class="pname">Foundations</span><div class="pwhen">reliability and delivery truth</div></div>
+  <div class="phasehead"><span class="pnum">P2</span><span class="pname">Evidence plane</span><div class="pwhen">research and data prerequisites</div></div>
+  <div class="phasehead"><span class="pnum">P3</span><span class="pname">Platform predecessors</span><div class="pwhen">review recorded dependencies</div></div>
+  <div class="phasehead"><span class="pnum">P4</span><span class="pname">AA 2.0 foundations</span><div class="pwhen">parallel only where owners agree</div></div>
+  <div class="phasehead"><span class="pnum">P5</span><span class="pname">Evidence &amp; workstation</span><div class="pwhen">paper acceptance has its own gates</div></div>
+  <div class="phasehead"><span class="pnum">P6</span><span class="pname">Engine &amp; broader certification</span><div class="pwhen">scope-specific qualification</div></div>
 
   <!-- Lane 1: Stabilize & Operate -->
   <div class="lanelabel">Stabilize &amp; operate<small><a class="wi" href="https://dev.azure.com/rdprokes/AdaptiveAssetAllocation/_workitems/edit/36" target="_blank" rel="noopener">Epic 36</a> · F2598 / F2599 / F2070</small></div>
@@ -570,7 +587,7 @@
   <div class="cell"></div>
   <div class="cell"></div>
   <div class="cell">
-    <div class="card aa2" id="c2100"><span class="ids">F2100</span><span class="pill gate">gated</span><div class="t">Capital-safety observability, resilience, migration</div><div class="n">← DR readiness 2070. Stories 2141, 2142, 2143, 2481, 3337 and 3973 Closed; cutover task 3861 Active; 2144 and 2145 New.</div></div>
+    <div class="card aa2" id="c2100"><span class="ids">F2100</span><span class="pill gate">owner-held scope</span><div class="t">Capital-safety observability, resilience, migration</div><div class="n">Use refreshed ADO state and children for inventory. Preserve the accepted operating posture; any applicable G0/authorization disposition remains with its existing owner. F2100 source work does not authorize canary, deployment, or migration actions.</div></div>
   </div>
   <div class="cell"></div>
   <div class="cell"></div>
@@ -615,14 +632,15 @@
   <div class="cell">
     <div class="card done" id="c265" data-state="Closed"><span class="ids">F265 · US 1180</span><span class="pill done">closed 09-12</span><div class="t">Shorting support end-to-end · intraday reconciliation</div><div class="n">Closed 09-12, all 13 children checked Closed or Removed. US 1180 Closed 09-10</div></div>
     <div class="card done" id="c291" data-state="Closed"><span class="ids">F291 · F302</span><span class="pill done">291 closed 09-10</span><div class="t">Centralized rate limiter · MCP actions</div><div class="n">F291 Closed 09-10. F302 still <code>New</code>; its story 303 reopened 09-18 by Rudy, now <code>Active</code></div></div>
-    <div class="card" id="c1964" data-state="Active"><span class="ids">F1964</span><span class="pill info">optional · paper canary Closed</span><div class="t">Spot-crypto execution engine</div><div class="n">Optional, only if 2098 certification covers crypto. Story 1970 Active: canary 2295, exit-draft fix 3902, reduce-only close-out 3903/4007 (10-15) and monitor bugs 4038/4058 (10-16) all Closed. Separate 10 USD live canary 2296 remains <code>New</code>.</div></div>
+    <div class="card" id="c1964" data-state="Active"><span class="ids">F1964</span><span class="pill info">optional scope</span><div class="t">Spot-crypto execution engine</div><div class="n">Optional crypto work is outside the narrow #4049 equity canary. Keep its state and recorded dependencies visible, but do not make crypto certification a prerequisite for the equity-only path unless the authoritative #2098 scope changes.</div></div>
   </div>
   <div class="cell">
-    <div class="card done" id="c2095"><span class="ids">F2095</span><span class="pill done">closed 09-27</span><div class="t">Workload, DB, identity, runtime ownership</div><div class="n">Closed 09-27; gateway task 2193 Closed 10-09. Story 2439 is Active with port tasks 2441, 3573, 3574 Active and new live-rails equity canary story 4049 (<code>New</code>, 10-16).</div></div>
+    <div class="card done" id="c2095"><span class="ids">F2095</span><span class="pill done">closed 09-27</span><div class="t">Workload, DB, identity, runtime ownership</div><div class="n">Closed parent state does not close its open follow-ups. Story #2439 and canonical canary #4049 are tracked explicitly; the live child list and ADO state badge are authoritative for the selected snapshot.</div></div>
+    <div class="card aa2" id="c4049" data-state="Unknown"><span class="ids">US 4049</span><span class="pill info">bounded equity canary</span><div class="t">One 10 USD live-equity round trip through the execution host</div><div class="n">Explicitly tracked under parent #2439. This is a narrow canary, not broader #2098 certification, paper acceptance, a broker-authority grant, or migration acceptance. Its ADO state and direct open children refresh from the selected snapshot.</div></div>
     <div class="card aa2" id="c2096" data-state="Active"><span class="ids">F2096</span><span class="pill act">active, gate clear</span><div class="t">Privilege-separated planes</div><div class="n">✓ Active since 09-16; its gate, 291, is Closed. Stories 2119 and 2123 Active; the execution-plan kernel 2120 is still <code>New</code>.</div></div>
   </div>
   <div class="cell">
-    <div class="card aa2" id="c2099" data-state="Active"><span class="ids">F2099</span><span class="pill act">active, 0 of 3 gates</span><div class="t">Research workstation + evidence copilot</div><div class="n">← 302 · 2044 · F295. ⚠ <b>Active since 09-10 with none of its three gates cleared</b>: F302, F295 and 2044 are <code>New</code>. Set Active by the AB#3526 audit, not a person.</div></div>
+    <div class="card aa2" id="c2099" data-state="Active"><span class="ids">F2099</span><span class="pill act">live state</span><div class="t">Research workstation + evidence copilot</div><div class="n">Workstation readiness is separate from the bounded equity canary. Use the current recorded links and child list; ADO Active state does not mean predecessor clearance or user acceptance.</div></div>
   </div>
   <div class="cell"></div>
 
@@ -635,8 +653,8 @@
   <div class="cell lane-alt"></div>
   <div class="cell lane-alt"></div>
   <div class="cell lane-alt">
-    <div class="card aa2" id="c2097" data-state="Active"><span class="ids">F2097</span><span class="pill act">active, all 4 gates clear</span><div class="t">Deterministic research, book, risk, TCA, attribution engine</div><div class="n">Active since 09-13 on Rudy's instruction. ✓ All four gates Closed by 09-20. All nine stories still <code>New</code>. Kernel task 2217 (under 2124) merged PRs 4112 and 4123 on 10-08 while still New.</div></div>
-    <div class="card aa2" id="c2098"><span class="ids">F2098</span><span class="pill gate">gated ×4</span><div class="t">Equities-first certification &amp; policy-bound autonomous execution</div><div class="n">← 2610 · 265 · 1180 · (1964). FX stories 3659, 3681, 3682 and shorting story 3978 are <code>New</code>. Decision D5: no FX work until Alpaca equities are certified.</div></div>
+    <div class="card aa2" id="c2097" data-state="Active"><span class="ids">F2097</span><span class="pill act">live state</span><div class="t">Deterministic research, book, risk, TCA, attribution engine</div><div class="n">Refresh the feature state, direct children, and recorded links from ADO. Research readiness and engine completion remain separate from #4049's bounded execution checkpoint.</div></div>
+    <div class="card aa2" id="c2098"><span class="ids">F2098</span><span class="pill gate">broader certification</span><div class="t">Equities-first certification &amp; policy-bound autonomous execution</div><div class="n">Broader certification under #2091's personal equity-lab north star, separate from canary #4049. Optional crypto is not a canary prerequisite. Recorded links are planning evidence, not authority. Execution remains the intended sole broker-order writer.</div></div>
   </div>
 
   <!-- Lane 5: Regime Forecasting -->
@@ -673,7 +691,7 @@
     <div class="card queued" id="c174" data-state="none"><span class="ids">E174 · E196 · E227-UI · E275 · E309</span><span class="pill wait">backfill</span><div class="t">Data expansion, ranking, strategy UI, research ideas, UI operator redesign</div><div class="n">Demand work; schedule opportunistically, never ahead of gates. ✓ Story 3295 Closed 10-02; E256 and E309 Closed 10-09. Story 1044 (F203 ranking factors) Active over open child 1805; balance-history F3979 Active under E153.</div></div>
     <div class="card" id="c2633" data-state="Active"><span class="ids">E2633 · F2634–2638</span><span class="pill info">ungated · F0 done, F2 active</span><div class="t">Probability &amp; option-pricing analytics (Black-Scholes family)</div><div class="n">No recorded predecessors. ✓ <b>BS-F0 Closed 09-16</b>; <b>BS-F2 (pricing kernel) Active</b> (BS-S05 2643 Closed 10-09); F1 <code>New</code>; F3 and F4 frozen on named decisions.</div></div>
     <div class="card aa2" id="c2870"><span class="ids">E2870 · F2871–2875</span><span class="pill gate">gated</span><div class="t">Axiom — evidence-bound autonomous multi-asset reflex lab</div><div class="n">New 08-13, properly sequenced: ← AA 2.0 (2091) and certification (2098) via recorded links; features chain F1 Black Box → F2 Shockwave → F3 Blast Shield → F4 Gatekeeper → F5 Reflex</div></div>
-    <div class="card" id="c2710" data-state="Active"><span class="ids">E2710 · F2711–2717 · F3240</span><span class="pill live">now executing</span><div class="t">[CPD] Control-plane decomposition into isolated runtime domains</div><div class="n"><b>F3240, F2712 and F2717 Active.</b> Stories 2724 (DB credentials) and 2728 (Investment Control privileges; task 2767 Closed, bugs 4035/4036 New) Active. Audit F3904 and latency F3948 <code>New</code>. ⚠ CPD-F4/F6 overlap 2114/2120.</div></div>
+    <div class="card" id="c2710" data-state="Active"><span class="ids">E2710 · F2711–2717 · F3240</span><span class="pill live">snapshot state</span><div class="t">[CPD] Control-plane decomposition into isolated runtime domains</div><div class="n">As of 2026-10-22: #2724 task 2753 Active, 4182 Closed; #2728 tasks 2767/4186/4187 Closed, #4035 New and #4036 Active. Live state is shown in badges/children; this note is not deployment or runtime proof. Reconcile CPD-F4/F6 overlap with 2114/2120 before overlapping work.</div></div>
   </div>
 
   <svg class="arrows" id="arrows" aria-hidden="true"></svg>
@@ -685,7 +703,7 @@
   <span><span class="stbadge new">New</span> not started</span>
   <span><span class="stbadge active">Active</span> in progress</span>
   <span><span class="stbadge resolved">Resolved</span> fix awaiting verification</span>
-  <span><span class="sw" style="background:var(--ok)"></span>Closed since 07-28 baseline (green card)</span>
+  <span><span class="sw" style="background:var(--ok)"></span>ADO state Closed/Done in this snapshot</span>
   <span><span class="pill act">● n active</span> card has n Active child stories</span>
 </div>
 <div class="legend">
@@ -695,8 +713,8 @@
   <span><span class="sw" style="background:var(--teal)"></span>Committed work</span>
   <span><span class="sw" style="background:var(--violet)"></span>AA 2.0 feature (all gated)</span>
   <span><span class="sw" style="background:var(--queued)"></span>Queued / optional</span>
-  <span><span class="arrowdemo"></span>Recorded predecessor → successor link</span>
-  <span><span class="arrowdemo soft"></span>Implied ordering only</span>
+  <span><span class="arrowdemo"></span>Recorded ADO predecessor → successor relation (read-only)</span>
+  <span><span class="arrowdemo soft"></span>Curated ordering hint (advisory)</span>
   <span>Chips = open child stories (hover for title; ● Active · ◌ Resolved · plain New)</span>
 </div>
 
@@ -799,40 +817,42 @@
 (function () {
   // Single source of truth for refresh dates — a refresh updates these two
   // lines and the injected header/tile text follows.
-  var SNAPSHOT = "2026-09-14";
-  var DELTA_FROM = "09-13";
+  var SNAPSHOT = "Not refreshed";
+  var DELTA_FROM = "unknown";
   // Server clock at pull, not local.
-  var REFRESHED = "13:32 UTC";
+  var REFRESHED = "no ADO response";
+  var snapshotWarning = document.getElementById("snapshot-warning");
+  function updateSnapshotWarning() {
+    var observed = Date.parse(SNAPSHOT + "T" + REFRESHED.replace(/ UTC$/, "Z"));
+    var age = Date.now() - observed;
+    if (!isFinite(observed)) {
+      snapshotWarning.textContent = "No verified ADO response. Card states, child chips, and relationship arrows below are template placeholders.";
+      snapshotWarning.hidden = false;
+    } else if (age > 15 * 60 * 1000) {
+      snapshotWarning.textContent = "The last ADO response is " + Math.floor(age / 60000) + " minutes old. Treat displayed states, children, and links as stale until a successful refresh.";
+      snapshotWarning.hidden = false;
+    } else if (age < -60000) {
+      snapshotWarning.textContent = "The ADO timestamp is ahead of this browser clock; snapshot freshness cannot be confirmed.";
+      snapshotWarning.hidden = false;
+    } else {
+      snapshotWarning.hidden = true;
+    }
+  }
+  updateSnapshotWarning();
+  window.setInterval(updateSnapshotWarning, 60000);
   document.getElementById("snap-date").textContent = SNAPSHOT + " · " + REFRESHED;
-  document.getElementById("delta-range").textContent = DELTA_FROM + " → " + SNAPSHOT.slice(5);
+  document.getElementById("delta-range").textContent = SNAPSHOT === "Not refreshed"
+    ? "unavailable" : DELTA_FROM + " → " + SNAPSHOT.slice(5);
 
-  // Open child stories (and, for epic cards, child features) per board card,
-  // as of SNAPSHOT above. Closed/Removed children are omitted.
-  // Format: [id, "Type", "State", "Title"].
+  // Explicit records outside the epic/feature rollup; their parent is checked
+  // against ADO and their ids are fetched independently of changed-since.
+  var TRACKED_ITEMS = [{"id":4049,"parent":2439,"label":"Equity live-rails canary","scope":"One bounded 10 USD equity round trip only; not #2098 certification, paper acceptance, broker authority, or migration acceptance."}];
+
+  // Open direct children per displayed card, refreshed from ADO. Closed/Removed
+  // children are omitted. Fields are [id,type,state,title,priority,owner,
+  // changed,revision,priorityReturned,ownerReturned,iteration,iterationReturned].
   var WI_EDIT = "https://dev.azure.com/rdprokes/AdaptiveAssetAllocation/_workitems/edit/";
-  var CHILDREN = {
-    c174: [[184,"F","Active","Economic catalyst jobs"],[189,"F","New","News and sentiment lookup"],[1655,"F","New","Redesign prediction-market jobs to control raw storage growth"],[3295,"US","Active","News sentiment: execute the repaired stage chain end to end, then decide populate or retire"]],
-    c1679: [[1680,"F","New","CI-F1 Commodity contracts and semantic foundation"],[1681,"F","New","CI-F2 Alpha Vantage ingestion and Bronze/Silver data"],[1682,"F","New","CI-F3 Commodity Gold market features and context"],[1683,"F","New","CI-F4 Equity commodity exposure and tailwind features"],[1684,"F","New","CI-F5 Strategy and point-in-time backtesting integration"],[1685,"F","New","CI-F6 Quality, observability, replay, and operations"],[1686,"F","New","CI-F7 Test, deployment, documentation, and staged rollout"]],
-    c1964: [[1970,"US","New","Validate, secure, release, soak, and canary the spot-crypto engine"]],
-    c2045: [[2893,"Task","New","Implement deterministic Research-QA auditor core in jobs"]],
-    c2051: [[2056,"US","New","Validate QQQ 5-minute 5-day/20-day SMA benchmark in paper"]],
-    c2092: [[2101,"US","New","Build-once package provenance"],[2102,"US","New","Hermetic seven-repository compatibility gateway"],[2103,"US","New","Immutable stack manifest and promotion authority"],[2104,"US","New","Typed runtime inventory, drift, and cost evidence"],[2424,"US","New","Seven-repository delivery and runtime-truth rebaseline"]],
-    c2093: [[2105,"US","New","Equity instrument, venue, time, and precision model"],[2106,"US","New","Market-event, publication, and evidence contracts"],[2107,"US","New","Portfolio, risk, execution, and promotion contracts"],[2108,"US","New","Runtime-common modularization and generated-client boundaries"],[2429,"US","New","Research and execution boundary contracts for the seven-repo platform"]],
-    c2094: [[2109,"US","New","Content-addressed dataset registry and correction lineage"],[2110,"US","New","Bitemporal equity security master, corporate actions, and features"],[2111,"US","New","Canonical market-event archive, gap detection, and deterministic replay"],[2112,"US","New","Delta publication and serving consistency"],[2113,"US","New","Experiment evidence and research-promotion gates"],[2434,"US","New","Certified point-in-time 1-minute and 5-minute equities evidence"],[2591,"US","New","Incremental feature engine, checkpoint recovery, and historical/live parity"],[2614,"US","New","Spike: PIT price storage and symbol-identity approach for the evidence plane"]],
-    c2095: [[2114,"US","New","Integrate sole DDL ownership and narrow runtime roles"],[2115,"US","New","Capability-based workload topology and seven-repo catalog"],[2117,"US","New","Durable claims, scheduler consolidation, and outbox recovery"],[2118,"US","New","Managed identities, secrets, and environment contract"],[2439,"US","New","Research and execution workload, identity, and DDL ownership"],[2587,"US","New","Market clock and versioned session-event authority"],[2795,"US","New","Gate deploys on Entra app-role assignment so enforcement cannot ship before the grant"]],
-    c2096: [[2119,"US","New","API v2 query, command, internal, and generated-client boundary"],[2120,"US","New","Human-signed execution-plan kernel and broker-isolated worker"],[2121,"US","New","Control workers, reconciliation, and notifications"],[2122,"US","New","Measured realtime scale, transient state, and quotas"],[2123,"US","New","Capability separation and platform-observer boundary"],[2444,"US","New","Candidate-to-permit authority boundary"]],
-    c2097: [[2124,"US","New","Deterministic signal, portfolio, risk, and accounting kernels"],[2125,"US","New","Authoritative expected, paper, and live book accounting"],[2126,"US","New","Aggregate risk, exposure, and scenario controls"],[2127,"US","New","Equity execution simulator, TCA, capacity, liquidity, and borrow"],[2128,"US","New","Out-of-sample validation, attribution, and human-signed promotion engine"],[2449,"US","New","Autonomous sandbox experiment factory and model governance"],[2454,"US","New","Authoritative execution books and calibrated Alpaca TCA"],[2459,"US","New","Adaptive multi-strategy equity risk allocator"],[2465,"US","New","Intraday equities frontier laboratory"]],
-    c2098: [[2129,"US","New","Equity adapter interface and certification harness"],[2130,"US","New","Alpaca equities and ETF adapter certification"],[2131,"US","New","Spot FX adapter and multi-currency certification"],[2132,"US","New","Spot crypto 24Ã—7 adapter certification"],[2133,"US","New","Listed-options adapter certification"],[2134,"US","New","Prediction-market adapter certification"],[2135,"US","New","Compressed evidence-gated autonomy, kill switch, and live reconciliation"],[2471,"US","New","Compressed Alpaca equities promotion ladder"]],
-    c2099: [[2137,"US","New","Observe, Research, Design, and Validate workspaces"],[2138,"US","New","Execute and Admin safety workspaces"],[2140,"US","New","Evidence copilot with receipts, evaluations, and no authority"],[2476,"US","New","Research-governance and execution-book operator workspaces"]],
-    c2100: [[2141,"US","New","End-to-end telemetry, SLO, provenance, and cost controls"],[2142,"US","New","Measured private connectivity and stateful-resource resilience"],[2143,"US","New","Full-stack recovery, reconciliation, and kill-switch drills"],[2144,"US","New","Selective state migration and shadow verification"],[2145,"US","New","Evidence-based equity cutover and v1 retirement"],[2481,"US","New","Twenty-four-hour trading operations and on-call control"],[3337,"US","New","Content-aware batch freshness SLOs and Gold publication safety"]],
-    c2374: [[2380,"US","New","Publish calibrated three-head regime-prob-v1 (observe-only)"],[2385,"US","New","Future research: latent-state and multi-horizon regime models"],[2390,"US","New","Validate regime probabilities and SPY/cash economic value"],[2394,"US","New","Observe regime probabilities, data quality, calibration, and drift"]],
-    c2398: [[2399,"US","New","Versioned SPY/cash allocation policy and decision parity"],[2403,"US","New","Evidence-bound staged promotion, suspension, and rollback"],[2407,"US","New","Operator promotion and automated allocation audit UI"],[2410,"US","New","Future: read-only regime evidence through the MCP data server"],[2561,"US","New","Control Plane: materialize immutable daily regime allocation decisions"],[2565,"US","New","Control Plane: execute and reconcile bounded SPY reductions"]],
-    c2487: [[2488,"F","New","CR-F1 - Shared clustering contracts and research foundation"],[2497,"F","New","CR-F2 - Daily and five-minute market-state clustering"],[2517,"F","New","CR-F3 - Asset correlation clustering"],[2525,"F","New","CR-F4 - Strategy behavior clustering"],[2534,"F","New","CR-F5 - Validation, lineage, and research guardrails"]],
-    c2609: [[2905,"Task","New","Persist and surface experimentContext through control-plane backtest submission"],[3425,"Task","New","Persist immutable OOS fold evidence and expose governance readback"],[3426,"Task","New","Orchestrate locked walk-forward folds with restart-safe trial budgets"],[3427,"Task","New","Evaluate locked OOS metric criteria and record deterministic experiment conclusions"]],
-    c2633: [[2634,"F","Active","BS-F0 Phase 0 - Shared probability-math kernel groundwork"],[2635,"F","New","BS-F1 Phase 1 - Local-only quick wins (no shared-contract changes)"],[2636,"F","Active","BS-F2 Phase 2 - Pricing kernel and additive analytics"],[2637,"F","New","BS-F3 Phase 3 - Behavior-changing allocation mechanics (opt-in)"],[2638,"F","New","BS-F4 Phase 4 - Data-dependent factor expansion (Merton DD, implied-vol features)"]],
-    c2710: [[2712,"F","Active","[CPD-F2] Remove management-plane and provisioning authority from runtimes"],[2713,"F","New","[CPD-F3] Harden edge API and durable worker as independent workloads"],[2714,"F","New","[CPD-F4] Enforce one migration owner and least-privilege runtime database roles"],[2715,"F","New","[CPD-F5] Convert the repository into a modular monolith"],[2716,"F","New","[CPD-F6] Introduce a private, privilege-separated trade-control runtime"],[2717,"F","Active","[CPD-F7] Operationalize the decomposition and govern any future extraction"],[3240,"F","Active","Control-plane fences and diet: execute the repo decomposition plan (CPD-F5 phase A)"]],
-    c2870: [[2871,"F","New","F1 - Black Box: Execution-Intent Lineage and Rejected-Alternative Receipts"],[2872,"F","New","F2 - Shockwave: Point-in-Time Cross-Asset Event Memory and Analog Lab"],[2873,"F","New","F3 - Blast Shield: Evidence Blast-Radius and Recovery Orchestrator"],[2874,"F","New","F4 - Gatekeeper: Autonomous Promotion of Pinned Bundles Within a Fixed Constitution"],[2875,"F","New","F5 - Reflex: Counterfactual Cross-Venue Execution and Recovery Engine"]],
-  };
+  var CHILDREN = {};
   Object.keys(CHILDREN).forEach(function (cardId) {
     var card = document.getElementById(cardId);
     if (!card) return;
@@ -849,7 +869,13 @@
       a.target = "_blank";
       a.rel = "noopener";
       a.textContent = marker + s[0];
-      a.title = s[1] + " " + s[0] + " · " + s[2] + " — " + s[3];
+      var facts = [];
+      facts.push(s[8] ? (s[4] == null ? "no priority" : "P" + s[4]) : "priority not returned");
+      facts.push(s[9] ? (s[5] || "Unassigned") : "owner not returned");
+      facts.push(s[11] ? (s[10] || "no iteration") : "iteration not returned");
+      if (s[6]) facts.push("changed " + s[6]);
+      if (s[7] != null) facts.push("ADO revision " + s[7]);
+      a.title = s[1] + " " + s[0] + " · " + s[2] + " — " + s[3] + " · " + facts.join(" · ");
       wrap.appendChild(a);
     });
     card.appendChild(wrap);
@@ -881,6 +907,16 @@
     var b = document.createElement("span");
     b.className = "stbadge " + st.toLowerCase();
     b.textContent = st;
+    var meta = [];
+    var priority = card.getAttribute("data-priority");
+    var owner = card.getAttribute("data-assigned-to");
+    var iteration = card.getAttribute("data-iteration");
+    meta.push(card.getAttribute("data-priority-known") === "true" ? (priority ? "Priority P" + priority : "No priority") : "Priority not returned");
+    meta.push(card.getAttribute("data-owner-known") === "true" ? (owner || "Unassigned") : "Owner not returned");
+    meta.push(iteration ? "Iteration " + iteration : "Iteration unavailable");
+    if (card.getAttribute("data-changed")) meta.push("Changed " + card.getAttribute("data-changed"));
+    if (card.getAttribute("data-revision")) meta.push("ADO revision " + card.getAttribute("data-revision"));
+    b.title = "ADO " + st + " · snapshot " + SNAPSHOT + " " + REFRESHED + " · " + meta.join(" · ");
     ids.insertAdjacentElement("afterend", b);
   });
   // End current state presentation.
@@ -1089,31 +1125,10 @@
   });
 
   var links = [
-    ["c2557", "c2327", true],
-    ["c2598", "c2327", true],
     ["c2327", "c2346", false],
     ["c2346", "c2374", false],
     ["c2374", "c2398", false],
-    ["c2374", "c2487", true],
-    ["c2609", "c2097", true],
-    ["c2611", "c2094", true],
-    ["c2610", "c2098", true],
-    ["c2045", "c2094", true],
-    ["c2612", "c2093", true],
-    ["c2598", "c2093", true],
-    ["c2024", "c2093", true],
-    ["c2085", "c2095", true],
-    ["c2085", "c2092", true],
-    ["c1232", "c2095", true],
-    ["c2022", "c2097", true],
-    ["c257", "c2097", true],
-    ["c265", "c2098", true],
-    ["c291", "c2096", true],
-    ["c291", "c2099", true],
-    ["c1964", "c2098", true],
-    ["c2070", "c2100", true],
     ["c2098", "c1679", false],
-    ["c2098", "c2870", true],
     ["c2880", "c3202", false],
     ["c3220", "c3221", false]
   ];

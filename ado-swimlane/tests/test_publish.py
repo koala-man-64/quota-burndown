@@ -253,9 +253,7 @@ def _publish_args(home, force=False):
 
 @pytest.mark.parametrize("force", [False, True])
 def test_cli_publish_refuses_a_page_that_fails_its_checks(tmp_path, board, monkeypatch, capsys, force):
-    """A refresh writes its page whether or not the checks passed, so the CLI must
-    re-run them: a stale Artifact is recoverable, a confidently wrong one is not.
-    --force overrides the publish gates, never the checks."""
+    """The retained Artifact is rechecked; --force never overrides content checks."""
     Paths(tmp_path).artifact.write_text(board.replace("c200: [[201", "c999: [[201"), encoding="utf-8")
     monkeypatch.setattr(publish, "run_if_due", lambda *a, **k: pytest.fail("must not publish"))
     assert cli._run_publish(_publish_args(tmp_path, force=force)) == 2

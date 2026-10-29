@@ -56,6 +56,7 @@ LIVE_SCRIPT = """
 <script>
 (function () {
   var REVISION = "__REVISION__";
+  var PAGE_STATUS = "__STATUS__";
   var KEY = "swimlane.view";
   try {
     var saved = JSON.parse(sessionStorage.getItem(KEY) || "null");
@@ -92,7 +93,9 @@ LIVE_SCRIPT = """
 
   var lastEvent = Date.now();
   function say(text, cls) { label.textContent = text; chip.className = "live-chip" + (cls ? " " + cls : ""); }
-  say("live · " + REVISION.slice(11, 19) + "Z");
+  var initialStamp = REVISION.slice(11, 19) + "Z";
+  if (PAGE_STATUS === "degraded") say("checks failed · " + initialStamp, "down");
+  else say("live · " + initialStamp);
 
   var source;
   try { source = new EventSource("/v1/events"); } catch (e) { say("live updates unavailable", "down"); return; }
@@ -100,9 +103,20 @@ LIVE_SCRIPT = """
     lastEvent = Date.now();
     var data;
     try { data = JSON.parse(event.data); } catch (e) { return; }
-    if (data.status === "error") { say("collector: " + (data.detail || "error"), "down"); return; }
-    if (data.revision && data.revision !== REVISION) { remember(); location.reload(); return; }
+    if (data.status === "error") {
+      say("collector: " + (data.detail || "error"), "down");
+      if (PAGE_STATUS !== "degraded" || (data.revision && data.revision !== REVISION)) {
+        remember(); location.reload();
+      }
+      return;
+    }
     var stamp = String(data.revision || REVISION).slice(11, 19) + "Z";
+    var statusChanged = data.status && data.status !== PAGE_STATUS;
+    if ((data.revision && data.revision !== REVISION) || statusChanged) {
+      if (data.status === "degraded") say("checks failed · " + stamp, "down");
+      else if (data.status === "healthy") say("live · " + stamp);
+      remember(); location.reload(); return;
+    }
     // A render that failed its checks is still served, but must not read as live.
     if (data.status === "degraded") { say("checks failed · " + stamp, "down"); return; }
     say("live · " + stamp);
@@ -203,7 +217,9 @@ def _alert(degraded: str | None) -> tuple[str, str]:
     """Style and banner for a render that failed its checks; empty when it passed."""
     if not degraded:
         return "", ""
-    banner = ('<div class="render-alert" role="alert"><b>This page failed its own checks.</b> '
+    heading = ("This page failed its own checks." if "failed validation" in degraded.lower()
+               else "This page is degraded.")
+    banner = (f'<div class="render-alert" role="alert"><b>{heading}</b> '
               "Treat what it says as unverified until the next good refresh: "
               f"{template.escape(degraded)}</div>")
     return ALERT_STYLE, banner
@@ -211,7 +227,9 @@ def _alert(degraded: str | None) -> tuple[str, str]:
 
 def live_page(body: str, revision: str, degraded: str | None = None) -> str:
     style, banner = _alert(degraded)
-    return _wrap(banner + body, LIVE_STYLE + style, LIVE_SCRIPT.replace("__REVISION__", revision))
+    status = "degraded" if degraded else "healthy"
+    script = LIVE_SCRIPT.replace("__REVISION__", revision).replace("__STATUS__", status)
+    return _wrap(banner + body, LIVE_STYLE + style, script)
 
 
 def static_page(body: str, refresh_s: int = STATIC_REFRESH, degraded: str | None = None) -> str:

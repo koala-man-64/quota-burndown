@@ -35,6 +35,8 @@ def test_live_state_controls_badge_color_and_completion_pill(
     fixture = json.dumps(dict(state=state, done=styled_done, pill=pill))
     harness = r"""
 const fixture = FIXTURE;
+const SNAPSHOT = "2026-10-29";
+const REFRESHED = "06:18 UTC";
 const classes = new Set(fixture.done ? ['done'] : []);
 const pill = {textContent: fixture.pill, hidden: false};
 const badges = [];

@@ -6,26 +6,20 @@ reach the rendered page, because the page is built from work-item fields only.
 """
 from __future__ import annotations
 
+import http.client
 import json
+import re
 import shutil
 import subprocess
 import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from datetime import datetime
 
 from .config import ADO_RESOURCE, is_open, org, project
 
-FIELDS = [
-    "System.Id",
-    "System.WorkItemType",
-    "System.State",
-    "System.Title",
-    "System.ChangedDate",
-    "System.Parent",
-    "System.Tags",
-    "System.IterationPath",
-]
+PRIORITY_FIELD = "Microsoft.VSTS.Common.Priority"
 
 # workitemsbatch caps at 200 ids; 190 leaves room without a second round trip.
 BATCH_SIZE = 190
@@ -97,7 +91,7 @@ class Client:
         opener = self._urlopen or urllib.request.urlopen
         return opener(request, timeout=60)
 
-    def post(self, url: str, body: dict, attempts: int = 4) -> dict:
+    def post(self, url: str, body: dict, attempts: int = 4, *, require_complete=False) -> dict:
         data = json.dumps(body).encode("utf-8")
         last: Exception | None = None
         for attempt in range(attempts):
@@ -110,7 +104,27 @@ class Client:
             try:
                 with self._open(request) as response:
                     self.server_date = response.headers.get("Date") or self.server_date
-                    payload = json.loads(response.read().decode("utf-8"))
+                    raw_body = response.read()
+                    if require_complete:
+                        def all_values(name):
+                            if hasattr(response.headers, "get_all"):
+                                return response.headers.get_all(name) or []
+                            return [value for key, value in response.headers.items() if key.lower() == name.lower()]
+
+                        lengths = all_values("Content-Length")
+                        transfers = all_values("Transfer-Encoding")
+                        continuations = all_values("x-ms-continuationtoken")
+                        length_complete = (len(lengths) == 1 and not transfers
+                                           and re.fullmatch(r"[0-9]+", str(lengths[0]))
+                                           and int(lengths[0]) == len(raw_body))
+                        # HTTPResponse.read verifies the terminal chunk and raises
+                        # IncompleteRead if chunk framing is truncated.
+                        chunk_complete = (not lengths and len(transfers) == 1 and str(transfers[0]).lower() == "chunked"
+                                          and getattr(response, "chunked", False) is True)
+                        if (getattr(response, "status", None) != 200 or not (length_complete or chunk_complete)
+                                or len(continuations) > 1 or any(continuations)):
+                            raise AdoError("Dependency query response is incomplete or continued")
+                    payload = json.loads(raw_body.decode("utf-8"))
             except urllib.error.HTTPError as exc:
                 last = exc
                 if exc.code in (401, 403):
@@ -124,9 +138,11 @@ class Client:
                     except (ValueError, OSError):
                         detail = ""
                     raise AdoError(f"ADO HTTP {exc.code} for {url}: {detail[:300]}") from exc
-            except (OSError, ValueError) as exc:
+            except (OSError, ValueError, http.client.HTTPException) as exc:
                 last = exc
             else:
+                if not isinstance(payload, dict):
+                    raise AdoError("ADO returned an invalid response container")
                 if payload.get("message") and not payload.get("value") and not payload.get("workItems"):
                     raise AdoError("ADO error: " + str(payload["message"])[:200])
                 return payload
@@ -147,28 +163,172 @@ class Client:
         out: list[dict] = []
         for start in range(0, len(ids), BATCH_SIZE):
             chunk = ids[start:start + BATCH_SIZE]
-            payload = self.post(url, {"ids": chunk, "fields": FIELDS, "errorPolicy": "omit"})
-            out.extend(payload.get("value", []))
+            payload = self.post(url, {
+                "ids": chunk,
+                # ADO rejects fields together with $expand. Normalize only the
+                # needed fields from the provider's expanded default response.
+                "$expand": "Relations",
+                "errorPolicy": "omit",
+            })
+            rows = payload.get("value")
+            if (not isinstance(rows, list) or type(payload.get("count")) is not int
+                    or payload["count"] != len(rows)):
+                raise AdoError("ADO batch response has invalid count or records")
+            returned = set()
+            for row in rows:
+                if (not isinstance(row, dict) or type(row.get("id")) is not int
+                        or row["id"] not in chunk or row["id"] in returned
+                        or not isinstance(row.get("fields"), dict)):
+                    raise AdoError("ADO batch response has invalid or unexpected item records")
+                returned.add(row["id"])
+            out.extend(rows)
         return out
+
+    def dependency_links(self, ids: list[int]) -> dict:
+        """Complete, source-bounded dependency evidence; never fetch endpoints.
+
+        One source per query follows the observed MustContain response shape.
+        Each query is a separate observation, not an atomic work-item snapshot.
+        """
+        if len(ids) > BATCH_SIZE or any(type(wid) is not int or wid <= 0 for wid in ids):
+            raise AdoError("Dependency fallback source scope is invalid")
+        observations = {}
+        dependencies = []
+        escaped_project = project().replace("'", "''")
+        for wid in sorted(set(ids)):
+            query = (
+                "SELECT [System.Id] FROM WorkItemLinks WHERE "
+                f"([Source].[System.TeamProject] = '{escaped_project}') "
+                f"AND ([Source].[System.Id] = {wid}) AND "
+                "([System.Links.LinkType] = 'System.LinkTypes.Dependency-Forward' OR "
+                "[System.Links.LinkType] = 'System.LinkTypes.Dependency-Reverse') MODE (MustContain)"
+            )
+            url = f"{org()}/{project()}/_apis/wit/wiql?timePrecision=true&api-version=7.1"
+            payload = self.post(url, {"query": query}, require_complete=True)
+            as_of = payload.get("asOf")
+            try:
+                moment = datetime.fromisoformat(as_of.replace("Z", "+00:00"))
+                if moment.tzinfo is None:
+                    raise ValueError
+            except (AttributeError, TypeError, ValueError):
+                raise AdoError("Dependency query has no valid asOf") from None
+            rows = payload.get("workItemRelations")
+            if (payload.get("queryType") != "oneHop" or payload.get("queryResultType") != "workItemLink"
+                    or not isinstance(rows, list) or "workItems" in payload
+                    or payload.get("continuationToken") or payload.get("isPartial")):
+                raise AdoError("Dependency query result is invalid or ambiguous")
+            edges = set()
+            root_markers = 0
+            for row in rows:
+                if isinstance(row, dict) and row.get("rel") is None and row.get("source") is None:
+                    target = row.get("target")
+                    if not isinstance(target, dict) or type(target.get("id")) is not int or target["id"] != wid:
+                        raise AdoError("Dependency query returned an out-of-scope root marker")
+                    root_markers += 1
+                    continue
+                if (not isinstance(row, dict) or not isinstance(row.get("source"), dict)
+                        or not isinstance(row.get("target"), dict)
+                        or type(row["source"].get("id")) is not int or row["source"]["id"] != wid
+                        or type(row["target"].get("id")) is not int or row["target"]["id"] <= 0
+                        or row.get("rel") not in (_DEPENDENCY_FORWARD, _DEPENDENCY_REVERSE)):
+                    raise AdoError("Dependency query returned an out-of-scope or malformed link")
+                target = row["target"]["id"]
+                if target == wid:
+                    raise AdoError("Dependency query returned a self dependency")
+                edges.add((wid, target) if row["rel"] == _DEPENDENCY_FORWARD else (target, wid))
+            if root_markers and not edges:
+                raise AdoError("Dependency MustContain query returned an ambiguous root-only result")
+            observations[wid] = {"method": "wiql-workitemlinks", "sourceId": wid,
+                                 "mode": "MustContain", "asOf": as_of, "complete": True,
+                                 "rootMarkersIgnored": root_markers}
+            dependencies.extend({"predecessor": before, "successor": after, "observedBy": [wid]}
+                                for before, after in sorted(edges))
+        return {"observations": observations, "dependencies": dependencies}
 
 
 def item_row(raw: dict) -> dict:
     """Flatten one workitemsbatch entry to the shape the board and diff use."""
     fields = raw.get("fields", {})
     parent = fields.get("System.Parent")
+    try:
+        revision = int(raw["rev"]) if raw.get("rev") is not None else None
+    except (KeyError, TypeError, ValueError):
+        revision = None
+    try:
+        parent = int(parent) if parent else None
+    except (TypeError, ValueError):
+        parent = None
+    assigned = fields.get("System.AssignedTo")
+    if isinstance(assigned, dict):
+        assigned = assigned.get("displayName") or assigned.get("uniqueName")
+    priority = fields.get(PRIORITY_FIELD)
+    try:
+        priority = int(priority) if priority is not None else None
+    except (TypeError, ValueError):
+        priority = None
     return {
         "id": int(raw["id"]),
+        "revision": revision,
         "type": fields.get("System.WorkItemType"),
         "state": fields.get("System.State"),
         "title": fields.get("System.Title") or "",
-        "parent": int(parent) if parent else None,
+        "parent": parent,
         "changed": fields.get("System.ChangedDate"),
         "tags": fields.get("System.Tags") or "",
         "iter": fields.get("System.IterationPath") or "",
+        "priority": priority,
+        "priorityReturned": PRIORITY_FIELD in fields,
+        "assignedTo": str(assigned).strip() if assigned else None,
+        "assignedToReturned": "System.AssignedTo" in fields,
+        "iterationReturned": "System.IterationPath" in fields,
+        "relations": _dependency_relations(int(raw["id"]), raw.get("relations") or []),
+        "relationsFetched": _valid_relation_rows(raw.get("relations")),
     }
 
 
-def collect(card_ids: list[int], known_ids: list[int], *, since: str, client: Client | None = None) -> dict:
+_WORK_ITEM_URL_ID = re.compile(r"(?:^|/)workitems/(\d+)(?:[/?#]|$)", re.IGNORECASE)
+_DEPENDENCY_FORWARD = "System.LinkTypes.Dependency-Forward"
+_DEPENDENCY_REVERSE = "System.LinkTypes.Dependency-Reverse"
+
+
+def _valid_relation_rows(rows) -> bool:
+    if not isinstance(rows, list):
+        return False
+    for row in rows:
+        if (not isinstance(row, dict) or not isinstance(row.get("rel"), str)
+                or not row["rel"] or not isinstance(row.get("url"), str) or not row["url"]):
+            return False
+        if (row["rel"] in (_DEPENDENCY_FORWARD, _DEPENDENCY_REVERSE)
+                and not _WORK_ITEM_URL_ID.search(row["url"])):
+            return False
+    return True
+
+
+def _dependency_relations(item_id: int, relations: list[dict]) -> list[dict]:
+    """Normalize ADO predecessor/successor links to predecessor -> successor."""
+    edges: set[tuple[int, int]] = set()
+    for relation in relations:
+        if not isinstance(relation, dict):
+            continue
+        kind = relation.get("rel")
+        if kind not in (_DEPENDENCY_FORWARD, _DEPENDENCY_REVERSE):
+            continue
+        match = _WORK_ITEM_URL_ID.search(str(relation.get("url") or ""))
+        if not match:
+            continue
+        linked_id = int(match.group(1))
+        edge = (item_id, linked_id) if kind == _DEPENDENCY_FORWARD else (linked_id, item_id)
+        if edge[0] != edge[1]:
+            edges.add(edge)
+    return [
+        {"predecessor": before, "successor": after}
+        for before, after in sorted(edges)
+    ]
+
+
+def collect(card_ids: list[int], known_ids: list[int], *, since: str,
+            tracked_items: list[dict] | None = None,
+            client: Client | None = None) -> dict:
     """Pull one complete board snapshot.
 
     `since` bounds the "what moved" query; `known_ids` are the ids the template
@@ -197,8 +357,62 @@ def collect(card_ids: list[int], known_ids: list[int], *, since: str, client: Cl
             f"AND [System.Parent] IN ({in_list}) AND {NOT_DONE}"
         )
 
-    union = sorted(set(card_ids) | set(known_ids) | set(open_ef) | set(open_bugs) | set(changed) | set(children))
-    items = [item_row(raw) for raw in client.batch(union)]
+    tracked_items = tracked_items or []
+    tracked_ids = {int(item["id"]) for item in tracked_items}
+    union = sorted(set(card_ids) | set(known_ids) | tracked_ids | set(open_ef) | set(open_bugs) | set(changed) | set(children))
+    raw_items = client.batch(union)
+    items = [item_row(raw) for raw in raw_items]
+    requested = set(union)
+    returned = {item["id"] for item in items}
+    card_set = set(card_ids)
+    relation_returned = {
+        int(raw["id"]) for raw in raw_items
+        if int(raw["id"]) in card_set and _valid_relation_rows(raw.get("relations"))
+    }
+    literal_returned = set(relation_returned)
+    # Missing whole records and malformed/null literal fields remain unknown.
+    # Only returned displayed cards with an absent field qualify for fallback.
+    fallback_ids = sorted({int(raw["id"]) for raw in raw_items
+                           if int(raw["id"]) in card_set and "relations" not in raw
+                           and raw.get("fields", {}).get("System.State")})
+    fallback_observations = {}
+    fallback_edges = []
+    fallback_error = None
+    fallback = getattr(client, "dependency_links", None)
+    if fallback_ids and callable(fallback):
+        try:
+            for start in range(0, len(fallback_ids), BATCH_SIZE):
+                evidence = fallback(fallback_ids[start:start + BATCH_SIZE])
+                fallback_observations.update(evidence["observations"])
+                fallback_edges.extend(evidence["dependencies"])
+        except AdoError as exc:
+            fallback_error = str(exc)
+        relation_returned.update(fallback_observations)
+    for item in items:
+        if item["id"] in card_set and item["id"] not in literal_returned:
+            item["relationEvidence"] = {"method": "workitemsbatch-expand", "sourceId": item["id"],
+                                        "asOf": None, "complete": False,
+                                        "reason": "relations field absent" if item["id"] in fallback_ids
+                                        else "relations field malformed or state unavailable"}
+        if item["id"] in literal_returned:
+            item["relationEvidence"] = {"method": "workitemsbatch-expand", "sourceId": item["id"],
+                                        "asOf": None, "complete": True}
+        if item["id"] in fallback_observations:
+            item["relationsFetched"] = True
+            item["relationEvidence"] = fallback_observations[item["id"]]
+            item["relations"] = [{"predecessor": edge["predecessor"], "successor": edge["successor"]}
+                                 for edge in fallback_edges if item["id"] in edge["observedBy"]]
+    dependency_sources: dict[tuple[int, int], set[int]] = {}
+    for item in items:
+        source_id = int(item["id"])
+        # Relations are read only from the displayed card records already in
+        # this bounded batch. Keep linked endpoint IDs, but never crawl them.
+        if source_id not in card_set or not item.get("relationsFetched"):
+            continue
+        for edge in item.get("relations", []):
+            key = (int(edge["predecessor"]), int(edge["successor"]))
+            dependency_sources.setdefault(key, set()).add(source_id)
+    dependencies = sorted(dependency_sources.items())
 
     return {
         # The ADO server's own clock, not this machine's: every timestamp the
@@ -210,6 +424,37 @@ def collect(card_ids: list[int], known_ids: list[int], *, since: str, client: Cl
         "openBugs": open_bugs,
         "changed": changed,
         "children": children,
+        # The query bounds only changed-item reporting. Item details cover cards,
+        # known child ids, open project work, changed ids, and direct open
+        # children of current cards; it is not a project-wide detail census.
+        "queryScope": {
+            "project": proj,
+            "changedSince": since,
+            "details": "selected work-item IDs, not a project-wide detail census",
+            "detailIdCount": len(requested),
+            "detailReturnedCount": len(returned),
+            "detailMissingIds": sorted(requested - returned),
+            "cardIds": sorted(card_set),
+            "trackedIds": sorted(tracked_ids),
+            "trackedReturnedIds": sorted(tracked_ids & returned),
+            "trackedMissingIds": sorted(tracked_ids - returned),
+            "relationExpand": "Relations",
+            "relationEndpointDetailPolicy": (
+                "off-view endpoints are not fetched solely because a displayed card links to them"
+            ),
+            "cardRelationReturnedIds": sorted(relation_returned),
+            "cardRelationMissingIds": sorted(card_set - relation_returned),
+            "cardRelationLiteralIds": sorted(literal_returned),
+            "cardRelationFallback": {"sourceIds": fallback_ids,
+                                     "observations": {str(wid): value for wid, value in fallback_observations.items()},
+                                     "error": fallback_error},
+            "relationReadConsistency": "Independent batch and link-query observations; not an atomic transaction.",
+        },
+        "trackedItems": tracked_items,
+        "dependencies": [
+            {"predecessor": before, "successor": after, "observedBy": sorted(sources)}
+            for (before, after), sources in dependencies
+        ],
         "items": items,
     }
 

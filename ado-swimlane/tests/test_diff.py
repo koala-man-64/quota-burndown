@@ -105,3 +105,63 @@ def test_removal_is_a_state_change_but_not_a_closure():
     result = diff.compare(before, after)
     assert [(c.id, c.kind, c.after) for c in result.changes] == [(3, "state", "Removed")]
     assert result.closed == []
+
+
+def _relation_snapshot(covered_cards, dependencies=()):
+    result = snapshot([], cards=tuple(covered_cards), open_ef=[])
+    result["dependencies"] = list(dependencies)
+    result["queryScope"] = {"cardRelationReturnedIds": list(covered_cards)}
+    return result
+
+
+def test_dependency_addition_is_nonquiet_when_its_source_was_already_captured():
+    before = _relation_snapshot([1])
+    after = _relation_snapshot([1], [
+        {"predecessor": 1, "successor": 99, "observedBy": [1]}
+    ])
+
+    result = diff.compare(before, after)
+    assert result.dependencies_added == [(1, 99)]
+    assert result.dependencies_gone == []
+    assert not result.is_quiet()
+    text = "\n".join(result.lines())
+    assert "+ 1 -> 99" in text and "nothing moved" not in text
+
+
+def test_dependency_removal_is_reported_only_when_the_source_was_recaptured():
+    before = _relation_snapshot([1], [
+        {"predecessor": 1, "successor": 99, "observedBy": [1]}
+    ])
+    after = _relation_snapshot([1])
+
+    result = diff.compare(before, after)
+    assert result.dependencies_gone == [(1, 99)]
+    assert result.dependencies_scope_changed == []
+    assert not result.is_quiet()
+    assert "- 1 -> 99" in "\n".join(result.lines())
+
+
+def test_relation_leaving_card_scope_is_not_reported_as_gone():
+    before = _relation_snapshot([1], [
+        {"predecessor": 1, "successor": 99, "observedBy": [1]}
+    ])
+    after = _relation_snapshot([])
+
+    result = diff.compare(before, after)
+    assert result.dependencies_gone == []
+    assert result.dependencies_scope_changed == [(1, 99)]
+    assert not result.is_quiet()
+    assert "no longer comparable" in "\n".join(result.lines())
+
+
+def test_edge_first_seen_with_newly_in_scope_source_is_not_claimed_added():
+    before = _relation_snapshot([])
+    after = _relation_snapshot([1], [
+        {"predecessor": 1, "successor": 99, "observedBy": [1]}
+    ])
+
+    result = diff.compare(before, after)
+    assert result.dependencies_added == []
+    assert result.dependencies_scope_added == [(1, 99)]
+    assert not result.is_quiet()
+    assert "not evidence the relation was added" in "\n".join(result.lines())
