@@ -10,12 +10,17 @@ Azure Boards and writes local files only. It never invokes `publish`.
 The inherited `AZURE_DEVOPS_EXT_PAT` is required. Quota and backlog freshness
 are independent: `/v1/swimlane/status` and the board banner report the provider
 snapshot time, refresh failures and stale data. A failed pull or failed render
-retains the last good board and retries after one minute.
+retries after one minute. Failed renders preserve accepted snapshot and artifact
+data; the served page shows a failure banner over the last good snapshot only
+if it still passes the current checks, otherwise an unverified template.
 
 `ADO_SWIMLANE_HOME` selects the backlog data directory (default
 `~/.ado-swimlane`). An optional `refresh-config.json` there may contain
 `{"template":"C:/path/to/curated/board.html"}` to retain an existing prose source
-while running the service from a managed checkout. `refresh-status.json` records
+while keeping source editing separate from the installed runtime. Install the
+service from a retained, versioned source snapshot outside temporary managed
+worktrees; its launcher and selected template must survive worktree cleanup.
+`refresh-status.json` records
 the latest attempt; the template itself is never written. Card notes remain
 historical, with separate current reference states from Azure Boards.
 

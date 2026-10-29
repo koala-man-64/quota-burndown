@@ -157,7 +157,9 @@ error and retry after one minute. Restore the authorized PAT environment to
 recover. Credentials and raw provider error bodies never reach the page or logs.
 
 Manual `refresh` and `serve` share the same writer lease. A validation failure
-aborts before replacing the last good snapshot, state history or rendered files.
+does not replace the accepted snapshot, state history or publishable artifact.
+The served HTML is updated with a failure banner and a revalidated last-good
+view, or an explicitly unverified template when no retained snapshot qualifies.
 Generated card notes separate retained prose from current referenced-item state.
 
 The server binds to loopback, rejects any request whose `Host` or `Origin` is
