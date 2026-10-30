@@ -105,6 +105,8 @@ class ChartData:
     token_efficiency: TokenEfficiency | None = None
     span_key: str = ""
     span_label: str = ""
+    # The page-wide color slot per model; None leaves the chart to assign its own.
+    model_slots: dict[str, int] | None = None
 
     @property
     def active(self) -> bool:

@@ -6,6 +6,7 @@ from __future__ import annotations
 import html
 import json
 import sqlite3
+from dataclasses import replace
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -14,6 +15,7 @@ from .charts import ChartData
 from .ledger import Totals
 from .model import Burndown, canonical_samples, current
 from .store import Sample, Store
+from .usage_report import TOKEN_SLOTS, token_slots
 from .util import atomic_write_text, fmt_local, fmt_minutes, iso, now_utc, parse_iso, to_local
 
 STALE_MIN = 20
@@ -26,7 +28,7 @@ STATUS_TEXT = {
     "on-pace": "on pace",
     "early": "too early to call",
     "exhausted": "budget exhausted",
-    "expired": "window ended · awaiting a fresh sample",
+    "expired": "window ended; awaiting a fresh sample",
     "idle": "no active window",
 }
 # Verdicts that extrapolate the latest reading to now; a stale reading cannot support them.
@@ -36,7 +38,6 @@ QUOTA_COLLECTORS = {"claude": ("claude_oauth", "claude"), "codex": ("codex",), "
 HEALTHY_STATES = ("healthy", "watching", "starting", "unsupported")
 CHART_W, CHART_H = 800, 320
 PAD_L, PAD_R, PAD_T, PAD_B = 48, 56, 30, 30
-TOKEN_SLOTS = 7  # categorical palette slots 2-8; slot 1 (blue) is the % used line
 
 
 def esc(value) -> str:
@@ -151,7 +152,7 @@ def chart_svg(data: ChartData, chart_id: str, title: str) -> str:
         parts.append(f'<text class="lbl" x="{x:.1f}" y="{CHART_H - 8}" text-anchor="middle">{esc(tick.label)}</text>')
     parts.append(f'<line class="axis" x1="{PAD_L}" y1="{plot_bottom:.1f}" x2="{CHART_W - PAD_R}" y2="{plot_bottom:.1f}"/>')
 
-    slots = token_slots(_token_totals(data))
+    slots = _chart_slots(data, _token_totals(data))
     for bar in data.token_bars:
         if bar.end <= data.span_start or bar.start >= data.span_end:
             continue
@@ -246,15 +247,11 @@ def _token_totals(data: ChartData) -> dict[str, int]:
     return totals
 
 
-def token_slots(totals: dict[str, int]) -> dict[str, int]:
-    """Categorical color slot (1..TOKEN_SLOTS) per model, assigned in model-name order so a
-    model keeps its color as intervals change. Past TOKEN_SLOTS models, the largest
-    TOKEN_SLOTS - 1 by tokens keep a color and the rest fold into slot 0, "other models"."""
-    keep = sorted(totals)
-    if len(keep) > TOKEN_SLOTS:
-        keep = sorted(sorted(totals, key=lambda model: (-totals[model], model))[:TOKEN_SLOTS - 1])
-    slots = {model: index for index, model in enumerate(keep, 1)}
-    return {model: slots.get(model, 0) for model in totals}
+def _chart_slots(data: ChartData, totals: dict[str, int]) -> dict[str, int]:
+    """The page-wide slot per model when the page shares one, else this chart's own."""
+    if data.model_slots is None:
+        return token_slots(totals)
+    return {model: data.model_slots.get(model.strip(), 0) for model in totals}
 
 
 def _slot_class(slot: int) -> str:
@@ -277,12 +274,12 @@ def token_legend_html(data: ChartData) -> str:
     totals = _token_totals(data)
     if not totals:
         return ""
-    slots = token_slots(totals)
+    slots = _chart_slots(data, totals)
     entries = sorted((slots[model], model, tokens) for model, tokens in totals.items() if slots[model])
     other = [model for model in totals if not slots[model]]
-    items = "".join(f'<li><i class="{_slot_class(slot)}"></i>{esc(model)} · {esc(_n(tokens))}</li>' for slot, model, tokens in entries)
+    items = "".join(f'<li><i class="{_slot_class(slot)}"></i>{esc(model)}: {esc(_n(tokens))}</li>' for slot, model, tokens in entries)
     if other:
-        items += f'<li><i class="tok-other"></i>{len(other)} other models · {esc(_n(sum(totals[model] for model in other)))}</li>'
+        items += f'<li><i class="tok-other"></i>{len(other)} other models: {esc(_n(sum(totals[model] for model in other)))}</li>'
     return f'<ul class="model-token-legend tok-legend">{items}</ul>'
 
 
@@ -315,15 +312,15 @@ def chart_figure_html(data: ChartData, chart_id: str, title: str) -> str:
     payload = json.dumps({"points": points, "reset": reset}, separators=(",", ":")).replace("</", "<\\/")
     heading = f"% used, {data.span_label}"
     if data.token_step is not None:
-        heading += f" · bars: tokens per {step_label(data.token_step)} (right axis)"
+        heading += f"; bars: tokens per {step_label(data.token_step)} (right axis)"
     efficiency = data.token_efficiency
     if efficiency is None:
-        metric = '<p class="note token-efficiency">Recorded tokens per 1 percentage point used: unavailable — needs a measured increase and matching recorded tokens.</p>'
+        metric = '<p class="note token-efficiency">Recorded tokens per 1 percentage point used: unavailable. It needs a measured increase and matching recorded tokens.</p>'
     else:
         metric = (
             f'<p class="note token-efficiency"><strong>{efficiency.tokens_per_point:,.0f} recorded tokens per 1 percentage point used</strong> (estimate)<br>'
-            f'{efficiency.tokens:,} tokens ÷ {efficiency.percentage_points:g} percentage points · '
-            f'{esc(fmt_local(efficiency.start))} – {esc(fmt_local(efficiency.end))}. '
+            f'{efficiency.tokens:,} tokens ÷ {efficiency.percentage_points:g} percentage points, '
+            f'{esc(fmt_local(efficiency.start))} to {esc(fmt_local(efficiency.end))}. '
             'Latest observed window; local recordings may be incomplete and quota reporting may lag.</p>'
         )
     return (
@@ -383,16 +380,16 @@ def target_bar_html(target_date: datetime | str | None = None, now: datetime | N
         diff_s = (target_dt - now).total_seconds()
         if diff_s > 0:
             left_txt = fmt_minutes(diff_s / 60)
-            initial_summary = f'<span class="target-active">Targeting 100% quota by <b>{esc(fmt_local(target_dt))}</b> ({esc(left_txt)} left) · all models paced to reach 100% at target.</span>'
+            initial_summary = f'<span class="target-active">Targeting 100% quota by <b>{esc(fmt_local(target_dt))}</b> ({esc(left_txt)} left); all models paced to reach 100% at target.</span>'
         else:
-            initial_summary = '<span class="target-error">Target date is in the past · select a future date to pace your burndown.</span>'
+            initial_summary = '<span class="target-error">Target date is in the past. Select a future date to pace your burndown.</span>'
     else:
         days_ahead = (4 - local_now.weekday()) % 7  # 4 is Friday
         if days_ahead == 0 and local_now.hour >= 17:
             days_ahead = 7
         default_target = (local_now + timedelta(days=days_ahead)).replace(hour=17, minute=0, second=0, microsecond=0)
         initial_val = default_target.strftime("%Y-%m-%dT%H:%M")
-        initial_summary = '<span class="target-inactive">Standard reset pace active · each model paces to reach 100% by its regular reset.</span>'
+        initial_summary = '<span class="target-inactive">Standard reset pace active: each model paces to reach 100% by its regular reset.</span>'
 
     return (
         '<section class="target-bar" id="target-bar" aria-label="Target completion date">'
@@ -435,7 +432,7 @@ def collector_issue(capacity: dict | None, provider: str) -> str | None:
 
 
 def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str, usage=None,
-              issue: str | None = None) -> str:
+              issue: str | None = None, slots: dict[str, int] | None = None) -> str:
     stale = bd.age_min is not None and bd.age_min > STALE_MIN
     # A stale reading still says what was used then, but pace verdicts and projections built
     # on it describe a past moment as if it were now, so they are withheld.
@@ -443,11 +440,11 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str,
     status = "stale" if frozen else bd.status
     classes = f"card status-{status}" + (" stale" if stale else "")
     proj_value, proj_label = ("—", "no projection from a stale reading") if frozen else projection_text(bd)
-    badge = f"stale reading · {fmt_minutes(bd.age_min)} old" if frozen else badge_text(bd)
+    badge = f"stale reading, {fmt_minutes(bd.age_min)} old" if frozen else badge_text(bd)
     title = window_title(bd.window)
     if frozen:
         resets = fmt_local(bd.resets_at) if bd.resets_at else "?"
-        left_value, left_label = fmt_minutes(bd.remaining_min), f"left · resets {resets}"
+        left_value, left_label = fmt_minutes(bd.remaining_min), f"left, resets {resets}"
         stats = (
             f'<div><b>{bd.used:.0f}%</b><span>used as of {esc(fmt_local(bd.sample_ts))}</span></div>'
             f'<div><b>{bd.pace:.0f}%</b><span>linear pace</span></div>'
@@ -475,17 +472,19 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str,
         )
     else:
         resets = fmt_local(bd.resets_at) if bd.resets_at else "?"
-        left_value, left_label = fmt_minutes(bd.remaining_min), f"left · resets {resets}"
+        left_value, left_label = fmt_minutes(bd.remaining_min), f"left, resets {resets}"
         stats = (
-            f'<div><b>{bd.used:.0f}%</b><span>used · {bd.remaining_pct:.0f}% left</span></div>'
+            f'<div><b>{bd.used:.0f}%</b><span>used, {bd.remaining_pct:.0f}% left</span></div>'
             f'<div><b>{bd.pace:.0f}%</b><span>linear pace</span></div>'
-            f'<div><b>{esc(fmt_minutes(bd.remaining_min))}</b><span>left · resets {esc(resets)}</span></div>'
+            f'<div><b>{esc(fmt_minutes(bd.remaining_min))}</b><span>left, resets {esc(resets)}</span></div>'
             f'<div><b>{esc(proj_value)}</b><span>{esc(proj_label)}</span></div>'
         )
     data = charts.build(bd, history, now, usage=usage)
     if data is None:
         figure = '<div class="note">No readings in the two-cycle domain.</div>'
     else:
+        if slots is not None:
+            data = replace(data, model_slots=slots)
         figure = chart_figure_html(data, chart_id, title)
     reset_strip = ""
     reset_badge = ""
@@ -498,7 +497,7 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str,
             strip_parts.append(f"ideal next reset: <b>{esc(fmt_local(data.next_reset_time))}</b>")
         if data.runway_with_resets_min is not None:
             strip_parts.append(f"runway with resets: <b>{esc(fmt_minutes(data.runway_with_resets_min))}</b>")
-        reset_strip = f'<div class="reset-strip">{" · ".join(strip_parts)}</div>'
+        reset_strip = f'<div class="reset-strip">{"; ".join(strip_parts)}</div>'
     elif data is not None and data.reset_credits_known and bd.provider == "codex":
         # A reported zero has to be visible. Omitting the badge made "no credits
         # left" indistinguishable from "credits not reported", which is how a used
@@ -506,9 +505,9 @@ def card_html(bd: Burndown, history: list[Sample], now: datetime, chart_id: str,
         reset_badge = '<span class="badge reset-badge none">no reset credits left</span>'
     header_badge = f'<div class="badges"><span class="badge status-badge">{esc(badge)}</span>{reset_badge}</div>' if reset_badge else f'<span class="badge status-badge">{esc(badge)}</span>'
     age = f"{bd.age_min:.0f} min ago" if bd.age_min is not None else "never"
-    foot = f"last sample {esc(age)} via {esc(bd.source or '?')} · {len(bd.samples)} samples this window"
+    foot = f"last sample {esc(age)} via {esc(bd.source or '?')}, {len(bd.samples)} samples this window"
     if stale:
-        foot += " · <b>stale</b>: no recent quota observation"
+        foot += "; <b>stale</b>: no recent quota observation"
         if issue:
             foot += f" ({esc(issue)})"
     efficiency_val = f"{data.token_efficiency.tokens_per_point:.1f}" if data and data.token_efficiency else ""
@@ -665,18 +664,22 @@ def daily_models_html(data: dict) -> str:
                     tokens = model["tokens"][i]
                     height = tokens / peak * 200
                     if tokens:
-                        label = f'{day} · {model["label"]}: {tokens:,} tokens'
-                        parts.append(f'<rect x="{x}" y="{250 - stacked - height:.2f}" width="70" height="{height:.2f}" fill="{esc(model["color"])}"><title>{esc(label)}</title></rect>')
+                        label = f'{day}, {model["label"]}: {tokens:,} tokens'
+                        parts.append(f'<rect class="tok-bar {_slot_class(model.get("slot", 0))}" x="{x}" y="{250 - stacked - height:.2f}" width="70" height="{height:.2f}"><title>{esc(label)}</title></rect>')
                     stacked += height
                 parts.append(f'<text class="lbl" x="{x + 35}" y="{240 - stacked:.2f}" text-anchor="middle">{esc(_n(group["daily_tokens"][i]))}</text>')
                 parts.append(f'<text class="lbl" x="{x + 35}" y="275" text-anchor="middle">{day[5:]}</text>')
             chart = f'<svg class="model-token-chart" viewBox="0 0 800 290" role="img" aria-label="{title} daily recorded tokens by model"><title>{title} daily recorded tokens by model; exact values in the data table</title>{"".join(parts)}</svg>'
         else:
             chart = '<p class="empty">Recorded token totals unavailable.</p>'
+        # Models past the palette share the "other" color, so they share one legend entry too.
+        folded = [model for model in models if not model.get("slot", 0)]
         legend = ''.join(
-            f'<li><i style="background:{esc(model["color"])}"></i>{esc(model["label"])} · {model["total_tokens"]:,} recorded tokens</li>'
-            for model in models
+            f'<li><i class="{_slot_class(model.get("slot", 0))}"></i>{esc(model["label"])}: {model["total_tokens"]:,} recorded tokens</li>'
+            for model in models if model.get("slot", 0) or len(folded) == 1
         )
+        if len(folded) > 1:
+            legend += f'<li><i class="tok-other"></i>{len(folded)} other models: {sum(model["total_tokens"] for model in folded):,} recorded tokens</li>'
         body = ''.join(
             f'<tr><th scope="row">{esc(model["label"])}</th>'
             + ''.join(f'<td>{tokens:,}</td>' for tokens in model["tokens"])
@@ -687,14 +690,14 @@ def daily_models_html(data: dict) -> str:
         # Provider values originate in ledger records; encode rather than interpolate into IDs.
         detail_id = 'model-token-table-' + group['provider'].encode().hex()
         table = (
-            f'<details id="{detail_id}" class="model-token-table"><summary>Daily/model totals · {title}</summary>'
-            f'<table class="usage"><caption>{title} recorded tokens · local dates; unknown totals excluded</caption>'
+            f'<details id="{detail_id}" class="model-token-table"><summary>Daily/model totals for {title}</summary>'
+            f'<table class="usage"><caption>{title} recorded tokens by local date; unknown totals excluded</caption>'
             '<thead><tr><th scope="col">Model</th>'
             + ''.join(f'<th scope="col">{day}</th>' for day in dates)
             + '<th scope="col">Total</th><th scope="col">Excluded requests</th></tr></thead>'
             + f'<tbody>{body}</tbody><tfoot><tr><th scope="row">Total</th>{totals}<td>{group["total_tokens"]:,}</td><td>{excluded:,}</td></tr></tfoot></table></details>'
         )
-        cards.append(f'<article class="model-token-card"><h3>{title}</h3><p>{group["total_tokens"]:,} recorded tokens</p><p class="note">{coverage}</p>{chart}<ul class="model-token-legend">{legend}</ul>{table}</article>')
+        cards.append(f'<article class="model-token-card"><h3>{title}</h3><p>{group["total_tokens"]:,} recorded tokens</p><p class="note">{coverage}</p>{chart}<ul class="model-token-legend tok-legend">{legend}</ul>{table}</article>')
     return '<div class="model-token-grid">' + ''.join(cards) + '</div>'
 
 
@@ -708,7 +711,7 @@ def daily_models_section_html(usage_db: Path, now: datetime) -> str:
     except sqlite3.Error as exc:
         content = f'<p class="banner">Usage ledger unavailable: {esc(type(exc).__name__)}</p>'
     return (
-        '<section class="model-tokens"><h2>Recorded tokens by model · last 7 days</h2>'
+        '<section class="model-tokens"><h2>Recorded tokens by model, last 7 days</h2>'
         '<p class="note">Today and the preceding six local calendar days. Locally recorded tokens, not subscription quota share. Effort levels are combined; today is partial.</p>'
         f'<div id="daily-models-panel">{content}</div></section>'
     )
@@ -941,33 +944,44 @@ def capacity_matrix_html(capacity: dict | None, live: bool = False) -> str:
 
 CSS = """
 :root{color-scheme:light dark;--color-scheme:light;
---bg-light:#f6f7f9;--bg-dark:#0f1115;--card-light:#ffffff;--card-dark:#171a21;--fg-light:#1c1e21;--fg-dark:#e6e8eb;--muted-light:#6b7280;--muted-dark:#9aa3ad;--line-light:#e5e7eb;--line-dark:#2a2f3a;--grid-light:#eef0f3;--grid-dark:#232834;--ideal-light:#9ca3af;--ideal-dark:#6b7280;--actual-light:#2563eb;--actual-dark:#60a5fa;--over-light:#dc2626;--over-dark:#f87171;--under-light:#16a34a;--under-dark:#4ade80;--warn-light:#d97706;--warn-dark:#fbbf24;--now-light:#111827;--now-dark:#e6e8eb;
+--bg-light:#f6f7f9;--bg-dark:#0f1115;--card-light:#ffffff;--card-dark:#171a21;--fg-light:#1c1e21;--fg-dark:#e6e8eb;--muted-light:#5b6472;--muted-dark:#9aa3ad;--line-light:#e5e7eb;--line-dark:#2a2f3a;--grid-light:#eef0f3;--grid-dark:#232834;--ideal-light:#9ca3af;--ideal-dark:#6b7280;--actual-light:#2563eb;--actual-dark:#60a5fa;--over-light:#dc2626;--over-dark:#f87171;--under-light:#15803d;--under-dark:#4ade80;--warn-light:#b45309;--warn-dark:#fbbf24;--now-light:#111827;--now-dark:#e6e8eb;
 --chart-series-light:#2a78d6;--chart-series-dark:#3987e5;--chart-grid-light:#e1e0d9;--chart-grid-dark:#2c2c2a;--chart-axis-light:#c3c2b7;--chart-axis-dark:#383835;--chart-muted-light:#898781;--chart-muted-dark:#898781;--chart-ink-light:#0b0b0b;--chart-ink-dark:#ffffff;
 --tok-1-light:#eb6834;--tok-1-dark:#d95926;--tok-2-light:#1baf7a;--tok-2-dark:#199e70;--tok-3-light:#eda100;--tok-3-dark:#c98500;--tok-4-light:#e87ba4;--tok-4-dark:#d55181;--tok-5-light:#008300;--tok-5-dark:#008300;--tok-6-light:#4a3aa7;--tok-6-dark:#9085e9;--tok-7-light:#e34948;--tok-7-dark:#e66767;
 --tab-hover-light:rgba(0,0,0,0.04);--tab-hover-dark:rgba(255,255,255,0.06);
+--target-light:#b45309;--target-dark:#f59e0b;--target-alt-light:#d97706;--target-alt-dark:#fbbf24;--reset-light:#047857;--reset-dark:#34d399;--field-edge-light:#858d99;--field-edge-dark:#646b77;--shadow-light:rgba(0,0,0,0.1);--shadow-dark:rgba(0,0,0,0.45);--knob-light:#ffffff;--knob-dark:#0f1115;
+--font-body:system-ui,"Segoe UI",Roboto,sans-serif;
 --bg:var(--bg-light);--card:var(--card-light);--fg:var(--fg-light);--muted:var(--muted-light);--line:var(--line-light);--grid:var(--grid-light);--ideal:var(--ideal-light);--actual:var(--actual-light);--over:var(--over-light);--under:var(--under-light);--warn:var(--warn-light);--now:var(--now-light);
 --chart-series:var(--chart-series-light);--chart-grid:var(--chart-grid-light);--chart-axis:var(--chart-axis-light);--chart-muted:var(--chart-muted-light);--chart-ink:var(--chart-ink-light);
---tok-1:var(--tok-1-light);--tok-2:var(--tok-2-light);--tok-3:var(--tok-3-light);--tok-4:var(--tok-4-light);--tok-5:var(--tok-5-light);--tok-6:var(--tok-6-light);--tok-7-mode:var(--tok-7-light);--tok-7:var(--tok-7-mode);--tab-hover:var(--tab-hover-light)}
+--tok-1:var(--tok-1-light);--tok-2:var(--tok-2-light);--tok-3:var(--tok-3-light);--tok-4:var(--tok-4-light);--tok-5:var(--tok-5-light);--tok-6:var(--tok-6-light);--tok-7-mode:var(--tok-7-light);--tok-7:var(--tok-7-mode);--tab-hover:var(--tab-hover-light);
+--target:var(--target-light);--target-alt:var(--target-alt-light);--reset:var(--reset-light);--field-edge:var(--field-edge-light);--shadow:var(--shadow-light);--knob:var(--knob-light)}
 @media (prefers-color-scheme: dark){:root{--color-scheme:dark;--bg:var(--bg-dark);--card:var(--card-dark);--fg:var(--fg-dark);--muted:var(--muted-dark);--line:var(--line-dark);--grid:var(--grid-dark);--ideal:var(--ideal-dark);--actual:var(--actual-dark);--over:var(--over-dark);--under:var(--under-dark);--warn:var(--warn-dark);--now:var(--now-dark);
 --chart-series:var(--chart-series-dark);--chart-grid:var(--chart-grid-dark);--chart-axis:var(--chart-axis-dark);--chart-muted:var(--chart-muted-dark);--chart-ink:var(--chart-ink-dark);
---tok-1:var(--tok-1-dark);--tok-2:var(--tok-2-dark);--tok-3:var(--tok-3-dark);--tok-4:var(--tok-4-dark);--tok-5:var(--tok-5-dark);--tok-6:var(--tok-6-dark);--tok-7-mode:var(--tok-7-dark);--tab-hover:var(--tab-hover-dark)}}
+--tok-1:var(--tok-1-dark);--tok-2:var(--tok-2-dark);--tok-3:var(--tok-3-dark);--tok-4:var(--tok-4-dark);--tok-5:var(--tok-5-dark);--tok-6:var(--tok-6-dark);--tok-7-mode:var(--tok-7-dark);--tab-hover:var(--tab-hover-dark);
+--target:var(--target-dark);--target-alt:var(--target-alt-dark);--reset:var(--reset-dark);--field-edge:var(--field-edge-dark);--shadow:var(--shadow-dark);--knob:var(--knob-dark)}}
 :root:has(> head > meta[name="color-scheme"][content="dark"]),:root[data-theme="dark"]{color-scheme:dark;--color-scheme:dark;--bg:var(--bg-dark);--card:var(--card-dark);--fg:var(--fg-dark);--muted:var(--muted-dark);--line:var(--line-dark);--grid:var(--grid-dark);--ideal:var(--ideal-dark);--actual:var(--actual-dark);--over:var(--over-dark);--under:var(--under-dark);--warn:var(--warn-dark);--now:var(--now-dark);
 --chart-series:var(--chart-series-dark);--chart-grid:var(--chart-grid-dark);--chart-axis:var(--chart-axis-dark);--chart-muted:var(--chart-muted-dark);--chart-ink:var(--chart-ink-dark);
---tok-1:var(--tok-1-dark);--tok-2:var(--tok-2-dark);--tok-3:var(--tok-3-dark);--tok-4:var(--tok-4-dark);--tok-5:var(--tok-5-dark);--tok-6:var(--tok-6-dark);--tok-7-mode:var(--tok-7-dark);--tab-hover:var(--tab-hover-dark)}
+--tok-1:var(--tok-1-dark);--tok-2:var(--tok-2-dark);--tok-3:var(--tok-3-dark);--tok-4:var(--tok-4-dark);--tok-5:var(--tok-5-dark);--tok-6:var(--tok-6-dark);--tok-7-mode:var(--tok-7-dark);--tab-hover:var(--tab-hover-dark);
+--target:var(--target-dark);--target-alt:var(--target-alt-dark);--reset:var(--reset-dark);--field-edge:var(--field-edge-dark);--shadow:var(--shadow-dark);--knob:var(--knob-dark)}
 :root:has(> head > meta[name="color-scheme"][content="light"]),:root[data-theme="light"]{color-scheme:light;--color-scheme:light;--bg:var(--bg-light);--card:var(--card-light);--fg:var(--fg-light);--muted:var(--muted-light);--line:var(--line-light);--grid:var(--grid-light);--ideal:var(--ideal-light);--actual:var(--actual-light);--over:var(--over-light);--under:var(--under-light);--warn:var(--warn-light);--now:var(--now-light);
 --chart-series:var(--chart-series-light);--chart-grid:var(--chart-grid-light);--chart-axis:var(--chart-axis-light);--chart-muted:var(--chart-muted-light);--chart-ink:var(--chart-ink-light);
---tok-1:var(--tok-1-light);--tok-2:var(--tok-2-light);--tok-3:var(--tok-3-light);--tok-4:var(--tok-4-light);--tok-5:var(--tok-5-light);--tok-6:var(--tok-6-light);--tok-7-mode:var(--tok-7-light);--tab-hover:var(--tab-hover-light)}
+--tok-1:var(--tok-1-light);--tok-2:var(--tok-2-light);--tok-3:var(--tok-3-light);--tok-4:var(--tok-4-light);--tok-5:var(--tok-5-light);--tok-6:var(--tok-6-light);--tok-7-mode:var(--tok-7-light);--tab-hover:var(--tab-hover-light);
+--target:var(--target-light);--target-alt:var(--target-alt-light);--reset:var(--reset-light);--field-edge:var(--field-edge-light);--shadow:var(--shadow-light);--knob:var(--knob-light)}
 @supports (color: light-dark(white, black)){:root{--bg:light-dark(var(--bg-light),var(--bg-dark));--card:light-dark(var(--card-light),var(--card-dark));--fg:light-dark(var(--fg-light),var(--fg-dark));--muted:light-dark(var(--muted-light),var(--muted-dark));--line:light-dark(var(--line-light),var(--line-dark));--grid:light-dark(var(--grid-light),var(--grid-dark));--ideal:light-dark(var(--ideal-light),var(--ideal-dark));--actual:light-dark(var(--actual-light),var(--actual-dark));--over:light-dark(var(--over-light),var(--over-dark));--under:light-dark(var(--under-light),var(--under-dark));--warn:light-dark(var(--warn-light),var(--warn-dark));--now:light-dark(var(--now-light),var(--now-dark));
 --chart-series:light-dark(var(--chart-series-light),var(--chart-series-dark));--chart-grid:light-dark(var(--chart-grid-light),var(--chart-grid-dark));--chart-axis:light-dark(var(--chart-axis-light),var(--chart-axis-dark));--chart-muted:light-dark(var(--chart-muted-light),var(--chart-muted-dark));--chart-ink:light-dark(var(--chart-ink-light),var(--chart-ink-dark));
---tok-1:light-dark(var(--tok-1-light),var(--tok-1-dark));--tok-2:light-dark(var(--tok-2-light),var(--tok-2-dark));--tok-3:light-dark(var(--tok-3-light),var(--tok-3-dark));--tok-4:light-dark(var(--tok-4-light),var(--tok-4-dark));--tok-5:light-dark(var(--tok-5-light),var(--tok-5-dark));--tok-6:light-dark(var(--tok-6-light),var(--tok-6-dark));--tok-7:light-dark(var(--tok-7-light),var(--tok-7-dark));--tab-hover:light-dark(var(--tab-hover-light),var(--tab-hover-dark))}}
+--tok-1:light-dark(var(--tok-1-light),var(--tok-1-dark));--tok-2:light-dark(var(--tok-2-light),var(--tok-2-dark));--tok-3:light-dark(var(--tok-3-light),var(--tok-3-dark));--tok-4:light-dark(var(--tok-4-light),var(--tok-4-dark));--tok-5:light-dark(var(--tok-5-light),var(--tok-5-dark));--tok-6:light-dark(var(--tok-6-light),var(--tok-6-dark));--tok-7:light-dark(var(--tok-7-light),var(--tok-7-dark));--tab-hover:light-dark(var(--tab-hover-light),var(--tab-hover-dark));
+--target:light-dark(var(--target-light),var(--target-dark));--target-alt:light-dark(var(--target-alt-light),var(--target-alt-dark));--reset:light-dark(var(--reset-light),var(--reset-dark));--field-edge:light-dark(var(--field-edge-light),var(--field-edge-dark));--shadow:light-dark(var(--shadow-light),var(--shadow-dark));--knob:light-dark(var(--knob-light),var(--knob-dark))}}
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,"Segoe UI",Roboto,sans-serif}
+html,body{overflow-x:clip}
+body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--font-body)}
+main a{color:var(--actual)}
+main h2{font-size:17px;font-weight:600;line-height:1.3;color:var(--fg)}
 header.top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px 6px;flex-wrap:wrap}
 header.top h1{margin:0;font-size:20px}
 .header-main{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
 .header-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.theme-toggle{display:inline-flex;align-items:center;gap:6px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:border-color .15s ease,color .15s ease}
+.theme-toggle{display:inline-flex;align-items:center;gap:6px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:999px;padding:4px 10px;min-height:32px;font:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:border-color .15s ease,color .15s ease}
 .theme-toggle:hover{border-color:var(--actual);color:var(--actual)}
+.theme-toggle:active{background:var(--grid)}
 .theme-toggle:focus-visible{outline:2px solid var(--actual);outline-offset:2px}
 .theme-opt{display:inline-flex;align-items:center;gap:5px}
 .theme-opt svg{flex-shrink:0}
@@ -979,13 +993,14 @@ header.top h1{margin:0;font-size:20px}
 @container style(--color-scheme: dark){.theme-opt-dark{display:none}.theme-opt-light{display:inline-flex}}
 @container not style(--color-scheme: dark){.theme-opt-dark{display:inline-flex}.theme-opt-light{display:none}}
 .tabs-nav{display:inline-flex;gap:4px;background:var(--grid);padding:3px;border-radius:8px;border:1px solid var(--line)}
-.tab-button{background:transparent;border:none;border-radius:6px;padding:5px 14px;font:inherit;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;transition:all .15s ease}
+.tab-button{background:transparent;border:none;border-radius:6px;padding:5px 14px;min-height:32px;font:inherit;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;transition:background-color .15s ease,color .15s ease,box-shadow .15s ease}
 .tab-button:hover{color:var(--fg);background:var(--tab-hover)}
-.tab-button.active{background:var(--card);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,0.1)}
+.tab-button:active{box-shadow:inset 0 1px 2px var(--shadow)}
+.tab-button.active{background:var(--card);color:var(--fg);box-shadow:0 1px 3px var(--shadow)}
 .tab-button:focus-visible{outline:2px solid var(--actual);outline-offset:1px}
 .tab-panel[hidden]{display:none!important}
 #tab-panel-swimlane{padding:8px 24px 24px;max-width:1900px;margin:0 auto}
-.swimlane-tab-container{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
+.swimlane-tab-container{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 1px 3px var(--shadow)}
 .swimlane-tab-header{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--grid)}
 .swimlane-tab-title{font-weight:600;font-size:13.5px;color:var(--fg)}
 .swimlane-tab-meta{font-size:12px;color:var(--muted);margin-left:8px}
@@ -995,32 +1010,28 @@ header.top h1{margin:0;font-size:20px}
 .swimlane-frame{width:100%;height:100%;border:none;display:block}
 .meta{color:var(--muted);font-size:12px}
 main{padding:8px 24px 24px;max-width:1900px;margin:0 auto}
-section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+section.provider>h2{margin:18px 0 8px}
 .history-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;align-items:start}
 .history-grid section.provider{min-width:0}
 .history-grid .cards{grid-template-columns:minmax(0,1fr)}
 .model-token-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:20px}
 .model-token-card{min-width:0;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
 .model-token-card h3{margin:0}.model-token-chart{display:block;width:100%;height:auto}
-.model-token-chart .lbl{fill:var(--muted);font-size:12px}.model-token-chart .grid{stroke:var(--line)}
+.model-token-chart .lbl{fill:var(--muted);font-size:22px}.model-token-chart .grid{stroke:var(--line)}
 .model-token-legend{list-style:none;padding:0;display:flex;gap:8px 16px;flex-wrap:wrap;font-size:12px;overflow-wrap:anywhere}
 .model-token-legend i{display:inline-block;width:10px;height:10px;margin-right:6px;border-radius:2px}
 .model-token-table{overflow:auto}.model-token-table summary{cursor:pointer}.model-token-table table{white-space:nowrap}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(620px,1fr));gap:20px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,620px),1fr));gap:20px}
 @media (max-width:1200px){.history-grid{grid-template-columns:1fr}}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;border-top:4px solid var(--ideal)}
-.card.status-over{border-top-color:var(--over)}
-.card.status-under{border-top-color:var(--under)}
-.card.status-exhausted{border-top-color:var(--warn)}
-.card.status-on-pace{border-top-color:var(--actual)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
 .card.stale{opacity:.7}
 .card header{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
 .card h3{margin:0;font-size:15px}
 .card h4{margin:14px 0 4px;font-size:12px;color:var(--muted);font-weight:500}
 .badge{font-size:12px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
 .badges{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.reset-badge{color:#10b981;border-color:#10b981;font-weight:500}
-.reset-badge.none{color:#d97706;border-color:#d97706}
+.reset-badge{color:var(--reset);border-color:var(--reset);font-weight:500}
+.reset-badge.none{color:var(--warn);border-color:var(--warn)}
 .reset-strip{font-size:12px;color:var(--fg);background:var(--grid);padding:5px 10px;border-radius:6px;margin:4px 0 8px}
 .status-over .badge{color:var(--over);border-color:var(--over)}
 .status-under .badge{color:var(--under);border-color:var(--under)}
@@ -1042,11 +1053,11 @@ svg.chart:focus-visible{outline:2px solid var(--chart-series);outline-offset:2px
 .pace{stroke:var(--chart-axis);stroke-width:1.5;stroke-dasharray:6 5;stroke-linecap:round}
 .pace-reset{stroke:var(--chart-series);stroke-width:1.5;stroke-dasharray:4 4;stroke-linecap:round;opacity:.7}
 .proj{stroke:var(--chart-ink);stroke-width:1.5;stroke-dasharray:1.5 4;stroke-linecap:round;opacity:.75}
-.proj-reset{stroke:#10b981;stroke-width:2;stroke-dasharray:3 3;stroke-linecap:round}
-.reset-marker{fill:#10b981;stroke:var(--card);stroke-width:2}
-.reset-marker-lbl{fill:#10b981;font-size:11px;font-weight:600}
+.proj-reset{stroke:var(--reset);stroke-width:2;stroke-dasharray:3 3;stroke-linecap:round}
+.reset-marker{fill:var(--reset);stroke:var(--card);stroke-width:2}
+.reset-marker-lbl{fill:var(--reset);font-size:11px;font-weight:600}
 .credit-expiry-tick{stroke:var(--warn);stroke-width:1.5}
-.credit-expiry-lbl{fill:var(--warn);font-size:10px}
+.credit-expiry-lbl{fill:var(--warn);font-size:11px}
 .now{stroke:var(--chart-axis);stroke-width:1}
 .reset-tick{stroke:var(--chart-axis);stroke-width:1.5}
 .reset-lbl{fill:var(--chart-muted);font-size:11px}
@@ -1065,7 +1076,7 @@ svg.chart:focus-visible{outline:2px solid var(--chart-series);outline-offset:2px
 .tok-other{fill:var(--chart-muted)}.tok-legend i.tok-other{background:var(--chart-muted)}
 .tok-legend{margin:6px 0 0;color:var(--muted)}
 .hover-dot{fill:var(--chart-series);stroke:var(--card);stroke-width:2;opacity:0;pointer-events:none}
-#chart-tooltip{position:absolute;z-index:5;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.15);pointer-events:none;white-space:nowrap}
+#chart-tooltip{position:absolute;z-index:5;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 8px;font-size:12px;box-shadow:0 2px 8px var(--shadow);pointer-events:none;white-space:nowrap}
 #chart-tooltip b{font-size:14px;margin-right:6px}
 details.chart-table{margin-top:6px;font-size:12px;color:var(--muted)}
 details.chart-table summary{cursor:pointer}
@@ -1076,65 +1087,68 @@ details.chart-table table{margin-top:4px;max-height:220px;display:block;overflow
 .legend i.k-pace{border-top:2px dashed var(--chart-axis)}
 .legend i.k-pace-reset{border-top:2px dashed var(--chart-series)}
 .legend i.k-proj{border-top:2px dotted var(--chart-ink)}
-.legend i.k-proj-reset{border-top:2px dashed #10b981}
+.legend i.k-proj-reset{border-top:2px dashed var(--reset)}
 .legend i.k-reset{width:2px;height:10px;border-top:0;border-left:2px solid var(--chart-axis)}
 .legend i.k-tokens{width:10px;height:10px;border-top:0;background:linear-gradient(var(--tok-1) 50%,var(--tok-2) 50%)}
 .legend i.k-now{width:1px;height:10px;border-top:0;border-left:1px solid var(--chart-axis)}
 .empty{color:var(--muted);padding:32px 0;text-align:center}
-footer{color:var(--muted);font-size:11px;padding:8px 24px 24px;max-width:1900px;margin:0 auto}
-section.usage>h2{font-size:15px;margin:22px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+footer{color:var(--muted);font-size:12px;padding:8px 24px 24px;max-width:1900px;margin:0 auto}
+section.usage>h2,section.model-tokens>h2{margin:22px 0 8px}
 table.usage{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
 table.usage th,table.usage td{padding:3px 6px;text-align:right;border-bottom:1px solid var(--grid);white-space:nowrap}
 table.usage th{color:var(--muted);font-weight:500}
 table.usage th:first-child,table.usage td:first-child{text-align:left}
+.recent table.usage th:nth-child(-n+3),.recent table.usage td:nth-child(-n+3){text-align:left}
 table.usage tr.inferred td{color:var(--muted);font-style:italic}
-.card.usage-card{border-top-color:var(--actual)}
-.card.usage-card.muted{border-top-color:var(--ideal);opacity:.8}
+.card.usage-card.muted{opacity:.8}
 .recent{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-top:16px;overflow-x:auto}
 .recent h3{margin:0 0 8px;font-size:15px}
-.request-text{text-align:left;white-space:normal}.request-text summary{cursor:pointer;color:var(--chart-series)}
+.request-text{text-align:left;white-space:normal}.request-text summary{cursor:pointer;color:var(--actual)}
 .request-text pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:24rem;overflow:auto;max-width:85vw;padding:12px;background:var(--bg);border:1px solid var(--line);border-radius:6px;font-size:12px}
 .request-text h4{margin:12px 0 6px}.text-status{color:var(--muted);font-size:12px}
-.note{font-size:11px;color:var(--muted);margin-top:8px}
+.note{font-size:12px;color:var(--muted);margin-top:8px}
 #refresh-status{max-width:1852px;margin:0 auto;padding:0 24px 8px}
 section.capacity{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:8px 0 18px;border-top:4px solid var(--actual)}
-section.capacity header{display:flex;justify-content:space-between;gap:8px;align-items:center}section.capacity h2,.efficiency-section h2{font-size:15px;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+section.capacity header{display:flex;justify-content:space-between;gap:8px;align-items:center}section.capacity h2,.efficiency-section h2{margin:0}
 .reserve{display:flex;gap:5px;align-items:center;margin:10px 0;font-size:12px}.reserve button{font:inherit;font-size:12px;padding:2px 9px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;cursor:pointer}.reserve button.on{border-color:var(--chart-series);color:var(--chart-series);font-weight:600}.reserve button:focus-visible{outline:2px solid var(--chart-series);outline-offset:1px}
 .capacity-scroll{overflow-x:auto}.capacity-table small{color:var(--muted);font-weight:400}.efficiency-section{margin-top:18px}.efficiency{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 12px;margin-top:8px;overflow-x:auto}.efficiency summary{cursor:pointer;font-weight:600}.efficiency table{margin-top:8px}
 .capacity-provider{margin:16px 0}.capacity-provider h3{font-size:14px;margin:0 0 6px}.capacity-extras{margin-top:8px;font-size:12px}.capacity-extras summary{cursor:pointer;color:var(--muted)}
 .target-bar{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin:8px 0 16px;display:flex;flex-direction:column;gap:8px}
-.target-bar.active{border-color:#f59e0b;box-shadow:0 0 0 1px rgba(245,158,11,0.2)}
+.target-bar.active{border-color:var(--target);box-shadow:0 0 0 1px color-mix(in srgb,var(--target) 20%,transparent)}
 .target-controls{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .target-toggle-group{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
 .target-switch{position:relative;display:inline-block;width:38px;height:22px;margin:0}
 .target-switch input{opacity:0;width:0;height:0}
-.target-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:var(--grid);border:1px solid var(--line);transition:.2s;border-radius:22px}
-.target-slider:before{position:absolute;content:"";height:16px;width:16px;left:2px;bottom:2px;background-color:var(--muted);transition:.2s;border-radius:50%}
-.target-switch input:checked + .target-slider{background-color:#f59e0b;border-color:#f59e0b}
-.target-switch input:checked + .target-slider:before{transform:translateX(16px);background-color:#ffffff}
-.target-switch input:focus-visible + .target-slider{outline:2px solid #f59e0b;outline-offset:2px}
+.target-slider{position:absolute;cursor:pointer;top:0;left:0;right:0;bottom:0;background-color:var(--grid);border:1px solid var(--line);transition:background-color .2s,border-color .2s;border-radius:22px}
+.target-slider:before{position:absolute;content:"";height:16px;width:16px;left:2px;bottom:2px;background-color:var(--muted);transition:transform .2s,background-color .2s;border-radius:50%}
+.target-switch input:checked + .target-slider{background-color:var(--target);border-color:var(--target)}
+.target-switch input:checked + .target-slider:before{transform:translateX(16px);background-color:var(--knob)}
+.target-switch input:focus-visible + .target-slider{outline:2px solid var(--target);outline-offset:2px}
 .target-title{font-weight:600;font-size:13px;color:var(--fg)}
 .target-input-group{display:flex;align-items:center}
-.target-date-input{font:inherit;font-size:13px;background:var(--bg);color:var(--fg);color-scheme:inherit;border:1px solid var(--line);border-radius:6px;padding:3px 8px;outline:none}
-.target-date-input:focus{border-color:#f59e0b;box-shadow:0 0 0 1px #f59e0b}
+.target-date-input{font:inherit;font-size:13px;background:var(--bg);color:var(--fg);color-scheme:inherit;border:1px solid var(--field-edge);border-radius:6px;padding:3px 8px;min-height:32px}
+.target-date-input:focus-visible{outline:2px solid var(--target);outline-offset:1px}
 .target-presets{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
-.target-preset{font:inherit;font-size:11px;padding:2px 8px;border:1px solid var(--line);background:var(--grid);color:var(--fg);border-radius:999px;cursor:pointer;transition:border-color .15s}
-.target-preset:hover{border-color:#f59e0b;color:#f59e0b}
-.target-preset:focus-visible{outline:2px solid #f59e0b;outline-offset:1px}
-.target-clear-btn{font:inherit;font-size:11px;padding:2px 10px;border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:999px;cursor:pointer;margin-left:auto}
+.target-preset{font:inherit;font-size:12px;padding:4px 10px;min-height:32px;border:1px solid var(--line);background:var(--grid);color:var(--fg);border-radius:999px;cursor:pointer;transition:border-color .15s}
+.target-preset:hover{border-color:var(--target)}
+.target-preset:active{background:var(--line)}
+.target-preset:focus-visible{outline:2px solid var(--target);outline-offset:1px}
+.target-clear-btn{font:inherit;font-size:12px;padding:4px 12px;min-height:32px;border:1px solid var(--line);background:var(--card);color:var(--muted);border-radius:999px;cursor:pointer;margin-left:auto}
 .target-clear-btn:hover{color:var(--fg);border-color:var(--fg)}
+.target-clear-btn:active{background:var(--grid)}
 .target-summary{font-size:12px;color:var(--muted);line-height:1.4}
 .target-summary .target-active{color:var(--fg)}
-.target-summary .target-active b{color:#f59e0b}
+.target-summary .target-active b{color:var(--target)}
 .target-summary .target-error{color:var(--over);font-weight:500}
 .target-summary .target-inactive{color:var(--muted)}
-.pace-target{stroke:#f59e0b;stroke-width:2;stroke-dasharray:6 3;stroke-linecap:round;pointer-events:none}
-.target-tick{stroke:#f59e0b;stroke-width:1.5;stroke-dasharray:3 3;pointer-events:none}
-.target-lbl{fill:#f59e0b;font-size:11px;font-weight:600;pointer-events:none}
-.target-dot{fill:#f59e0b;stroke:var(--card);stroke-width:2;pointer-events:none}
-.legend i.k-target{border-top:2px dashed #f59e0b}
-.target-rate-badge{display:inline-block;font-size:10px;padding:1px 5px;background:rgba(245,158,11,0.15);color:var(--warn);border:1px solid #f59e0b;border-radius:4px;margin-top:2px}
+.pace-target{stroke:var(--target);stroke-width:2;stroke-dasharray:6 3;stroke-linecap:round;pointer-events:none}
+.target-tick{stroke:var(--target);stroke-width:1.5;stroke-dasharray:3 3;pointer-events:none}
+.target-lbl{fill:var(--target);font-size:11px;font-weight:600;pointer-events:none}
+.target-dot{fill:var(--target);stroke:var(--card);stroke-width:2;pointer-events:none}
+.legend i.k-target{border-top:2px dashed var(--target)}
+.target-rate-badge{display:inline-block;font-size:11px;padding:1px 5px;color:var(--target);border:1px solid var(--target);border-radius:4px;margin-top:2px}
 .stats span small{opacity:.8;margin-left:4px}
+@media (prefers-reduced-motion:reduce){.tab-button,.theme-toggle,.target-slider,.target-slider:before,.target-preset{transition:none}}
 """
 
 HOVER_SCRIPT = """
@@ -1405,7 +1419,7 @@ LIVE_SCRIPT = """
         var row = old.closest('tr'), values = row.previousElementSibling;
         body.appendChild(values);
         body.appendChild(row);
-        old.querySelector('summary').textContent = 'View raw text · retained while open';
+        old.querySelector('summary').textContent = 'View raw text (retained while open)';
       }
     });
     host.replaceChildren(...Array.from(next.childNodes));
@@ -1429,8 +1443,8 @@ LIVE_SCRIPT = """
     var generated = Date.parse(host.dataset.generatedAt);
     var age = Math.max(0, Math.floor((Date.now() - generated) / 1000));
     status.textContent = (age > 120 ? 'Dashboard data is stale' : 'Dashboard refreshed') +
-      ' · snapshot ' + new Date(generated).toLocaleTimeString() +
-      ' · ' + age + 's old. Updates every 30 seconds; provider readings may be older.';
+      ': snapshot ' + new Date(generated).toLocaleTimeString() +
+      ' (' + age + 's old). Updates every 30 seconds; provider readings may be older.';
   }
 
   async function refresh(){
@@ -1453,7 +1467,7 @@ LIVE_SCRIPT = """
       }
       report();
     } catch (error) {
-      status.textContent = 'Dashboard refresh failed · showing snapshot ' +
+      status.textContent = 'Dashboard refresh failed; showing snapshot ' +
         new Date(host.dataset.generatedAt).toLocaleTimeString() + '. Retrying in 30 seconds.';
     } finally {
       clearTimeout(timeout);
@@ -1601,7 +1615,7 @@ TARGET_SCRIPT = """
     var hoursLeft = msLeft / 3600000;
     var leftEl = statsDivs[2];
     if (leftEl) {
-      var resetsTxt = resets ? ' · resets ' + formatDisplay(resets) : '';
+      var resetsTxt = resets ? ', resets ' + formatDisplay(resets) : '';
       leftEl.innerHTML = '<b>' + formatDuration(minLeft) + '</b><span>until target<small>' + resetsTxt + '</small></span>';
     }
 
@@ -1698,7 +1712,7 @@ TARGET_SCRIPT = """
     var cards = getCards();
     if (!isTarget) {
       bar.classList.remove('active');
-      summary.innerHTML = '<span class="target-inactive">Standard reset pace active · each model paces to reach 100% by its regular reset.</span>';
+      summary.innerHTML = '<span class="target-inactive">Standard reset pace active: each model paces to reach 100% by its regular reset.</span>';
       cards.forEach(revertCard);
       return;
     }
@@ -1714,13 +1728,13 @@ TARGET_SCRIPT = """
     var now = new Date();
     var msLeft = targetDate.getTime() - now.getTime();
     if (msLeft <= 0) {
-      summary.innerHTML = '<span class="target-error">Target date is in the past · select a future date to pace your burndown.</span>';
+      summary.innerHTML = '<span class="target-error">Target date is in the past. Select a future date to pace your burndown.</span>';
       cards.forEach(revertCard);
       return;
     }
 
     var minLeft = msLeft / 60000;
-    summary.innerHTML = '<span class="target-active">Targeting 100% quota by <b>' + formatDisplay(targetDate) + '</b> (' + formatDuration(minLeft) + ' left) · providers with active credit plans use their saved goals.</span>';
+    summary.innerHTML = '<span class="target-active">Targeting 100% quota by <b>' + formatDisplay(targetDate) + '</b> (' + formatDuration(minLeft) + ' left); providers with active credit plans use their saved goals.</span>';
 
     cards.forEach(function(card){
       if (window.qbCreditPlans && window.qbCreditPlans[card.dataset.provider]) {
@@ -1924,7 +1938,7 @@ SWIMLANE_PANEL_HTML = (
     '<span class="swimlane-tab-meta">AdaptiveAssetAllocation</span>'
     '</div>'
     '<div class="swimlane-tab-actions">'
-    '<a href="/swimlane" target="_blank" rel="noopener noreferrer" class="swimlane-tab-link" id="swimlane-ext-link">Open standalone ↗</a>'
+    '<a href="/swimlane" target="_blank" rel="noopener noreferrer" class="swimlane-tab-link" id="swimlane-ext-link">Open in new tab</a>'
     '</div>'
     '</div>'
     '<div class="swimlane-frame-wrapper">'
@@ -2014,6 +2028,21 @@ def chart_usage(usage_db: Path | None, now: datetime, burndowns: list[Burndown])
     return [(ledger.row_ts(row), row["model"] or "", int(row["total_tokens"])) for row in rows]
 
 
+def provider_slots(usage_db: Path | None, now: datetime) -> dict[str, dict[str, int]]:
+    """The color slot of every model, shared by the history and daily charts; empty when
+    the ledger is unreadable, which leaves each chart to assign its own."""
+    if usage_db is None or not usage_db.exists():
+        return {}
+    try:
+        conn = ledger.connect(usage_db)
+        try:
+            return usage_report.model_slots(conn, now)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return {}
+
+
 def render_html(
     store: Store, now: datetime | None = None, days: int = 7,
     warnings: list[str] | None = None, refresh_s: int = 120,
@@ -2035,18 +2064,19 @@ def render_html(
     # One grid cell per weekly chart
     weekly = [bd for bd in burndowns if bd.window_min != 300]
     usage = chart_usage(usage_db, now, weekly)
+    slots = provider_slots(usage_db, now) if usage else {}
     cells = [(history_group(bd), card_html(bd, by_key.get(bd.key, []), now, f"c{index}", usage,
-                                           issue=collector_issue(capacity, bd.provider)))
+                                           issue=collector_issue(capacity, bd.provider),
+                                           slots=slots.get(bd.provider)))
              for index, bd in enumerate(weekly, 1)]
     chart_count = len(weekly)
-    stamp = esc(to_local(now).strftime("%Y-%m-%d %H:%M"))
     sections = [
-        f'<section class="provider"><h2>Historic readings as of {stamp} · {esc(PROVIDER_TITLES.get(group, group))}</h2>'
-        '<div class="note">Model-grouped recorded usage only; these cards do not represent independent live allowances.</div>'
+        f'<section class="provider"><h2>{esc(PROVIDER_TITLES.get(group, group))} history</h2>'
         f'<div class="cards">{card}</div></section>'
         for group, card in cells
     ]
     history = (
+        '<p class="note">Model-grouped recorded usage only; these cards do not represent independent live allowances.</p>'
         f'<div class="history-grid">{"".join(sections)}</div>'
         if sections else '<p class="empty">No historical charts to show.</p>'
     )
@@ -2069,7 +2099,7 @@ def render_html(
         THEME_INIT_SCRIPT,
         "" if live else f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">",
         f"<title>Quota Burndown</title><style>{CSS}{credit_ui.CSS}</style></head><body>",
-        f'<header class="top"><div class="header-main"><h1>Quota burndown</h1>{TAB_NAV_HTML}</div><div class="header-actions"><div class="meta" id="dashboard-meta">{esc(mode)} · {len(samples)} historic samples in view</div>{THEME_TOGGLE_HTML}</div></header>',
+        f'<header class="top"><div class="header-main"><h1>Quota burndown</h1>{TAB_NAV_HTML}</div><div class="header-actions"><div class="meta" id="dashboard-meta">{esc(mode)}, {len(samples)} historic samples in view</div>{THEME_TOGGLE_HTML}</div></header>',
         '<div class="note" id="refresh-status" role="status">Updates every 30 seconds; provider readings may be older.</div>' if live else "",
         '<main id="tab-panel-quota" role="tabpanel" aria-labelledby="tab-btn-quota">', banner, target_bar, credit_ui.html(credit_plans, now, live), legend,
         f'<div id="dashboard-data" data-generated-at="{now.isoformat()}">', history,

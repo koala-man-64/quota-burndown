@@ -97,6 +97,21 @@ def test_render_models_escaped_complete_and_unavailable(store, paths):
     conn.close()
 
 
+def test_daily_legend_groups_models_past_the_palette():
+    def model(name, slot):
+        return {"model": name, "label": name, "tokens": [0] * 6 + [10], "total_tokens": 10, "excluded_requests": 0, "slot": slot}
+    data = {"dates": [f"2026-09-{day:02}" for day in range(2, 9)], "providers": [{
+        "provider": "codex", "label": "Codex", "recorded_requests": 3, "excluded_requests": 0,
+        "daily_tokens": [0] * 6 + [30], "total_tokens": 30,
+        "models": [model("a", 1), model("b", 0), model("c", 0)],
+    }]}
+    content = render.daily_models_html(data)
+    assert '<li><i class="tok-s1"></i>a: 10 recorded tokens</li>' in content
+    assert '<li><i class="tok-other"></i>2 other models: 20 recorded tokens</li>' in content
+    legend = content.split('<ul class="model-token-legend tok-legend">')[1].split("</ul>")[0]
+    assert '<rect class="tok-bar tok-other"' in content and "</i>b:" not in legend and "</i>c:" not in legend
+
+
 def test_empty_and_reported_zero_are_distinct(paths):
     conn = ledger.connect(paths.usage_db)
     empty = usage_report.daily_model_payload(conn, NOW)
