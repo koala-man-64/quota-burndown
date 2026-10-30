@@ -87,37 +87,40 @@ def html(snapshot: dict[str, Any] | None, now: datetime, live: bool) -> str:
 
 
 CSS = """
-.credit-plans{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:8px 0 18px}
-.credit-plans h2{margin:0}
-.credit-plans>.note{margin:4px 0 0}
-.credit-plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px;margin-top:12px}
-.credit-plan{min-width:0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
-.credit-plan h3{margin:0 0 8px;font-size:14px}.credit-plan h3 small{font-size:12px;font-weight:400;color:var(--muted)}
-.credit-plan label{display:grid;gap:3px;margin:8px 0;font-size:12px;color:var(--muted)}
-.credit-plan input,.credit-plan select{width:100%;max-width:28rem;min-height:32px;font:inherit;font-size:13px;padding:4px 8px;border-radius:6px;border:1px solid var(--field-edge);background:var(--card);color:var(--fg);color-scheme:inherit}
-.credit-plan input:focus-visible,.credit-plan select:focus-visible{outline:2px solid var(--target);outline-offset:1px}
-.credit-plan input:disabled,.credit-plan select:disabled{opacity:.6;cursor:not-allowed;background:var(--grid)}
-.credit-actions{display:flex;gap:6px;margin:12px 0 4px}
-.credit-actions button{font:inherit;font-size:12px;padding:3px 12px;min-height:32px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;cursor:pointer}
-.credit-actions button[type=submit]{border-color:var(--target);color:var(--target);font-weight:600}
-.credit-actions button:hover:not(:disabled){border-color:var(--target)}
-.credit-actions button:active:not(:disabled){background:var(--grid)}
-.credit-actions button:focus-visible{outline:2px solid var(--target);outline-offset:1px}
-.credit-actions button:disabled{opacity:.5;cursor:not-allowed;background:var(--grid)}
-.credit-form-message{min-height:1.2em;margin:4px 0;font-size:12px;color:var(--warn)}
-.credit-plan-result{line-height:1.5;font-size:12px;color:var(--muted)}
-.credit-plan-result p{margin:4px 0}
-.credit-plan-result svg{display:block;width:100%;max-width:460px;height:140px;background:var(--card);border:1px solid var(--line);border-radius:6px;margin:8px 0}
-.credit-forecast-overlay{margin:10px 0 0;padding:8px 10px;border:1px solid var(--line);background:var(--bg);border-radius:6px;font-size:12px;color:var(--fg)}
-.credit-forecast-overlay strong{display:block;color:var(--target)}.credit-forecast-overlay p{margin:3px 0;color:var(--muted)}
-.credit-forecast-overlay svg{display:block;width:100%;max-width:460px;height:auto;margin:8px 0;background:var(--card);border:1px solid var(--line);border-radius:6px}
-.cg-goal{stroke:var(--chart-axis);stroke-width:2;stroke-dasharray:6 4}
-.cg-pace{stroke:var(--target);stroke-width:2;stroke-dasharray:5 3}
-.cg-pace-high{stroke:var(--target-alt);stroke-width:2;stroke-dasharray:5 3}
-.cg-spent{fill:var(--under)}
-.cg-band{fill:var(--target);fill-opacity:.2}
-.cg-axis{stroke:var(--chart-axis)}
-.cg-lbl{fill:var(--chart-muted);font-size:11px;font-variant-numeric:tabular-nums}
+.credit-plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-lg);align-items:start}
+@media (max-width:60rem){.credit-plan-grid{grid-template-columns:minmax(0,1fr)}}
+@media (max-width:40rem){.credit-plan{grid-template-columns:minmax(0,1fr)}}
+.credit-plan{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-sm) var(--space-md);min-width:0;background:var(--color-paper-2);border:1px solid var(--color-rule);border-radius:var(--radius-card);padding:var(--space-md) var(--space-lg)}
+.credit-plan>h3,.credit-plan>label:first-of-type,.credit-plan>.credit-actions,.credit-plan>.credit-form-message,.credit-plan>.credit-plan-result{grid-column:1/-1}
+.credit-plan h3 small{font-size:var(--text-sm);font-weight:400;color:var(--color-muted)}
+.credit-plan label{display:grid;gap:var(--space-2xs);min-width:0;font-size:var(--text-xs);color:var(--color-muted)}
+.credit-plan input,.credit-plan select{width:100%;height:var(--control);padding:0 var(--space-xs);font-size:var(--text-sm);background:var(--color-paper);color:var(--color-ink);color-scheme:inherit;border:1px solid var(--color-field-edge);border-radius:var(--radius-inner)}
+.credit-plan input:hover:not(:disabled),.credit-plan select:hover:not(:disabled){border-color:var(--color-ink-2)}
+.credit-plan input:focus-visible,.credit-plan select:focus-visible{outline:2px solid var(--color-accent);outline-offset:-1px}
+.credit-plan input:disabled,.credit-plan select:disabled{opacity:.55;cursor:not-allowed}
+.credit-actions{display:flex;gap:var(--space-xs);margin-top:var(--space-2xs)}
+.credit-actions button{min-height:var(--control);padding:0 var(--space-lg);font-size:var(--text-sm);text-transform:lowercase;background:none;color:var(--color-ink-2);border:1px solid var(--color-rule-2);border-radius:var(--radius-pill);cursor:pointer;transition:background-color var(--dur-micro) var(--ease-out),color var(--dur-micro) var(--ease-out)}
+.credit-actions button[type=submit]{background:var(--color-accent);border-color:var(--color-accent);color:var(--color-accent-ink);font-weight:600}
+.credit-actions button:hover:not(:disabled){background:var(--color-paper-3);color:var(--color-ink)}
+.credit-actions button[type=submit]:hover:not(:disabled){background:var(--color-accent-soft);border-color:var(--color-accent-soft);color:var(--color-accent-ink)}
+.credit-actions button:active:not(:disabled){background:var(--color-rule)}
+.credit-actions button:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
+.credit-actions button:disabled{opacity:.55;cursor:not-allowed}
+.credit-form-message{min-height:1lh;font-size:var(--text-xs);color:var(--color-rose)}
+.credit-plan-result{font-size:var(--text-xs);line-height:1.5;color:var(--color-muted)}
+.credit-plan-result p{margin:var(--space-2xs) 0}
+.credit-plan-result svg{display:block;width:100%;max-width:28rem;height:auto;margin:var(--space-xs) 0;background:var(--color-paper);border-radius:var(--radius-inner)}
+.credit-forecast-overlay{margin-top:var(--space-md);padding-top:var(--space-sm);border-top:1px solid var(--color-rule);font-size:var(--text-xs);color:var(--color-muted)}
+.credit-forecast-overlay strong{display:block;color:var(--color-accent)}
+.credit-forecast-overlay p{margin:var(--space-3xs) 0}
+.credit-forecast-overlay svg{display:block;width:100%;max-width:28rem;height:auto;margin:var(--space-xs) 0;background:var(--color-paper);border-radius:var(--radius-inner)}
+.cg-goal{stroke:var(--color-muted);stroke-width:2;stroke-dasharray:6 4}
+.cg-pace{stroke:var(--color-accent);stroke-width:2;stroke-dasharray:5 3}
+.cg-pace-high{stroke:var(--color-accent-soft);stroke-width:2;stroke-dasharray:5 3}
+.cg-spent{fill:var(--color-live)}
+.cg-band{fill:var(--color-accent);fill-opacity:.2}
+.cg-axis{stroke:var(--color-rule-2)}
+.cg-lbl{fill:var(--color-muted);font-family:var(--font-mono);font-size:var(--text-xs)}
 """
 
 
