@@ -31,7 +31,7 @@ def test_render_html_contains_cards_and_charts(store):
     assert html.count("<article") == 2  # Claude weekly, Codex weekly
     assert "status-over" in html and "5-hour session" not in html and "7-day (all models)" in html
     assert '<div class="history-grid">' in html and html.count('<section class="provider">') == 2
-    assert html.index("· Claude</h2>") < html.index("· Codex</h2>")
+    assert html.index("<h2>Claude history</h2>") < html.index("<h2>Codex history</h2>")
     assert "claude: test warning" in html
     assert html.count('<figure class="chart-figure"') == 2 and html.count('<svg class="chart"') == 2
     assert html.count('data-domain-start=') == 2 and html.count('data-domain-end=') == 2
@@ -89,7 +89,7 @@ def test_render_collapses_legacy_gpt_versions_and_shows_spark_weekly(store):
     assert html.count("<h3>7-day (Codex)</h3>") == 1
     assert "5-hour session" not in html
     assert html.count("<h3>7-day (Spark)</h3>") == 1
-    assert "· Codex Spark</h2>" in html
+    assert "<h2>Codex Spark history</h2>" in html
     assert "7-day (GPT-5.6)" not in html and "7-day (GPT-6)" not in html
     assert "7-day (Fable)" not in html  # the Fable slot belongs to Claude, not to a Codex-only store
 
@@ -171,7 +171,7 @@ def test_history_grid_has_one_cell_per_weekly_chart(store):
     html = render.render_html(store, now=NOW)
 
     cells = re.findall(r'<section class="provider">.*?</section>', html, re.S)
-    assert [re.search(r"· (.*?)</h2>", cell).group(1) for cell in cells] == ["Claude", "Codex", "Codex Spark", "Antigravity"]
+    assert [re.search(r"<h2>(.*?) history</h2>", cell).group(1) for cell in cells] == ["Claude", "Codex", "Codex Spark", "Antigravity"]
     assert all(cell.count("<article") == 1 for cell in cells)
     titles = [re.search(r"<h3>(.*?)</h3>", cell).group(1) for cell in cells]
     assert titles == ["7-day (all models)", "7-day (Codex)", "7-day (Spark)", "7-day (Gemini)"]
@@ -208,7 +208,7 @@ def test_expired_window_is_labelled_as_awaiting_a_sample(store):
     ])
     html = render.render_html(store, now=NOW)
     assert "7-day (Fable)" in html and "no reading for the new window yet" in html and "final use of that window" in html
-    assert "window ended · awaiting a fresh sample" in html and "74%" in html
+    assert "window ended; awaiting a fresh sample" in html and "74%" in html
     assert html.count('class="pace"') == 0  # nothing to pace against until a reading for the new window arrives
     assert html.count('<figure class="chart-figure"') == 1
     assert 'data-span="14d"' in html
@@ -384,7 +384,7 @@ def test_render_usage_bars_on_secondary_axis(store, paths):
         ("tok-s2", f"claude-sonnet-5: 500K of 1.5M tokens, {rects[0][1].split(', ', 1)[1]}"),
     ]
     assert "<td>1,500,000</td><td>claude-opus-5 1,000,000, claude-sonnet-5 500,000</td>" in claude_card
-    assert '<li><i class="tok-s1"></i>claude-opus-5 · 1.0M</li><li><i class="tok-s2"></i>claude-sonnet-5 · 500K</li>' in claude_card
+    assert '<li><i class="tok-s1"></i>claude-opus-5: 1.0M</li><li><i class="tok-s2"></i>claude-sonnet-5: 500K</li>' in claude_card
     assert ".tok-s1{fill:var(--tok-1)}" in html and html.count("--tok-7:") == 2  # light and dark palette
     assert 'class="lbl tok-lbl"' in claude_card and ">2M</text>" in claude_card and ">500K</text>" in claude_card
     assert "bars: tokens per 6h (right axis)" in claude_card and "<summary>tokens per 6h</summary>" in claude_card
@@ -396,6 +396,30 @@ def test_render_usage_bars_on_secondary_axis(store, paths):
     assert 'class="tok-bar"' not in render.render_html(store, now=NOW)
 
 
+def test_history_and_daily_charts_draw_a_model_in_the_same_color(store, paths):
+    from quota_burndown import ledger
+    from quota_burndown.ledger import Event
+
+    seed(store)
+    conn = ledger.connect(paths.usage_db)
+    ledger.upsert(conn, [
+        Event("claude", "claude-code", ledger.REQUEST, "r1", NOW, model="claude-opus-5", total_tokens=1_000_000),
+        Event("claude", "claude-code", ledger.REQUEST, "r2", NOW, model="claude-sonnet-5", total_tokens=500_000),
+        # Sorts first among the provider's models, so per-chart slot orders would disagree.
+        Event("claude", "claude-code", ledger.REQUEST, "r3", NOW - timedelta(minutes=20), model="aaa-review", total_tokens=9_000),
+    ])
+    conn.close()
+
+    html = render.render_html(store, now=NOW, usage_db=paths.usage_db)
+    claude_card = html.split("<article")[1]
+    daily = html[html.index('<section class="model-tokens">'):]
+    for model in ("claude-opus-5", "claude-sonnet-5"):
+        slot = re.search(rf'<li><i class="(tok-\w+)"></i>{model}:', claude_card).group(1)
+        assert f'<li><i class="{slot}"></i>{model}:' in daily
+        assert re.search(rf'<rect class="tok-bar {slot}"[^>]*><title>[^<]*{model}:', daily)
+    assert 'style="background:' not in daily
+
+
 def test_render_antigravity_weekly_chart(store):
     from quota_burndown.providers.antigravity import weekly_cycle_bounds
     start, reset = weekly_cycle_bounds(NOW)
@@ -404,7 +428,7 @@ def test_render_antigravity_weekly_chart(store):
         Sample(NOW, "antigravity", "7d:gemini", 35.0, reset, 10080, "ledger"),
     ])
     html = render.render_html(store, now=NOW)
-    assert "· Antigravity" in html
+    assert "<h2>Antigravity history</h2>" in html
     assert "<h3>7-day (Gemini)</h3>" in html
     assert "35%" in html
     assert html.count('<figure class="chart-figure"') >= 1
@@ -653,7 +677,7 @@ def test_stale_reading_withholds_pace_verdict_and_names_collector_issue(store):
     html = render.render_html(store, now=NOW, capacity=capacity)
     claude, codex = re.findall(r'<article class="card[^"]*".*?</article>', html, re.S)
     assert 'class="card status-stale stale"' in claude and 'data-std-status="stale"' in claude
-    assert "stale reading · 21h" in claude and "over pace" not in claude
+    assert "stale reading, 21h" in claude and "over pace" not in claude
     assert "no projection from a stale reading" in claude and "hits 100%" not in claude
     assert "93%</b><span>used as of" in claude and "(sign-in token expired)" in claude
     assert "status-stale" not in codex and "stale reading" not in codex

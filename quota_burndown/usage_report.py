@@ -278,6 +278,39 @@ def efficiency_rows(rows: Sequence[sqlite3.Row], dimension: str) -> list[dict]:
     return sorted(out, key=lambda item: (-item["requests"], item["key"]))
 
 
+TOKEN_SLOTS = 7  # categorical palette slots 2-8; slot 1 (blue) is the % used line
+# The weekly charts plot two cycles plus a day; the daily bars cover the last seven of those days.
+SLOT_LOOKBACK = timedelta(days=15)
+
+
+def token_slots(totals: dict[str, int]) -> dict[str, int]:
+    """Categorical color slot (1..TOKEN_SLOTS) per model, assigned in model-name order so a
+    model keeps its color as intervals change. Past TOKEN_SLOTS models, the largest
+    TOKEN_SLOTS - 1 by tokens keep a color and the rest fold into slot 0, "other models"."""
+    keep = sorted(totals)
+    if len(keep) > TOKEN_SLOTS:
+        keep = sorted(sorted(totals, key=lambda model: (-totals[model], model))[:TOKEN_SLOTS - 1])
+    slots = {model: index for index, model in enumerate(keep, 1)}
+    return {model: slots.get(model, 0) for model in totals}
+
+
+def model_slots(conn: sqlite3.Connection, now: datetime) -> dict[str, dict[str, int]]:
+    """One color slot per provider model for every chart on the page, so the weekly history
+    charts and the daily bars draw a model in the same color."""
+    totals: dict[str, dict[str, int]] = {}
+    rows = conn.execute(
+        "SELECT provider, model, SUM(CASE WHEN total_tokens IS NOT NULL AND input_tokens_inferred IS NULL"
+        " THEN total_tokens ELSE 0 END) FROM events WHERE kind = ? AND ts >= ? AND ts <= ?"
+        " GROUP BY provider, model",
+        (ledger.REQUEST, iso(now - SLOT_LOOKBACK), iso(now)),
+    ).fetchall()
+    for provider, model, tokens in rows:
+        models = totals.setdefault(provider, {})
+        name = (model or "").strip()
+        models[name] = models.get(name, 0) + int(tokens or 0)
+    return {provider: token_slots(models) for provider, models in totals.items()}
+
+
 def daily_model_payload(conn: sqlite3.Connection, now: datetime) -> dict:
     """Recorded totals for seven local calendar dates, without estimating missing tokens."""
     today = to_local(now).date()
@@ -302,11 +335,13 @@ def daily_model_payload(conn: sqlite3.Connection, now: datetime) -> dict:
         else:
             item["tokens"][dates.index(day)] += int(row["total_tokens"])
             item["recorded_requests"] += 1
+    slots = model_slots(conn, now)
     groups = []
     for provider, models in sorted(providers.items()):
         series = sorted(models.values(), key=lambda item: item["model"])
         for item in series:
             item["total_tokens"] = sum(item["tokens"])
+            item["slot"] = slots.get(provider, {}).get(item["model"], 0)
         groups.append({
             "provider": provider, "label": PROVIDER_TITLES.get(provider, provider),
             "models": series,

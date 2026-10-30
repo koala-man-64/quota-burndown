@@ -87,34 +87,35 @@ def html(snapshot: dict[str, Any] | None, now: datetime, live: bool) -> str:
 
 
 CSS = """
-.credit-plans{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:8px 0 18px;border-top:4px solid #f59e0b}
-.credit-plans h2{font-size:15px;margin:0;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.credit-plans{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin:8px 0 18px}
+.credit-plans h2{margin:0}
 .credit-plans>.note{margin:4px 0 0}
 .credit-plan-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:16px;margin-top:12px}
 .credit-plan{min-width:0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
 .credit-plan h3{margin:0 0 8px;font-size:14px}.credit-plan h3 small{font-size:12px;font-weight:400;color:var(--muted)}
 .credit-plan label{display:grid;gap:3px;margin:8px 0;font-size:12px;color:var(--muted)}
-.credit-plan input,.credit-plan select{width:100%;font:inherit;font-size:13px;padding:4px 8px;border-radius:6px;border:1px solid var(--line);background:var(--card);color:var(--fg);color-scheme:inherit;outline:none}
-.credit-plan input:focus,.credit-plan select:focus{border-color:#f59e0b;box-shadow:0 0 0 1px #f59e0b}
-.credit-plan input:disabled,.credit-plan select:disabled{opacity:.6}
+.credit-plan input,.credit-plan select{width:100%;max-width:28rem;min-height:32px;font:inherit;font-size:13px;padding:4px 8px;border-radius:6px;border:1px solid var(--field-edge);background:var(--card);color:var(--fg);color-scheme:inherit}
+.credit-plan input:focus-visible,.credit-plan select:focus-visible{outline:2px solid var(--target);outline-offset:1px}
+.credit-plan input:disabled,.credit-plan select:disabled{opacity:.6;cursor:not-allowed;background:var(--grid)}
 .credit-actions{display:flex;gap:6px;margin:12px 0 4px}
-.credit-actions button{font:inherit;font-size:12px;padding:3px 12px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;cursor:pointer}
-.credit-actions button[type=submit]{border-color:#f59e0b;color:var(--warn);font-weight:600}
-.credit-actions button:hover:not(:disabled){border-color:#f59e0b}
-.credit-actions button:focus-visible{outline:2px solid #f59e0b;outline-offset:1px}
-.credit-actions button:disabled{opacity:.5;cursor:default}
+.credit-actions button{font:inherit;font-size:12px;padding:3px 12px;min-height:32px;border:1px solid var(--line);background:var(--card);color:var(--fg);border-radius:999px;cursor:pointer}
+.credit-actions button[type=submit]{border-color:var(--target);color:var(--target);font-weight:600}
+.credit-actions button:hover:not(:disabled){border-color:var(--target)}
+.credit-actions button:active:not(:disabled){background:var(--grid)}
+.credit-actions button:focus-visible{outline:2px solid var(--target);outline-offset:1px}
+.credit-actions button:disabled{opacity:.5;cursor:not-allowed;background:var(--grid)}
 .credit-form-message{min-height:1.2em;margin:4px 0;font-size:12px;color:var(--warn)}
 .credit-plan-result{line-height:1.5;font-size:12px;color:var(--muted)}
 .credit-plan-result p{margin:4px 0}
 .credit-plan-result svg{display:block;width:100%;max-width:460px;height:140px;background:var(--card);border:1px solid var(--line);border-radius:6px;margin:8px 0}
-.credit-forecast-overlay{margin:10px 0 0;padding:8px 10px;border-left:3px solid #f59e0b;background:var(--grid);border-radius:0 6px 6px 0;font-size:12px;color:var(--fg)}
-.credit-forecast-overlay strong{display:block;color:var(--warn)}.credit-forecast-overlay p{margin:3px 0;color:var(--muted)}
+.credit-forecast-overlay{margin:10px 0 0;padding:8px 10px;border:1px solid var(--line);background:var(--bg);border-radius:6px;font-size:12px;color:var(--fg)}
+.credit-forecast-overlay strong{display:block;color:var(--target)}.credit-forecast-overlay p{margin:3px 0;color:var(--muted)}
 .credit-forecast-overlay svg{display:block;width:100%;max-width:460px;height:auto;margin:8px 0;background:var(--card);border:1px solid var(--line);border-radius:6px}
 .cg-goal{stroke:var(--chart-axis);stroke-width:2;stroke-dasharray:6 4}
-.cg-pace{stroke:#f59e0b;stroke-width:2;stroke-dasharray:5 3}
-.cg-pace-high{stroke:#fbbf24;stroke-width:2;stroke-dasharray:5 3}
+.cg-pace{stroke:var(--target);stroke-width:2;stroke-dasharray:5 3}
+.cg-pace-high{stroke:var(--target-alt);stroke-width:2;stroke-dasharray:5 3}
 .cg-spent{fill:var(--under)}
-.cg-band{fill:#f59e0b;fill-opacity:.2}
+.cg-band{fill:var(--target);fill-opacity:.2}
 .cg-axis{stroke:var(--chart-axis)}
 .cg-lbl{fill:var(--chart-muted);font-size:11px;font-variant-numeric:tabular-nums}
 """
@@ -157,12 +158,12 @@ SCRIPT = r"""
     }
     else {line(24+372*x,116,396,16,'cg-pace');}
     parent.appendChild(svg);
-    textLine(parent,'Original goal · · ·   Required future pace · · ·   '+(y===null?'Actual paid spending unavailable':report.progress_known?'Confirmed spend ●':'Confirmed spending lower bound ●'));
+    textLine(parent,'Original goal: grey dashes. Required future pace: amber dashes. '+(y===null?'Actual paid spending unavailable.':report.progress_known?'Confirmed spend: green dot.':'Confirmed spending lower bound: green dot.'));
   }
   function showReport(form,report){
     var box=form.querySelector('.credit-plan-result');clear(box);
     var provider=form.dataset.creditProvider, unit=units[provider], observation=(state.observations||{})[provider]||{};
-    if(observation.balance!==null && observation.balance!==undefined)textLine(box,'Provider-reported balance: '+fmt(observation.balance,6)+' '+unit+' · '+String(observation.freshness||'unknown freshness')+'. Balance is not a spending counter.');
+    if(observation.balance!==null && observation.balance!==undefined)textLine(box,'Provider-reported balance: '+fmt(observation.balance,2)+' '+unit+' ('+String(observation.freshness||'unknown freshness')+'). Balance is not a spending counter.');
     if(observation.note)textLine(box,observation.note);
     if(!report||!report.model){textLine(box,'No paid-credit plan saved.');return;}
     var forecast=report.forecast||{};
@@ -174,7 +175,7 @@ SCRIPT = r"""
     textLine(box,'Required paid-spend pace: '+fmt(report.required_rate_per_hour,6)+' '+unit+'/hour. Original goal: '+fmt(report.original_rate_per_hour,6)+' '+unit+'/hour.');
     if(report.note)textLine(box,report.note);
     if(forecast.available){
-      textLine(box,'Estimated token capacity: '+fmt(forecast.token_capacity_low,0)+'–'+fmt(forecast.token_capacity_high,0)+' tokens; required pace '+fmt(forecast.required_tokens_per_hour_low,0)+'–'+fmt(forecast.required_tokens_per_hour_high,0)+' tokens/hour.');
+      textLine(box,'Estimated token capacity: '+fmt(forecast.token_capacity_low,0)+' to '+fmt(forecast.token_capacity_high,0)+' tokens; required pace '+fmt(forecast.required_tokens_per_hour_low,0)+' to '+fmt(forecast.required_tokens_per_hour_high,0)+' tokens/hour.');
     }else{textLine(box,'Token capacity estimate unavailable'+(forecast.note?': '+forecast.note:'.'));}
     if(provider==='claude' && (forecast.hypothetical||((state.observations||{}).claude||{}).enabled===false || String(report.note||'').toLowerCase().indexOf('disabled')>=0))textLine(box,'Hypothetical: Claude paid usage is disabled.');
     if(provider==='codex' && observation.enabled===false)textLine(box,'Hypothetical: provider reports no available paid credits.');
@@ -217,9 +218,9 @@ SCRIPT = r"""
     label(left-6,bottom+3,'0','end');label(left-6,top+4,fmt(max,0),'end');
     label(left,bottom+19,new Date(now).toLocaleString(), 'start');
     label(right,bottom+19,new Date(end).toLocaleString(), 'end');
-    label(right,top+3,fmt(low,1)+'–'+fmt(high,1)+' pp','end');
+    label(right,top+3,fmt(low,1)+' to '+fmt(high,1)+' pp','end');
     parent.appendChild(svg);
-    textLine(parent,'Cumulative forecast workload · quota-equivalent points. Required slope '+fmt(Math.min(lowRate,highRate)/calibration,2)+'–'+fmt(Math.max(lowRate,highRate)/calibration,2)+' points/hour; '+fmt(low,1)+'–'+fmt(high,1)+' points by deadline. Dashed gold range is projected workload, not observed quota.');
+    textLine(parent,'Cumulative forecast workload in quota-equivalent points. Required slope '+fmt(Math.min(lowRate,highRate)/calibration,2)+' to '+fmt(Math.max(lowRate,highRate)/calibration,2)+' points/hour; '+fmt(low,1)+' to '+fmt(high,1)+' points by deadline. The dashed amber range is projected workload, not observed quota.');
     return true;
   }
   function overlay(data){
@@ -232,9 +233,9 @@ SCRIPT = r"""
       var w=windows.find(function(item){return item.key===capacityKey || item.key===capacityKey+':'+provider || item.key===windowKey || item.key===provider+':'+windowKey || item.window===windowKey;});
       var panel=elem('div',undefined,'credit-forecast-overlay');
       panel.setAttribute('aria-label','Paid-credit forecast for '+names[provider]+' '+windowKey);
-      panel.appendChild(elem('strong','Paid-credit forecast · '+windowKey));
+      panel.appendChild(elem('strong','Paid-credit forecast: '+windowKey));
       if(w && forecast.available){
-        textLine(panel,'Additional estimated quota equivalent: '+fmt(w.extra_percentage_points_low,1)+'–'+fmt(w.extra_percentage_points_high,1)+' percentage points. Measured quota above remains 0–100%.');
+        textLine(panel,'Additional estimated quota equivalent: '+fmt(w.extra_percentage_points_low,1)+' to '+fmt(w.extra_percentage_points_high,1)+' percentage points. Measured quota above remains 0 to 100%.');
         textLine(panel,'Included capacity remaining: '+fmt(w.remaining_included_tokens,0)+' tokens. Projected replenishment at resets: '+fmt(w.projected_replenishment_tokens,0)+' tokens.');
         if(w.transition_at)textLine(panel,'Expected transition to paid usage: '+new Date(w.transition_at).toLocaleString()+'.');
         if(!forecastTrajectory(panel,report,w,forecast,provider))textLine(panel,'Workload trajectory unavailable: token pace or quota calibration is missing.');

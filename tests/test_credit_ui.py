@@ -68,7 +68,7 @@ def test_script_keeps_measured_quota_distinct_and_handles_unverified_spend():
     script = credit_ui.script(snapshot())
     assert "document.querySelectorAll('article.card[data-provider][data-window]')" in script
     assert "card.appendChild(panel)" in script
-    assert "Measured quota above remains 0–100%." in script
+    assert "Measured quota above remains 0 to 100%." in script
     assert "Forecast only: paid spending is unavailable" in script
     assert "Confirmed paid spend:" in script
     assert "Original goal" in script
@@ -97,8 +97,8 @@ def test_forecast_workload_trajectory_has_distinct_axis_and_safe_dom():
     assert "lowRate,highRate)*hours/calibration" in script
     assert "highRate)*hours/calibration" in script
     assert "credit-workload-trajectory" in script
-    assert "Cumulative forecast workload · quota-equivalent points" in script
-    assert "Dashed gold range is projected workload, not observed quota." in script
+    assert "Cumulative forecast workload in quota-equivalent points" in script
+    assert "The dashed amber range is projected workload, not observed quota." in script
     assert "Workload trajectory unavailable: token pace or quota calibration is missing." in script
     assert "document.createElementNS('http://www.w3.org/2000/svg','svg')" in script
     assert "e.textContent=value" in script
