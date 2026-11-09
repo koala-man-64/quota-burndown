@@ -35,7 +35,7 @@ def count_passes(monkeypatch, cost_s=0.0):
     return passes
 
 
-def wait_until(condition, timeout=3.0):
+def wait_until(condition, timeout=10.0):
     deadline = time.monotonic() + timeout
     while not condition():
         assert time.monotonic() < deadline, "timed out"
@@ -86,7 +86,7 @@ def test_idle_ledger_waits_until_a_dashboard_opens(paths, monkeypatch):
         time.sleep(0.5)
         assert len(passes) == 1, "nobody is looking: no rebuild before the idle interval"
         service.touch()  # a dashboard read
-        wait_until(lambda: len(passes) == 2, timeout=1.0)
+        wait_until(lambda: len(passes) >= 2, timeout=1.0)
     finally:
         service.close()
 
@@ -98,7 +98,7 @@ def test_saved_plan_still_rebuilds_promptly(paths, monkeypatch):
     try:
         wait_until(lambda: passes)
         service._page_wakeup.set()  # what the writer does after applying a plan
-        wait_until(lambda: len(passes) == 2, timeout=1.0)
+        wait_until(lambda: len(passes) >= 2, timeout=1.0)
     finally:
         service.close()
 

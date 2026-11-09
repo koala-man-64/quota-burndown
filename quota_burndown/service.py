@@ -160,8 +160,9 @@ class CapacityService:
     def plans_snapshot(self):
         snapshot = self.plans.snapshot()
         cached = self._credit_forecast
-        observed = lambda value: {key: obs.get("observed_at") for key, obs in value.get("observations", {}).items()}
-        if cached.get("revision") == snapshot["revision"] and observed(cached) == observed(snapshot):
+        # A forecast depends on the plan (revision) and its remaining amount, not on when credits were
+        # last reported: collectors re-report every 15 to 60 seconds, far more often than ledger passes.
+        if cached.get("revision") == snapshot["revision"]:
             for provider, plan in snapshot["plans"].items():
                 if plan is None:
                     continue
@@ -268,7 +269,8 @@ class CapacityService:
                 pass
             except (OSError, ValueError, RuntimeError, TypeError) as exc:
                 self.state.set_health("ingest", "error", type(exc).__name__)
-                dirty = True
+                # Part of the batch may already be in the history.
+                dirty = self._history_changed = True
             if batch_ok and self.state.health.get("ingest", {}).get("state") == "error":
                 self.state.set_health("ingest", "healthy", None)
             now = time.monotonic()
@@ -470,8 +472,10 @@ def make_server(service: CapacityService, host="127.0.0.1", port=DEFAULT_PORT):
                 else:
                     self._send(503, "text/html; charset=utf-8", b'<!doctype html><meta http-equiv="refresh" content="2"><p>Preparing the dashboard. Capacity API is available now.</p>')
             elif path == "/usage.json":
+                service.touch()
                 self._send(200, "application/json", service._usage)
             elif path == "/v1/usage":
+                service.touch()
                 self._send(200, "application/json", service._efficiency)
             elif path.startswith('/v1/recent-text/'):
                 row = service._recent_row(path.removeprefix('/v1/recent-text/'))
