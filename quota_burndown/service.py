@@ -23,6 +23,18 @@ from .model import current
 from .store import Sample, Store
 from .util import atomic_write_text, now_utc
 
+# A ledger pass re-reads the whole usage history and re-renders the dashboard, so its cost
+# grows with the history: tens of CPU-seconds once a few months are recorded. Passes are
+# spaced by whether anyone is looking and by what the last pass cost, never back to back,
+# so the share of a core they take stays bounded however large the history grows.
+LEDGER_ACTIVE_INTERVAL_S = 30.0  # a dashboard is open; it reloads every 30 seconds
+LEDGER_ACTIVE_DUTY = 0.2
+LEDGER_IDLE_INTERVAL_S = 900.0  # nobody is looking; keeps the cached page and /usage.json reasonably fresh
+LEDGER_IDLE_DUTY = 0.05
+LEDGER_POLL_S = 5.0  # how soon a newly opened dashboard ends an idle wait
+# Capacity state is written at most this often, and only when it changed since the last write.
+PERSIST_INTERVAL_S = 2.0
+
 
 class WriterLease(AbstractContextManager):
     """OS-held lock, released on process death; never steal a live writer's lock."""
@@ -71,7 +83,7 @@ class CapacityService:
         self.threads: list[threading.Thread] = []
         self.collectors = collectors
         self._consumers = 0
-        self._last_read = 0.0
+        self._last_read = float("-inf")  # never read, however recently the machine booted
         self._consumer_lock = threading.Lock()
         self._page = b""
         self._recent_page = (b"", {})
@@ -83,6 +95,8 @@ class CapacityService:
         self._legacy_status = b"[]"
         self._legacy_latest = b"{}"
         self._last_persist = 0.0
+        self._persisted_revision = None
+        self._history_changed = False
         self._lease = None
         self.max_publication_latency_ms = 0.0
         self._storage_error_op = None
@@ -146,8 +160,9 @@ class CapacityService:
     def plans_snapshot(self):
         snapshot = self.plans.snapshot()
         cached = self._credit_forecast
-        observed = lambda value: {key: obs.get("observed_at") for key, obs in value.get("observations", {}).items()}
-        if cached.get("revision") == snapshot["revision"] and observed(cached) == observed(snapshot):
+        # A forecast depends on the plan (revision) and its remaining amount, not on when credits were
+        # last reported: collectors re-report every 15 to 60 seconds, far more often than ledger passes.
+        if cached.get("revision") == snapshot["revision"]:
             for provider, plan in snapshot["plans"].items():
                 if plan is None:
                     continue
@@ -220,7 +235,8 @@ class CapacityService:
                         break
                 for kind, data, queued in batch:
                     if kind == "observations":
-                        dirty = self.state.ingest(data) or dirty
+                        if self.state.ingest(data):
+                            dirty = self._history_changed = True
                         received.extend(self.state.accepted)
                         if self.state.accepted:
                             arrivals.append(queued)
@@ -231,8 +247,10 @@ class CapacityService:
                         self.state.set_policy(data)
                         dirty = True
                     elif kind == "credits":
+                        # Collectors report credits on every quota read (Codex: every 15 to 60
+                        # seconds). Waking the ledger for each one kept it rebuilding back to
+                        # back; the next scheduled pass picks them up.
                         self.plans.ingest(data)
-                        self._page_wakeup.set()
                     elif kind == "plan":
                         payload, completed, outcome = data
                         try:
@@ -251,7 +269,8 @@ class CapacityService:
                 pass
             except (OSError, ValueError, RuntimeError, TypeError) as exc:
                 self.state.set_health("ingest", "error", type(exc).__name__)
-                dirty = True
+                # Part of the batch may already be in the history.
+                dirty = self._history_changed = True
             if batch_ok and self.state.health.get("ingest", {}).get("state") == "error":
                 self.state.set_health("ingest", "healthy", None)
             now = time.monotonic()
@@ -264,10 +283,16 @@ class CapacityService:
             if dirty or now - last_tick >= 0.5:
                 self.state.publish(persist=False)
                 last_tick = now
-            if now - self._last_persist >= 2:
+            # A full history is ~1 MB of JSON and ~0.25 CPU-s to serialize; rewriting it
+            # unchanged every interval kept an idle service busy.
+            if now - self._last_persist >= PERSIST_INTERVAL_S and (
+                    self._history_changed or self.state.revision != self._persisted_revision):
+                # A failed write waits the same interval before it is retried.
+                self._last_persist = now
                 try:
                     self.state.publish(persist=True)
-                    self._last_persist = now
+                    self._history_changed = False
+                    self._persisted_revision = self.state.revision
                     if self._storage_error_op in ("persist", None):
                         self._storage_error_op = None
                         if self.state.health.get("storage", {}).get("state") == "error":
@@ -315,45 +340,68 @@ class CapacityService:
                     return rows[row_id]
         return None
 
+    def _next_ledger_pass(self, started: float, cost: float) -> float:
+        """Monotonic time the next ledger pass is due, given when the last one started and its cost."""
+        if self.active():
+            interval, duty = LEDGER_ACTIVE_INTERVAL_S, LEDGER_ACTIVE_DUTY
+        else:
+            interval, duty = LEDGER_IDLE_INTERVAL_S, LEDGER_IDLE_DUTY
+        return started + max(interval, cost / duty)
+
+    def _wait_for_ledger_pass(self, started: float, cost: float) -> bool:
+        """Sleep until the next pass is due or a saved plan asks for one; True when stopping."""
+        while not self.stop_event.is_set():
+            remaining = self._next_ledger_pass(started, cost) - time.monotonic()
+            if remaining <= 0:
+                return False
+            # Re-evaluated every poll, so a dashboard opened during an idle wait is served promptly.
+            if self._page_wakeup.wait(min(remaining, LEDGER_POLL_S)):
+                self._page_wakeup.clear()
+                return self.stop_event.is_set()
+        return True
+
     def _ledger(self):
         while not self.stop_event.is_set():
-            try:
-                if self.collectors:
-                    try:
-                        with WriterLease(self.paths.home, ".usage-writer.lock"):
-                            conn = ledger.connect(self.paths.usage_db)
-                            try:
-                                usage.collect(conn, budget_s=15)
-                            finally:
-                                conn.close()
-                    except RuntimeError:
-                        # An explicit backfill may hold the independent ledger lease.
-                        pass
-                conn = ledger.connect(self.paths.usage_db)
-                now = now_utc()
-                try:
-                    self._usage = json.dumps(usage_report.payload(conn, now)).encode()
-                    efficiency = usage_report.efficiency_payload(conn, now)
-                    efficiency["daily_models_html"] = render.daily_models_html(efficiency["daily_models"])
-                    self._efficiency = json.dumps(efficiency).encode()
-                    recent = ledger.recent_requests(conn)
-                    credit_plans = forecast_snapshot(self.plans.snapshot(), conn,
-                        self.store.load(since=now - timedelta(days=7)), self.state.read(), now)
-                    self._credit_forecast = credit_plans
-                finally:
-                    conn.close()
-                page = render.render_html(self.store, now=now, usage_db=self.paths.usage_db,
-                                          capacity=self.state.read(), live=True, recent_rows=recent,
-                                          credit_plans=credit_plans).encode("utf-8")
-                self._publish_page(page, {request_text.row_id(row): dict(row) for row in recent})
-                self._cache_legacy()
-                self.health("ledger", "healthy")
-            except Exception as exc:
-                self.health("ledger", "error", type(exc).__name__)
-            if self.stop_event.wait(0):
+            started = time.monotonic()
+            self._ledger_pass()
+            if self._wait_for_ledger_pass(started, time.monotonic() - started):
                 break
-            self._page_wakeup.wait(30)
-            self._page_wakeup.clear()
+
+    def _ledger_pass(self):
+        """Import new usage history, then rebuild the cached dashboard and usage payloads."""
+        try:
+            if self.collectors:
+                try:
+                    with WriterLease(self.paths.home, ".usage-writer.lock"):
+                        conn = ledger.connect(self.paths.usage_db)
+                        try:
+                            usage.collect(conn, budget_s=15)
+                        finally:
+                            conn.close()
+                except RuntimeError:
+                    # An explicit backfill may hold the independent ledger lease.
+                    pass
+            conn = ledger.connect(self.paths.usage_db)
+            now = now_utc()
+            try:
+                self._usage = json.dumps(usage_report.payload(conn, now)).encode()
+                efficiency = usage_report.efficiency_payload(conn, now)
+                efficiency["daily_models_html"] = render.daily_models_html(efficiency["daily_models"])
+                self._efficiency = json.dumps(efficiency).encode()
+                recent = ledger.recent_requests(conn)
+                credit_plans = forecast_snapshot(self.plans.snapshot(), conn,
+                    self.store.load(since=now - timedelta(days=7)), self.state.read(), now)
+                self._credit_forecast = credit_plans
+            finally:
+                conn.close()
+            page = render.render_html(self.store, now=now, usage_db=self.paths.usage_db,
+                                      capacity=self.state.read(), live=True, recent_rows=recent,
+                                      credit_plans=credit_plans).encode("utf-8")
+            self._publish_page(page, {request_text.row_id(row): dict(row) for row in recent})
+            self._cache_legacy()
+            self.health("ledger", "healthy")
+        except Exception as exc:
+            self.health("ledger", "error", type(exc).__name__)
 
 
 def loopback_host(host: str) -> str:
@@ -424,8 +472,10 @@ def make_server(service: CapacityService, host="127.0.0.1", port=DEFAULT_PORT):
                 else:
                     self._send(503, "text/html; charset=utf-8", b'<!doctype html><meta http-equiv="refresh" content="2"><p>Preparing the dashboard. Capacity API is available now.</p>')
             elif path == "/usage.json":
+                service.touch()
                 self._send(200, "application/json", service._usage)
             elif path == "/v1/usage":
+                service.touch()
                 self._send(200, "application/json", service._efficiency)
             elif path.startswith('/v1/recent-text/'):
                 row = service._recent_row(path.removeprefix('/v1/recent-text/'))

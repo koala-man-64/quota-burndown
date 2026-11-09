@@ -31,7 +31,7 @@ def get(server, path="/v1/capacity"):
     return data
 
 
-def test_usage_endpoint_publishes_daily_models_and_matching_markup(paths, monkeypatch):
+def test_usage_endpoint_publishes_daily_models_and_matching_markup(paths):
     from quota_burndown import ledger, render
     from quota_burndown.ledger import Event
     conn = ledger.connect(paths.usage_db)
@@ -39,8 +39,7 @@ def test_usage_endpoint_publishes_daily_models_and_matching_markup(paths, monkey
                                model="gpt-5.3-codex-spark", total_tokens=1234)])
     conn.close()
     service = CapacityService(paths, collectors=False)
-    monkeypatch.setattr(service.stop_event, "wait", lambda timeout: service.stop_event.set())
-    service._ledger()  # one actual cache-publication iteration, without collectors
+    service._ledger_pass()  # one actual cache-publication pass, without collectors
     server = make_server(service, port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
