@@ -85,3 +85,20 @@ def test_cached_forecast_survives_age_change_and_empty_provider(running):
     assert result["plans"]["codex"]["forecast"]["available"]
     assert result["plans"]["claude"] is None
 
+
+def test_cached_forecast_survives_a_newer_credit_report(running):
+    # Collectors re-report credits every 15 to 60 seconds, far more often than ledger passes
+    # rebuild forecasts; a report that leaves the remaining amount unchanged keeps the forecast.
+    service, server = running
+    service.plans.apply({"expected_revision": 0, "provider": "codex", "plan": plan()})
+    service.plans.ingest([CreditObservation("codex", "account", now_utc() - timedelta(minutes=1),
+                                            "test", "credits", balance="10")])
+    cached = service.plans.snapshot()
+    cached["plans"]["codex"]["forecast"] = {"available": True, "note": "calibrated"}
+    service._credit_forecast = cached
+    service.plans.ingest([CreditObservation("codex", "account", now_utc(), "test", "credits", balance="10")])
+    status, result = request(server)
+    assert status == 200
+    assert result["observations"]["codex"]["observed_at"] != cached["observations"]["codex"]["observed_at"]
+    assert result["plans"]["codex"]["forecast"]["available"]
+

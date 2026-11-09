@@ -117,11 +117,8 @@ def test_missing_source_and_limits(tmp_path, monkeypatch):
     assert result['status'] == 'unavailable' and 'limit' in result['note']
 
 
-def publish(service, monkeypatch):
-    with monkeypatch.context() as patch:
-        patch.setattr(service.stop_event, 'wait', lambda _: service.stop_event.set())
-        service._ledger()
-    service.stop_event.clear()
+def publish(service):
+    service._ledger_pass()
 
 
 def test_endpoint_only_accepts_displayed_rows_and_keeps_text_out_of_page(paths, monkeypatch):
@@ -130,7 +127,7 @@ def test_endpoint_only_accepts_displayed_rows_and_keeps_text_out_of_page(paths, 
     ledger.upsert(conn, events)
     conn.close()
     service = CapacityService(paths, collectors=False)
-    publish(service, monkeypatch)
+    publish(service)
     assert len(service._recent_page[1]) == 26
     assert service._page.count(b'<summary>View raw text</summary>') == 26
     secret = '</pre><script>window.injected=true</script>'
