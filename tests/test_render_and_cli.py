@@ -177,7 +177,10 @@ def test_history_grid_has_one_cell_per_weekly_chart(store):
     assert titles == ["7-day (all models)", "7-day (Codex)", "7-day (Spark)", "7-day (Gemini)"]
     assert 'class="card unavailable"' not in html
     assert html.count('<figure class="chart-figure"') == 4
-    assert html.count('class="chart-data" data-for="c') == 4 and "grid-template-columns:repeat(2," in html
+    assert html.count('class="chart-data" data-for="c') == 4
+    # History cards stack in one column, and every card keeps the same stacked layout.
+    assert ".history-grid{display:grid;grid-template-columns:minmax(0,1fr);" in html
+    assert "nth-child(odd){grid-column:1/-1}" not in html and "quota-card (min-width:" not in html
 
 
 def test_fable_readings_render_as_a_chart_when_present(store):
