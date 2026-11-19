@@ -944,27 +944,25 @@ CSS = """
 --bg-light:#f6f7f9;--bg-dark:#0f1115;--card-light:#ffffff;--card-dark:#171a21;--fg-light:#1c1e21;--fg-dark:#e6e8eb;--muted-light:#6b7280;--muted-dark:#9aa3ad;--line-light:#e5e7eb;--line-dark:#2a2f3a;--grid-light:#eef0f3;--grid-dark:#232834;--ideal-light:#9ca3af;--ideal-dark:#6b7280;--actual-light:#2563eb;--actual-dark:#60a5fa;--over-light:#dc2626;--over-dark:#f87171;--under-light:#16a34a;--under-dark:#4ade80;--warn-light:#d97706;--warn-dark:#fbbf24;--now-light:#111827;--now-dark:#e6e8eb;
 --chart-series-light:#2a78d6;--chart-series-dark:#3987e5;--chart-grid-light:#e1e0d9;--chart-grid-dark:#2c2c2a;--chart-axis-light:#c3c2b7;--chart-axis-dark:#383835;--chart-muted-light:#898781;--chart-muted-dark:#898781;--chart-ink-light:#0b0b0b;--chart-ink-dark:#ffffff;
 --tok-1-light:#eb6834;--tok-1-dark:#d95926;--tok-2-light:#1baf7a;--tok-2-dark:#199e70;--tok-3-light:#eda100;--tok-3-dark:#c98500;--tok-4-light:#e87ba4;--tok-4-dark:#d55181;--tok-5-light:#008300;--tok-5-dark:#008300;--tok-6-light:#4a3aa7;--tok-6-dark:#9085e9;--tok-7-light:#e34948;--tok-7-dark:#e66767;
---tab-hover-light:rgba(0,0,0,0.04);--tab-hover-dark:rgba(255,255,255,0.06);
 --bg:var(--bg-light);--card:var(--card-light);--fg:var(--fg-light);--muted:var(--muted-light);--line:var(--line-light);--grid:var(--grid-light);--ideal:var(--ideal-light);--actual:var(--actual-light);--over:var(--over-light);--under:var(--under-light);--warn:var(--warn-light);--now:var(--now-light);
 --chart-series:var(--chart-series-light);--chart-grid:var(--chart-grid-light);--chart-axis:var(--chart-axis-light);--chart-muted:var(--chart-muted-light);--chart-ink:var(--chart-ink-light);
---tok-1:var(--tok-1-light);--tok-2:var(--tok-2-light);--tok-3:var(--tok-3-light);--tok-4:var(--tok-4-light);--tok-5:var(--tok-5-light);--tok-6:var(--tok-6-light);--tok-7-mode:var(--tok-7-light);--tok-7:var(--tok-7-mode);--tab-hover:var(--tab-hover-light)}
+--tok-1:var(--tok-1-light);--tok-2:var(--tok-2-light);--tok-3:var(--tok-3-light);--tok-4:var(--tok-4-light);--tok-5:var(--tok-5-light);--tok-6:var(--tok-6-light);--tok-7-mode:var(--tok-7-light);--tok-7:var(--tok-7-mode)}
 @media (prefers-color-scheme: dark){:root{--color-scheme:dark;--bg:var(--bg-dark);--card:var(--card-dark);--fg:var(--fg-dark);--muted:var(--muted-dark);--line:var(--line-dark);--grid:var(--grid-dark);--ideal:var(--ideal-dark);--actual:var(--actual-dark);--over:var(--over-dark);--under:var(--under-dark);--warn:var(--warn-dark);--now:var(--now-dark);
 --chart-series:var(--chart-series-dark);--chart-grid:var(--chart-grid-dark);--chart-axis:var(--chart-axis-dark);--chart-muted:var(--chart-muted-dark);--chart-ink:var(--chart-ink-dark);
---tok-1:var(--tok-1-dark);--tok-2:var(--tok-2-dark);--tok-3:var(--tok-3-dark);--tok-4:var(--tok-4-dark);--tok-5:var(--tok-5-dark);--tok-6:var(--tok-6-dark);--tok-7-mode:var(--tok-7-dark);--tab-hover:var(--tab-hover-dark)}}
+--tok-1:var(--tok-1-dark);--tok-2:var(--tok-2-dark);--tok-3:var(--tok-3-dark);--tok-4:var(--tok-4-dark);--tok-5:var(--tok-5-dark);--tok-6:var(--tok-6-dark);--tok-7-mode:var(--tok-7-dark)}}
 :root:has(> head > meta[name="color-scheme"][content="dark"]),:root[data-theme="dark"]{color-scheme:dark;--color-scheme:dark;--bg:var(--bg-dark);--card:var(--card-dark);--fg:var(--fg-dark);--muted:var(--muted-dark);--line:var(--line-dark);--grid:var(--grid-dark);--ideal:var(--ideal-dark);--actual:var(--actual-dark);--over:var(--over-dark);--under:var(--under-dark);--warn:var(--warn-dark);--now:var(--now-dark);
 --chart-series:var(--chart-series-dark);--chart-grid:var(--chart-grid-dark);--chart-axis:var(--chart-axis-dark);--chart-muted:var(--chart-muted-dark);--chart-ink:var(--chart-ink-dark);
---tok-1:var(--tok-1-dark);--tok-2:var(--tok-2-dark);--tok-3:var(--tok-3-dark);--tok-4:var(--tok-4-dark);--tok-5:var(--tok-5-dark);--tok-6:var(--tok-6-dark);--tok-7-mode:var(--tok-7-dark);--tab-hover:var(--tab-hover-dark)}
+--tok-1:var(--tok-1-dark);--tok-2:var(--tok-2-dark);--tok-3:var(--tok-3-dark);--tok-4:var(--tok-4-dark);--tok-5:var(--tok-5-dark);--tok-6:var(--tok-6-dark);--tok-7-mode:var(--tok-7-dark)}
 :root:has(> head > meta[name="color-scheme"][content="light"]),:root[data-theme="light"]{color-scheme:light;--color-scheme:light;--bg:var(--bg-light);--card:var(--card-light);--fg:var(--fg-light);--muted:var(--muted-light);--line:var(--line-light);--grid:var(--grid-light);--ideal:var(--ideal-light);--actual:var(--actual-light);--over:var(--over-light);--under:var(--under-light);--warn:var(--warn-light);--now:var(--now-light);
 --chart-series:var(--chart-series-light);--chart-grid:var(--chart-grid-light);--chart-axis:var(--chart-axis-light);--chart-muted:var(--chart-muted-light);--chart-ink:var(--chart-ink-light);
---tok-1:var(--tok-1-light);--tok-2:var(--tok-2-light);--tok-3:var(--tok-3-light);--tok-4:var(--tok-4-light);--tok-5:var(--tok-5-light);--tok-6:var(--tok-6-light);--tok-7-mode:var(--tok-7-light);--tab-hover:var(--tab-hover-light)}
+--tok-1:var(--tok-1-light);--tok-2:var(--tok-2-light);--tok-3:var(--tok-3-light);--tok-4:var(--tok-4-light);--tok-5:var(--tok-5-light);--tok-6:var(--tok-6-light);--tok-7-mode:var(--tok-7-light)}
 @supports (color: light-dark(white, black)){:root{--bg:light-dark(var(--bg-light),var(--bg-dark));--card:light-dark(var(--card-light),var(--card-dark));--fg:light-dark(var(--fg-light),var(--fg-dark));--muted:light-dark(var(--muted-light),var(--muted-dark));--line:light-dark(var(--line-light),var(--line-dark));--grid:light-dark(var(--grid-light),var(--grid-dark));--ideal:light-dark(var(--ideal-light),var(--ideal-dark));--actual:light-dark(var(--actual-light),var(--actual-dark));--over:light-dark(var(--over-light),var(--over-dark));--under:light-dark(var(--under-light),var(--under-dark));--warn:light-dark(var(--warn-light),var(--warn-dark));--now:light-dark(var(--now-light),var(--now-dark));
 --chart-series:light-dark(var(--chart-series-light),var(--chart-series-dark));--chart-grid:light-dark(var(--chart-grid-light),var(--chart-grid-dark));--chart-axis:light-dark(var(--chart-axis-light),var(--chart-axis-dark));--chart-muted:light-dark(var(--chart-muted-light),var(--chart-muted-dark));--chart-ink:light-dark(var(--chart-ink-light),var(--chart-ink-dark));
---tok-1:light-dark(var(--tok-1-light),var(--tok-1-dark));--tok-2:light-dark(var(--tok-2-light),var(--tok-2-dark));--tok-3:light-dark(var(--tok-3-light),var(--tok-3-dark));--tok-4:light-dark(var(--tok-4-light),var(--tok-4-dark));--tok-5:light-dark(var(--tok-5-light),var(--tok-5-dark));--tok-6:light-dark(var(--tok-6-light),var(--tok-6-dark));--tok-7:light-dark(var(--tok-7-light),var(--tok-7-dark));--tab-hover:light-dark(var(--tab-hover-light),var(--tab-hover-dark))}}
+--tok-1:light-dark(var(--tok-1-light),var(--tok-1-dark));--tok-2:light-dark(var(--tok-2-light),var(--tok-2-dark));--tok-3:light-dark(var(--tok-3-light),var(--tok-3-dark));--tok-4:light-dark(var(--tok-4-light),var(--tok-4-dark));--tok-5:light-dark(var(--tok-5-light),var(--tok-5-dark));--tok-6:light-dark(var(--tok-6-light),var(--tok-6-dark));--tok-7:light-dark(var(--tok-7-light),var(--tok-7-dark))}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,"Segoe UI",Roboto,sans-serif}
 header.top{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 24px 6px;flex-wrap:wrap}
 header.top h1{margin:0;font-size:20px}
-.header-main{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
 .header-actions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .theme-toggle{display:inline-flex;align-items:center;gap:6px;background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:999px;padding:4px 10px;font:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:border-color .15s ease,color .15s ease}
 .theme-toggle:hover{border-color:var(--actual);color:var(--actual)}
@@ -978,21 +976,6 @@ header.top h1{margin:0;font-size:20px}
 :root:has(> head > meta[name="color-scheme"][content="dark"]) .theme-opt-light,:root[data-theme="dark"] .theme-opt-light{display:inline-flex}
 @container style(--color-scheme: dark){.theme-opt-dark{display:none}.theme-opt-light{display:inline-flex}}
 @container not style(--color-scheme: dark){.theme-opt-dark{display:inline-flex}.theme-opt-light{display:none}}
-.tabs-nav{display:inline-flex;gap:4px;background:var(--grid);padding:3px;border-radius:8px;border:1px solid var(--line)}
-.tab-button{background:transparent;border:none;border-radius:6px;padding:5px 14px;font:inherit;font-size:13px;font-weight:500;color:var(--muted);cursor:pointer;transition:all .15s ease}
-.tab-button:hover{color:var(--fg);background:var(--tab-hover)}
-.tab-button.active{background:var(--card);color:var(--fg);box-shadow:0 1px 3px rgba(0,0,0,0.1)}
-.tab-button:focus-visible{outline:2px solid var(--actual);outline-offset:1px}
-.tab-panel[hidden]{display:none!important}
-#tab-panel-swimlane{padding:8px 24px 24px;max-width:1900px;margin:0 auto}
-.swimlane-tab-container{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.05)}
-.swimlane-tab-header{display:flex;justify-content:space-between;align-items:center;padding:10px 16px;border-bottom:1px solid var(--line);background:var(--grid)}
-.swimlane-tab-title{font-weight:600;font-size:13.5px;color:var(--fg)}
-.swimlane-tab-meta{font-size:12px;color:var(--muted);margin-left:8px}
-.swimlane-tab-link{font-size:12px;color:var(--actual);text-decoration:none;font-weight:500}
-.swimlane-tab-link:hover{text-decoration:underline}
-.swimlane-frame-wrapper{width:100%;height:calc(100vh - 170px);min-height:650px;background:var(--bg)}
-.swimlane-frame{width:100%;height:100%;border:none;display:block}
 .meta{color:var(--muted);font-size:12px}
 main{padding:8px 24px 24px;max-width:1900px;margin:0 auto}
 section.provider>h2{font-size:15px;margin:18px 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
@@ -1821,7 +1804,6 @@ THEME_SCRIPT = """
 (function(){
   var meta = document.querySelector('meta[name="color-scheme"]');
   var btn = document.getElementById('theme-toggle');
-  var frame = document.getElementById('swimlane-frame');
   if (!meta) return;
 
   function systemScheme(){
@@ -1834,29 +1816,6 @@ THEME_SCRIPT = """
     return systemScheme();
   }
 
-  function syncFrame(){
-    if (!frame) return;
-    var scheme = resolvedScheme();
-    var content = meta.getAttribute('content') || 'light dark';
-    try {
-      var doc = frame.contentDocument;
-      if (doc && doc.documentElement) {
-        if (content === 'dark' || content === 'light') {
-          doc.documentElement.setAttribute('data-theme', content);
-          doc.documentElement.style.colorScheme = content;
-        } else {
-          doc.documentElement.removeAttribute('data-theme');
-          doc.documentElement.style.colorScheme = 'light dark';
-        }
-      }
-    } catch (e) {}
-    try {
-      if (frame.contentWindow) {
-        frame.contentWindow.postMessage({type: 'color-scheme', content: content, resolved: scheme}, '*');
-      }
-    } catch (e) {}
-  }
-
   function applyScheme(value){
     var next = (value === 'dark' || value === 'light') ? value : 'light dark';
     meta.setAttribute('content', next);
@@ -1865,7 +1824,6 @@ THEME_SCRIPT = """
     } else {
       document.documentElement.removeAttribute('data-theme');
     }
-    syncFrame();
   }
 
   var initial = meta.getAttribute('content');
@@ -1893,106 +1851,6 @@ THEME_SCRIPT = """
       applyScheme(e.newValue || 'light dark');
     }
   });
-
-  if (window.matchMedia) {
-    var mq = window.matchMedia('(prefers-color-scheme: dark)');
-    if (mq.addEventListener) {
-      mq.addEventListener('change', syncFrame);
-    }
-  }
-
-  if (frame) {
-    frame.addEventListener('load', syncFrame);
-  }
-})();
-"""
-
-
-TAB_NAV_HTML = (
-    '<nav class="tabs-nav" role="tablist" aria-label="Dashboard views">'
-    '<button type="button" role="tab" class="tab-button active" id="tab-btn-quota" aria-selected="true" aria-controls="tab-panel-quota" tabindex="0">Quota Burndown</button>'
-    '<button type="button" role="tab" class="tab-button" id="tab-btn-swimlane" aria-selected="false" aria-controls="tab-panel-swimlane" tabindex="-1">ADO Swimlanes</button>'
-    '</nav>'
-)
-
-SWIMLANE_PANEL_HTML = (
-    '<section id="tab-panel-swimlane" role="tabpanel" aria-labelledby="tab-btn-swimlane" class="tab-panel" hidden>'
-    '<div class="swimlane-tab-container">'
-    '<div class="swimlane-tab-header">'
-    '<div class="swimlane-tab-info">'
-    '<span class="swimlane-tab-title">Backlog Execution Swimlanes</span>'
-    '<span class="swimlane-tab-meta">AdaptiveAssetAllocation</span>'
-    '</div>'
-    '<div class="swimlane-tab-actions">'
-    '<a href="/swimlane" target="_blank" rel="noopener noreferrer" class="swimlane-tab-link" id="swimlane-ext-link">Open standalone ↗</a>'
-    '</div>'
-    '</div>'
-    '<div class="swimlane-frame-wrapper">'
-    '<iframe id="swimlane-frame" class="swimlane-frame" title="ADO Swimlane Board" data-frame-url="/swimlane"></iframe>'
-    '</div>'
-    '</div>'
-    '</section>'
-)
-
-TAB_SCRIPT = """
-(function(){
-  var quotaBtn = document.getElementById('tab-btn-quota');
-  var swimlaneBtn = document.getElementById('tab-btn-swimlane');
-  var quotaPanel = document.getElementById('tab-panel-quota');
-  var swimlanePanel = document.getElementById('tab-panel-swimlane');
-  var frame = document.getElementById('swimlane-frame');
-  var extLink = document.getElementById('swimlane-ext-link');
-  if (!quotaBtn || !swimlaneBtn || !quotaPanel || !swimlanePanel) return;
-
-  function loadFrame(){
-    if (!frame) return;
-    if (!frame.getAttribute('src')) {
-      var url = frame.getAttribute('data-frame-url') || '/swimlane';
-      if (window.location.protocol === 'file:') {
-        url = 'swimlane.html';
-      }
-      frame.setAttribute('src', url);
-      if (extLink) extLink.setAttribute('href', url);
-    }
-  }
-
-  function setTab(name){
-    var isSwimlane = (name === 'swimlane');
-    quotaBtn.classList.toggle('active', !isSwimlane);
-    quotaBtn.setAttribute('aria-selected', !isSwimlane ? 'true' : 'false');
-    quotaBtn.tabIndex = !isSwimlane ? 0 : -1;
-    swimlaneBtn.classList.toggle('active', isSwimlane);
-    swimlaneBtn.setAttribute('aria-selected', isSwimlane ? 'true' : 'false');
-    swimlaneBtn.tabIndex = isSwimlane ? 0 : -1;
-
-    quotaPanel.hidden = isSwimlane;
-    swimlanePanel.hidden = !isSwimlane;
-
-    if (isSwimlane) {
-      loadFrame();
-      try { history.replaceState(null, '', '#swimlane'); } catch(e){}
-    } else {
-      try { history.replaceState(null, '', '#quota'); } catch(e){}
-    }
-  }
-
-  quotaBtn.addEventListener('click', function(){ setTab('quota'); });
-  swimlaneBtn.addEventListener('click', function(){ setTab('swimlane'); });
-
-  [quotaBtn, swimlaneBtn].forEach(function(btn){
-    btn.addEventListener('keydown', function(e){
-      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-        e.preventDefault();
-        var next = (btn === quotaBtn) ? swimlaneBtn : quotaBtn;
-        next.focus();
-        setTab(next === quotaBtn ? 'quota' : 'swimlane');
-      }
-    });
-  });
-
-  if (window.location.hash === '#swimlane') {
-    setTab('swimlane');
-  }
 })();
 """
 
@@ -2069,16 +1927,15 @@ def render_html(
         THEME_INIT_SCRIPT,
         "" if live else f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">",
         f"<title>Quota Burndown</title><style>{CSS}{credit_ui.CSS}</style></head><body>",
-        f'<header class="top"><div class="header-main"><h1>Quota burndown</h1>{TAB_NAV_HTML}</div><div class="header-actions"><div class="meta" id="dashboard-meta">{esc(mode)} · {len(samples)} historic samples in view</div>{THEME_TOGGLE_HTML}</div></header>',
+        f'<header class="top"><h1>Quota burndown</h1><div class="header-actions"><div class="meta" id="dashboard-meta">{esc(mode)} · {len(samples)} historic samples in view</div>{THEME_TOGGLE_HTML}</div></header>',
         '<div class="note" id="refresh-status" role="status">Updates every 30 seconds; provider readings may be older.</div>' if live else "",
-        '<main id="tab-panel-quota" role="tabpanel" aria-labelledby="tab-btn-quota">', banner, target_bar, credit_ui.html(credit_plans, now, live), legend,
+        "<main>", banner, target_bar, credit_ui.html(credit_plans, now, live), legend,
         f'<div id="dashboard-data" data-generated-at="{now.isoformat()}">', history,
         daily_models_section_html(usage_db, now) if usage_db is not None else "",
         usage_section_html(usage_db, now, live=live, recent_rows=recent_rows) if usage_db is not None else "",
         efficiency_section_html(usage_db, now) if usage_db is not None else "", "</div></main>",
-        SWIMLANE_PANEL_HTML,
         f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",
-        hover, live_script, target_script, theme_script, f'<script id="tab-script">{TAB_SCRIPT}</script>',
+        hover, live_script, target_script, theme_script,
         '<script id="credit-plan-script">' + credit_ui.script(credit_plans) + '</script>', "</body></html>\n",
     ))
 
