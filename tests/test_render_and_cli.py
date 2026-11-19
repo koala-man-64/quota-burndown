@@ -507,17 +507,12 @@ def test_render_says_when_no_reset_credits_are_left(store, monkeypatch):
     assert 'class="proj-reset"' not in html
 
 
-def test_render_html_includes_tab_navigation(store):
+def test_render_html_is_one_self_contained_view(store):
     seed(store)
     html = render.render_html(store, now=NOW)
-    assert 'role="tablist"' in html
-    assert 'id="tab-btn-quota"' in html
-    assert 'id="tab-btn-swimlane"' in html
-    assert 'id="tab-panel-quota"' in html
-    assert 'id="tab-panel-swimlane"' in html
-    assert 'id="swimlane-frame"' in html
-    assert 'data-frame-url="/swimlane"' in html
-    assert 'id="tab-script"' in html
+    assert "<main>" in html
+    assert 'role="tablist"' not in html and 'role="tabpanel"' not in html
+    assert "<iframe" not in html
     assert "src=" not in html
     assert html.count("<script>") == 1
 
@@ -567,18 +562,6 @@ const docEl = {
   setAttribute(k, v) { this.attrs[k] = v; },
   removeAttribute(k) { delete this.attrs[k]; }
 };
-const frameDocEl = {
-  attrs: {},
-  style: {},
-  setAttribute(k, v) { this.attrs[k] = v; },
-  removeAttribute(k) { delete this.attrs[k]; }
-};
-const messages = [];
-const frame = {
-  contentDocument: { documentElement: frameDocEl },
-  contentWindow: { postMessage(msg) { messages.push(msg); } },
-  addEventListener(ev, fn) { this['on_' + ev] = fn; }
-};
 const btn = {
   addEventListener(ev, fn) { this['on_' + ev] = fn; },
   click() { this.on_click(); }
@@ -595,17 +578,13 @@ const window = {
 const document = {
   documentElement: docEl,
   querySelector(sel) { return sel === 'meta[name="color-scheme"]' ? meta : null; },
-  getElementById(id) {
-    if (id === 'theme-toggle') return btn;
-    if (id === 'swimlane-frame') return frame;
-    return null;
-  }
+  getElementById(id) { return id === 'theme-toggle' ? btn : null; }
 };
 """ + render.THEME_SCRIPT + r"""
 const out = [];
 // 1. OS light -> user clicks toggle -> overrides to dark and stores 'dark'
 btn.click();
-out.push({step: 1, meta: meta.content, stored: store.get('color-scheme') || null, theme: docEl.attrs['data-theme'] || null, frameTheme: frameDocEl.attrs['data-theme'] || null});
+out.push({step: 1, meta: meta.content, stored: store.get('color-scheme') || null, theme: docEl.attrs['data-theme'] || null});
 // 2. OS changes to dark -> stored 'dark' is kept (not cleared retroactively)
 sysDark = true;
 if (mqListener) mqListener();
@@ -616,7 +595,7 @@ if (mqListener) mqListener();
 out.push({step: 3, meta: meta.content, stored: store.get('color-scheme') || null});
 // 4. User clicks toggle -> target is light (matches OS light), so stored override is removed and meta returns to 'light dark'
 btn.click();
-out.push({step: 4, meta: meta.content, stored: store.get('color-scheme') || null, theme: docEl.attrs['data-theme'] || null, frameTheme: frameDocEl.attrs['data-theme'] || null});
+out.push({step: 4, meta: meta.content, stored: store.get('color-scheme') || null, theme: docEl.attrs['data-theme'] || null});
 // 5. Blocked localStorage still applies theme to page
 blocked = true;
 btn.click();
@@ -629,10 +608,10 @@ console.log(JSON.stringify(out));
     result = subprocess.run([node, "-e", harness], capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
     steps = json.loads(result.stdout)
-    assert steps[0] == {"step": 1, "meta": "dark", "stored": "dark", "theme": "dark", "frameTheme": "dark"}
+    assert steps[0] == {"step": 1, "meta": "dark", "stored": "dark", "theme": "dark"}
     assert steps[1] == {"step": 2, "meta": "dark", "stored": "dark"}
     assert steps[2] == {"step": 3, "meta": "dark", "stored": "dark"}
-    assert steps[3] == {"step": 4, "meta": "light dark", "stored": None, "theme": None, "frameTheme": None}
+    assert steps[3] == {"step": 4, "meta": "light dark", "stored": None, "theme": None}
     assert steps[4] == {"step": 5, "meta": "dark", "theme": "dark"}
     assert steps[5] == {"step": 6, "meta": "light", "theme": "light"}
 
