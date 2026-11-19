@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import datetime, timezone
 
 from quota_burndown import render
@@ -139,3 +140,17 @@ def test_reset_credit_badge_tolerates_unparseable_expiry():
     limit = {"pool_id": "claude", "window": {}, "reset_credits": [{"expires_at": "soon"}, {}]}
     row = render._group_limit_row(limit)
     assert "2 reset credits</span>" in row
+
+
+def test_page_uses_one_sans_family_and_screen_sized_chart_text(store):
+    page = render.render_html(store, now=NOW, live=True)
+    css = re.sub(r"/\*.*?\*/", "", page.split("<style>", 1)[1].split("</style>", 1)[0], flags=re.S)
+    rules = [rule for rule in css.split("}") if "{" in rule]
+    mono = [rule.split("{", 1)[0].strip() for rule in rules if "var(--font-mono)" in rule.split("{", 1)[1]]
+    # Mono is for code and prompt text only; headings, chart labels and legends stay in the body family.
+    assert mono == ["code", ".request-text pre"]
+    assert "serif" not in css.replace("sans-serif", "")
+    assert "font-display" not in css
+    # Chart labels are sized in screen pixels through the --svg-unit the chart-text script publishes.
+    assert ".lbl,.reset-lbl,.reset-marker-lbl,.credit-expiry-lbl,.target-lbl{font-size:calc(var(--text-xs) * var(--u,1))}" in css
+    assert '<script id="chart-text-script">' in page and "--svg-unit" in page
