@@ -1035,20 +1035,12 @@ h4{font-size:var(--text-xs);font-weight:400;line-height:1.4;color:var(--color-mu
 .banner{margin:0 0 var(--space-md);padding:var(--space-sm) var(--space-md);border:1px solid var(--color-rose);border-radius:var(--radius-inner);font-size:var(--text-sm)}
 
 header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:var(--space-sm) var(--space-lg);flex-wrap:wrap;width:min(100% - 2 * var(--gutter),var(--container) - 2 * var(--gutter));margin:0 auto;padding-top:var(--space-md);border-bottom:1px solid var(--color-rule)}
-.header-main{display:flex;align-items:flex-end;gap:var(--space-sm) var(--space-xl);flex-wrap:wrap;min-width:0}
 header.top h1{font-size:var(--text-2xl);line-height:1;padding-bottom:var(--space-sm)}
 .header-actions{display:flex;align-items:center;gap:var(--space-sm) var(--space-md);flex-wrap:wrap;padding-bottom:var(--space-xs)}
 .meta{font-size:var(--text-xs);color:var(--color-muted)}
 #refresh-status{width:min(100% - 2 * var(--gutter),var(--container) - 2 * var(--gutter));max-width:none;margin:var(--space-xs) auto 0;font-size:var(--text-xs)}
-.tabs-nav{display:flex;gap:var(--space-lg)}
-.tab-button,.theme-toggle,.target-preset,.target-clear-btn,.credit-actions button{position:relative}
-.tab-button::after,.theme-toggle::after,.target-preset::after,.target-clear-btn::after,.credit-actions button::after{content:"";position:absolute;inset:calc(var(--space-2xs) * -1) 0}
-.tab-button{background:none;border:0;border-radius:0;padding:0 0 var(--space-xs);min-height:var(--control);font-size:var(--text-sm);color:var(--color-muted);text-transform:lowercase;white-space:nowrap;cursor:pointer;box-shadow:inset 0 -2px 0 transparent;transition:color var(--dur-micro) var(--ease-out),box-shadow var(--dur-micro) var(--ease-out)}
-.tab-button:hover{color:var(--color-ink)}
-.tab-button:active{color:var(--color-ink-2)}
-.tab-button.active{color:var(--color-ink);box-shadow:inset 0 -2px 0 var(--color-accent)}
-.tab-button:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
-.tab-panel[hidden]{display:none!important}
+.theme-toggle,.target-preset,.target-clear-btn,.credit-actions button{position:relative}
+.theme-toggle::after,.target-preset::after,.target-clear-btn::after,.credit-actions button::after{content:"";position:absolute;inset:calc(var(--space-2xs) * -1) 0}
 .theme-toggle{display:inline-flex;align-items:center;gap:var(--space-xs);min-height:var(--control);padding:0 var(--space-sm);background:none;color:var(--color-ink-2);border:1px solid var(--color-rule-2);border-radius:var(--radius-pill);font-size:var(--text-xs);text-transform:lowercase;cursor:pointer;transition:background-color var(--dur-micro) var(--ease-out),color var(--dur-micro) var(--ease-out)}
 .theme-toggle:hover{background:var(--color-paper-2);color:var(--color-ink)}
 .theme-toggle:active{background:var(--color-paper-3)}
@@ -1062,7 +1054,7 @@ header.top h1{font-size:var(--text-2xl);line-height:1;padding-bottom:var(--space
 @container style(--color-scheme: dark){.theme-opt-dark{display:none}.theme-opt-light{display:inline-flex}}
 @container not style(--color-scheme: dark){.theme-opt-dark{display:inline-flex}.theme-opt-light{display:none}}
 
-main,#tab-panel-swimlane{max-width:var(--container);margin:0 auto;padding:var(--space-lg) var(--gutter) var(--space-2xl)}
+main{max-width:var(--container);margin:0 auto;padding:var(--space-lg) var(--gutter) var(--space-2xl)}
 footer{width:min(100% - 2 * var(--gutter),var(--container) - 2 * var(--gutter));margin:0 auto;padding:var(--space-md) 0 var(--space-xl);border-top:1px solid var(--color-rule);font-size:var(--text-xs);color:var(--color-muted)}
 
 .target-bar{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-xs);padding:var(--space-sm) var(--space-md);background:var(--color-paper-2);border:1px solid var(--color-rule);border-radius:var(--radius-card);transition:border-color var(--dur-short) var(--ease-out)}
@@ -1242,14 +1234,6 @@ details.efficiency summary{font-size:var(--text-sm);font-weight:600}
 details.efficiency table{margin-top:var(--space-sm)}
 details.efficiency .note{font-size:var(--text-xs)}
 
-.swimlane-tab-container{background:var(--color-paper-2);border:1px solid var(--color-rule);border-radius:var(--radius-card);overflow:hidden}
-.swimlane-tab-header{display:flex;justify-content:space-between;align-items:center;gap:var(--space-sm);padding:var(--space-sm) var(--space-md);border-bottom:1px solid var(--color-rule)}
-.swimlane-tab-title{font-size:var(--text-sm);font-weight:600}
-.swimlane-tab-meta{margin-left:var(--space-xs);font-size:var(--text-xs);color:var(--color-muted)}
-.swimlane-tab-link{font-size:var(--text-sm);color:var(--color-accent);text-decoration:none}
-.swimlane-tab-link:hover{text-decoration:underline}
-.swimlane-frame-wrapper{width:100%;height:calc(100dvh - 11rem);min-height:40rem;background:var(--color-paper)}
-.swimlane-frame{display:block;width:100%;height:100%;border:0}
 @media (max-width:40rem){.target-clear-btn{margin-left:0}.card,.model-token-card,.recent{padding-inline:var(--space-md)}.target-presets,.legend{flex-wrap:nowrap;overflow-x:auto;padding-bottom:var(--space-2xs)}.target-presets{flex:1 1 100%;min-width:0}}
 @media (prefers-reduced-motion:reduce){*,*::before,*::after{transition-duration:0.01ms!important;animation-duration:0.01ms!important}}
 """
@@ -1940,7 +1924,6 @@ THEME_SCRIPT = """
 (function(){
   var meta = document.querySelector('meta[name="color-scheme"]');
   var btn = document.getElementById('theme-toggle');
-  var frame = document.getElementById('swimlane-frame');
   if (!meta) return;
 
   function systemScheme(){
@@ -1953,29 +1936,6 @@ THEME_SCRIPT = """
     return systemScheme();
   }
 
-  function syncFrame(){
-    if (!frame) return;
-    var scheme = resolvedScheme();
-    var content = meta.getAttribute('content') || 'light dark';
-    try {
-      var doc = frame.contentDocument;
-      if (doc && doc.documentElement) {
-        if (content === 'dark' || content === 'light') {
-          doc.documentElement.setAttribute('data-theme', content);
-          doc.documentElement.style.colorScheme = content;
-        } else {
-          doc.documentElement.removeAttribute('data-theme');
-          doc.documentElement.style.colorScheme = 'light dark';
-        }
-      }
-    } catch (e) {}
-    try {
-      if (frame.contentWindow) {
-        frame.contentWindow.postMessage({type: 'color-scheme', content: content, resolved: scheme}, '*');
-      }
-    } catch (e) {}
-  }
-
   function applyScheme(value){
     var next = (value === 'dark' || value === 'light') ? value : 'light dark';
     meta.setAttribute('content', next);
@@ -1984,7 +1944,6 @@ THEME_SCRIPT = """
     } else {
       document.documentElement.removeAttribute('data-theme');
     }
-    syncFrame();
   }
 
   var initial = meta.getAttribute('content');
@@ -2012,106 +1971,6 @@ THEME_SCRIPT = """
       applyScheme(e.newValue || 'light dark');
     }
   });
-
-  if (window.matchMedia) {
-    var mq = window.matchMedia('(prefers-color-scheme: dark)');
-    if (mq.addEventListener) {
-      mq.addEventListener('change', syncFrame);
-    }
-  }
-
-  if (frame) {
-    frame.addEventListener('load', syncFrame);
-  }
-})();
-"""
-
-
-TAB_NAV_HTML = (
-    '<nav class="tabs-nav" role="tablist" aria-label="Dashboard views">'
-    '<button type="button" role="tab" class="tab-button active" id="tab-btn-quota" aria-selected="true" aria-controls="tab-panel-quota" tabindex="0">Quota Burndown</button>'
-    '<button type="button" role="tab" class="tab-button" id="tab-btn-swimlane" aria-selected="false" aria-controls="tab-panel-swimlane" tabindex="-1">ADO Swimlanes</button>'
-    '</nav>'
-)
-
-SWIMLANE_PANEL_HTML = (
-    '<section id="tab-panel-swimlane" role="tabpanel" aria-labelledby="tab-btn-swimlane" class="tab-panel" hidden>'
-    '<div class="swimlane-tab-container">'
-    '<div class="swimlane-tab-header">'
-    '<div class="swimlane-tab-info">'
-    '<span class="swimlane-tab-title">Backlog Execution Swimlanes</span>'
-    '<span class="swimlane-tab-meta">AdaptiveAssetAllocation</span>'
-    '</div>'
-    '<div class="swimlane-tab-actions">'
-    '<a href="/swimlane" target="_blank" rel="noopener noreferrer" class="swimlane-tab-link" id="swimlane-ext-link">Open in new tab</a>'
-    '</div>'
-    '</div>'
-    '<div class="swimlane-frame-wrapper">'
-    '<iframe id="swimlane-frame" class="swimlane-frame" title="ADO Swimlane Board" data-frame-url="/swimlane"></iframe>'
-    '</div>'
-    '</div>'
-    '</section>'
-)
-
-TAB_SCRIPT = """
-(function(){
-  var quotaBtn = document.getElementById('tab-btn-quota');
-  var swimlaneBtn = document.getElementById('tab-btn-swimlane');
-  var quotaPanel = document.getElementById('tab-panel-quota');
-  var swimlanePanel = document.getElementById('tab-panel-swimlane');
-  var frame = document.getElementById('swimlane-frame');
-  var extLink = document.getElementById('swimlane-ext-link');
-  if (!quotaBtn || !swimlaneBtn || !quotaPanel || !swimlanePanel) return;
-
-  function loadFrame(){
-    if (!frame) return;
-    if (!frame.getAttribute('src')) {
-      var url = frame.getAttribute('data-frame-url') || '/swimlane';
-      if (window.location.protocol === 'file:') {
-        url = 'swimlane.html';
-      }
-      frame.setAttribute('src', url);
-      if (extLink) extLink.setAttribute('href', url);
-    }
-  }
-
-  function setTab(name){
-    var isSwimlane = (name === 'swimlane');
-    quotaBtn.classList.toggle('active', !isSwimlane);
-    quotaBtn.setAttribute('aria-selected', !isSwimlane ? 'true' : 'false');
-    quotaBtn.tabIndex = !isSwimlane ? 0 : -1;
-    swimlaneBtn.classList.toggle('active', isSwimlane);
-    swimlaneBtn.setAttribute('aria-selected', isSwimlane ? 'true' : 'false');
-    swimlaneBtn.tabIndex = isSwimlane ? 0 : -1;
-
-    quotaPanel.hidden = isSwimlane;
-    swimlanePanel.hidden = !isSwimlane;
-
-    if (isSwimlane) {
-      loadFrame();
-      try { history.replaceState(null, '', '#swimlane'); } catch(e){}
-    } else {
-      try { history.replaceState(null, '', '#quota'); } catch(e){}
-    }
-  }
-
-  quotaBtn.addEventListener('click', function(){ setTab('quota'); });
-  swimlaneBtn.addEventListener('click', function(){ setTab('swimlane'); });
-
-  [quotaBtn, swimlaneBtn].forEach(function(btn){
-    btn.addEventListener('keydown', function(e){
-      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
-        e.preventDefault();
-        var next = (btn === quotaBtn) ? swimlaneBtn : quotaBtn;
-        next.focus();
-        setTab(next === quotaBtn ? 'quota' : 'swimlane');
-      }
-    });
-  });
-
-  if (window.location.hash === '#swimlane') {
-    setTab('swimlane');
-  }
 })();
 """
 
@@ -2204,18 +2063,17 @@ def render_html(
         THEME_INIT_SCRIPT,
         "" if live else f"<meta http-equiv=\"refresh\" content=\"{int(refresh_s)}\">",
         f"<title>Quota Burndown</title><style>{CSS}{credit_ui.CSS}</style></head><body>",
-        f'<header class="top"><div class="header-main"><h1>Quota burndown</h1>{TAB_NAV_HTML}</div><div class="header-actions"><div class="meta" id="dashboard-meta">{esc(mode)}, {len(samples)} historic samples in view</div>{THEME_TOGGLE_HTML}</div></header>',
+        f'<header class="top"><h1>Quota burndown</h1><div class="header-actions"><div class="meta" id="dashboard-meta">{esc(mode)}, {len(samples)} historic samples in view</div>{THEME_TOGGLE_HTML}</div></header>',
         '<div class="note" id="refresh-status" role="status">Updates every 30 seconds; provider readings may be older.</div>' if live else "",
-        '<main id="tab-panel-quota" role="tabpanel" aria-labelledby="tab-btn-quota">', banner, target_bar, legend,
+        "<main>", banner, target_bar, legend,
         f'<div id="dashboard-data" data-generated-at="{now.isoformat()}">', history,
         daily_models_section_html(usage_db, now) if usage_db is not None else "",
         usage_section_html(usage_db, now, live=live, recent_rows=recent_rows) if usage_db is not None else "",
         efficiency_section_html(usage_db, now) if usage_db is not None else "", "</div>",
         # Plans change rarely and their forms keep unsaved edits, so they sit after the live data.
         credit_ui.html(credit_plans, now, live), "</main>",
-        SWIMLANE_PANEL_HTML,
         f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",
-        hover, live_script, target_script, theme_script, f'<script id="tab-script">{TAB_SCRIPT}</script>',
+        hover, live_script, target_script, theme_script,
         '<script id="credit-plan-script">' + credit_ui.script(credit_plans) + '</script>', "</body></html>\n",
     ))
 
