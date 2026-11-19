@@ -490,11 +490,12 @@ def run_claude_oauth(
     publish_credits: Callable | None = None,
     refresh: Callable[[], str | None] | None = None,
     refresh_dir: Path | None = None,
+    refresh_log: Path | None = None,
 ) -> None:
     """Poll Claude's account usage every five minutes; see providers.claude_oauth for the
-    credential rules. An expired token asks Claude Code to refresh it, first after 30 minutes
-    and then backing off to 6 hours while that does not help. Errors back off up to 30
-    minutes and never stop other collectors."""
+    credential rules. An expired token asks Claude Code to refresh it at once, then again
+    after 30 minutes, backing off to 6 hours while that does not help. Errors back off up to
+    30 minutes and never stop other collectors."""
     import http.client
     import urllib.error
     from dataclasses import replace
@@ -503,8 +504,10 @@ def run_claude_oauth(
 
     path = claude_oauth.credentials_path(claude_home or default_claude_home())
     fetch = fetch or claude_oauth.fetch
-    workdir = refresh_dir or default_home() / "claude-refresh"
-    refresh = refresh or (lambda: claude_oauth.refresh_via_cli(workdir, stop))
+    if refresh is None:
+        home = default_home()
+        refresh = claude_oauth.CliRefresher(refresh_dir or home / "claude-refresh", path,
+                                            log_path=refresh_log or home / "claude-refresh.jsonl", stop=stop)
     backoff = CLAUDE_OAUTH_INTERVAL_S
     rejected_mtime: float | None = None
     next_refresh = 0.0
