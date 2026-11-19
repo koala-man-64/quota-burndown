@@ -9,9 +9,15 @@ Credential handling is deliberately narrow:
   * the token is read per poll, held only in a local, and sent only to ENDPOINT;
   * this tool never refreshes (rotating the refresh token could sign the CLI out), writes,
     logs or includes it in an error;
-  * an expired token is handed back to Claude Code: `refresh_via_cli` runs the CLI's own
+  * an expired token is handed back to Claude Code: `CliRefresher` runs the CLI's own
     local `/usage` command, which refreshes and stores the token under the CLI's rules.
     Desktop app sessions take their sign-in from the app and never refresh this file;
+  * a CLI this tool started is never killed, and no second one starts while it runs. Refresh
+    tokens are single use: once the CLI has posted one, only that CLI holds the replacement
+    until it stores it. Killing it then leaves a spent token on disk, and the next CLI run
+    (this tool's or the user's) is refused with invalid_grant and clears the sign-in;
+  * each refresh attempt is appended to a small log in the data home with its outcome and the
+    credentials' state before and after (valid, expired, signed out...), never their content;
   * a rejected token is not retried until the credentials file changes.
 
 The endpoint is undocumented, so any shape it does not match yields no observation.
@@ -30,7 +36,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Mapping
 
-from ..util import parse_iso
+from ..util import atomic_write_text, iso, now_utc, parse_iso
 
 ENDPOINT = "https://api.anthropic.com/api/oauth/usage"
 SOURCE = "oauth-usage"
@@ -42,7 +48,9 @@ _MAX_BYTES = 262_144
 # unattended; the sign-in itself is not a setting.
 REFRESH_ARGS = ["-p", "/usage", "--no-session-persistence", "--model", "haiku", "--tools", "", "--strict-mcp-config",
                 "--setting-sources", "project"]
-REFRESH_TIMEOUT_S = 300.0
+# How long a poll waits for the CLI before leaving it to finish on its own.
+REFRESH_WAIT_S = 300.0
+REFRESH_LOG_MAX_BYTES = 65_536
 _KEEP_ENV = {"CLAUDE_CONFIG_DIR", "CLAUDE_CODE_GIT_BASH_PATH"}
 
 
@@ -86,9 +94,33 @@ def read_token(path: Path, now: float | None = None) -> str:
         raise Unavailable("no Claude subscription sign-in")
     expires = oauth.get("expiresAt")
     if isinstance(expires, (int, float)) and not isinstance(expires, bool):
-        if expires / 1000 <= (time.time() if now is None else now) + 30:
+        try:
+            expires_s = expires / 1000
+        except OverflowError:
+            raise Unavailable("credentials file unreadable") from None
+        if expires_s <= (time.time() if now is None else now) + 30:
             raise Expired("sign-in token expired; run `claude` in a terminal to refresh it (desktop app sessions do not)")
     return token
+
+
+def credential_state(path: Path) -> str:
+    """valid, expired, signed_out (the file holds no access token, as after invalid_grant),
+    missing or unreadable. Safe to log: the token itself is read and dropped."""
+    try:
+        read_token(path)
+        return "valid"
+    except Expired:
+        return "expired"
+    except Unavailable as exc:
+        return {"credentials file not found": "missing", "credentials file unreadable": "unreadable"}.get(exc.reason, "signed_out")
+
+
+def _stamp(path: Path) -> tuple[int, int] | None:
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat.st_mtime_ns, stat.st_size
 
 
 def cli_environment(environ: Mapping[str, str]) -> dict[str, str]:
@@ -115,34 +147,102 @@ def cli_command(environ: Mapping[str, str]) -> list[str] | None:
     return [found, *REFRESH_ARGS] if found and Path(found).is_absolute() else None
 
 
-def refresh_via_cli(workdir: Path, stop: threading.Event | None = None,
-                    timeout: float = REFRESH_TIMEOUT_S) -> str | None:
-    """Ask Claude Code to refresh its own expired token. Returns None when the CLI ran
-    cleanly, else a reason safe to surface. Output is discarded; the poller re-reads the
-    credentials file to learn whether the token actually changed."""
-    environ = cli_environment(os.environ)
-    command = cli_command(environ)
-    if command is None:
-        return "claude CLI not found"
-    try:
-        workdir.mkdir(parents=True, exist_ok=True)
-        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                   cwd=workdir, env=environ, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, ValueError) as exc:
-        return f"claude CLI failed to start ({exc.__class__.__name__})"
-    deadline = time.monotonic() + timeout
-    while process.poll() is None:
-        if stop is not None and stop.is_set():
-            # Left to finish: killing it could interrupt the CLI while it stores a rotated token.
+class CliRefresher:
+    """Asks Claude Code to refresh its own expired token, one CLI at a time.
+
+    Calling it returns None when the CLI ran cleanly, else a reason safe to surface. Output is
+    discarded; the poller re-reads the credentials file to learn whether the token changed.
+    A CLI still running after `wait_s`, or when the service stops, is left to finish (see the
+    module notes) and a watcher logs how it ended; until then further calls start nothing."""
+
+    def __init__(self, workdir: Path, credentials: Path, log_path: Path | None = None,
+                 stop: threading.Event | None = None, wait_s: float = REFRESH_WAIT_S):
+        self.workdir, self.credentials, self.log_path = workdir, credentials, log_path
+        self.stop, self.wait_s = stop, wait_s
+        self._running: subprocess.Popen | None = None
+        self._watcher: threading.Thread | None = None
+        self._log_lock = threading.Lock()
+
+    def __call__(self) -> str | None:
+        if self._running is not None:
+            if self._running.poll() is None:
+                self._log(outcome="skipped", reason="previous claude CLI still running")
+                return "previous claude CLI still running"
+            self.join(5)  # its watcher records how it ended before another CLI can change the file
+        self._running = None
+        if self.stop is not None and self.stop.is_set():
             return "service stopping"
-        if time.monotonic() >= deadline:
-            process.kill()
-            try: process.wait(timeout=5)
-            except subprocess.TimeoutExpired: pass
-            return "claude CLI timed out"
-        if stop is not None: stop.wait(0.25)
-        else: time.sleep(0.25)
-    return None if process.returncode == 0 else f"claude CLI exited {process.returncode}"
+        before, stamp = credential_state(self.credentials), _stamp(self.credentials)
+        environ = cli_environment(os.environ)
+        command = cli_command(environ)
+        if command is None:
+            self._log(outcome="not_found", credentials_before=before)
+            return "claude CLI not found"
+        started_at, started = now_utc(), time.monotonic()
+        try:
+            self.workdir.mkdir(parents=True, exist_ok=True)
+            process = subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                       stderr=subprocess.DEVNULL, cwd=self.workdir, env=environ,
+                                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        except (OSError, ValueError) as exc:
+            self._log(outcome="failed_to_start", error=exc.__class__.__name__, credentials_before=before)
+            return f"claude CLI failed to start ({exc.__class__.__name__})"
+        deadline = started + self.wait_s
+        while process.poll() is None:
+            stopping = self.stop is not None and self.stop.is_set()
+            if stopping or time.monotonic() >= deadline:
+                reason = "service stopping" if stopping else f"claude CLI still running after {self.wait_s:g} s; left to finish"
+                self._leave(process, started_at, started, before, stamp, reason)
+                return reason
+            if self.stop is not None: self.stop.wait(0.25)
+            else: time.sleep(0.25)
+        self._log_end(process.returncode, started_at, started, before, stamp, outcome="exited")
+        return None if process.returncode == 0 else f"claude CLI exited {process.returncode}"
+
+    def join(self, timeout: float | None = None) -> None:
+        """Waits until a CLI that was left running has exited and been logged."""
+        if self._watcher is not None:
+            self._watcher.join(timeout)
+
+    def _leave(self, process, started_at, started, before, stamp, reason):
+        self._running = process
+        self._log(outcome="left_running", reason=reason, started_at=iso(started_at),
+                  waited_s=round(time.monotonic() - started, 1), credentials_before=before)
+
+        def watch():
+            try:
+                self._log_end(process.wait(), started_at, started, before, stamp, outcome="finished_late")
+            except Exception:  # diagnostics only; never raise into the interpreter's thread hook
+                pass
+
+        self._watcher = threading.Thread(target=watch, name="claude-refresh-watch", daemon=True)
+        self._watcher.start()
+
+    def _log_end(self, code, started_at, started, before, stamp, outcome):
+        self._log(outcome=outcome, exit_code=code, started_at=iso(started_at),
+                  duration_s=round(time.monotonic() - started, 1), credentials_before=before,
+                  credentials_after=credential_state(self.credentials),
+                  credentials_rewritten=_stamp(self.credentials) != stamp)
+
+    def _log(self, **record):
+        """One JSON line per event; the file keeps its newest half once past the size cap.
+        Diagnostics only: a failed write never affects the refresh."""
+        if self.log_path is None:
+            return
+        line = json.dumps({"at": iso(now_utc()), **record}, separators=(",", ":")) + "\n"
+        with self._log_lock:
+            try:
+                if self.log_path.stat().st_size > REFRESH_LOG_MAX_BYTES:
+                    lines = self.log_path.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+                    atomic_write_text(self.log_path, "".join(lines[len(lines) // 2:]))
+            except OSError:
+                pass
+            try:
+                self.log_path.parent.mkdir(parents=True, exist_ok=True)
+                with self.log_path.open("a", encoding="utf-8") as handle:
+                    handle.write(line)
+            except OSError:
+                pass
 
 
 def fetch(token: str, timeout: float = 15.0) -> dict:

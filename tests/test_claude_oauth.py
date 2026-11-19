@@ -65,6 +65,11 @@ def test_read_token_reports_safe_reasons(tmp_path):
     path.write_text(json.dumps({"claudeAiOauth": {}}), encoding="utf-8")
     with pytest.raises(claude_oauth.Unavailable, match="no Claude subscription"):
         claude_oauth.read_token(path)
+    # An expiry too large for a float is a corrupt file, not an exception that escapes.
+    path.write_text(json.dumps({"claudeAiOauth": {"accessToken": TOKEN, "expiresAt": 10 ** 400}}), encoding="utf-8")
+    with pytest.raises(claude_oauth.Unavailable, match="unreadable"):
+        claude_oauth.read_token(path)
+    assert claude_oauth.credential_state(path) == "unreadable"
     write_credentials(tmp_path, expires_in_s=10)
     with pytest.raises(claude_oauth.Unavailable, match="expired") as raised:
         claude_oauth.read_token(path)
@@ -196,28 +201,144 @@ def child(monkeypatch, code):
     monkeypatch.setattr(claude_oauth, "cli_command", lambda environ: [sys.executable, "-c", code])
 
 
-def test_refresh_via_cli_runs_in_its_workdir_without_auth_overrides(tmp_path, monkeypatch):
+def gated_child(monkeypatch, gate, done):
+    """A CLI that stays busy until the test opens `gate`, as one stuck mid-refresh would."""
+    child(monkeypatch, "import os, time\ndeadline = time.time() + 30\n"
+                       f"while not os.path.exists({str(gate)!r}) and time.time() < deadline: time.sleep(0.05)\n"
+                       f"open({str(done)!r}, 'a').write('x')")
+
+
+def count_launches(monkeypatch, after=lambda: None):
+    launches, real = [], claude_oauth.subprocess.Popen
+
+    def launch(*args, **kwargs):
+        process = real(*args, **kwargs)
+        launches.append(1)
+        after()
+        return process
+
+    monkeypatch.setattr(claude_oauth.subprocess, "Popen", launch)
+    return launches
+
+
+def refresher(home, **kwargs):
+    return claude_oauth.CliRefresher(home / "claude-refresh", home / ".credentials.json",
+                                     log_path=home / "claude-refresh.jsonl", **kwargs)
+
+
+def log_records(home):
+    return [json.loads(line) for line in (home / "claude-refresh.jsonl").read_text(encoding="utf-8").splitlines()]
+
+
+def test_cli_refresher_runs_in_its_workdir_without_auth_overrides(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "key")
+    write_credentials(tmp_path)
     child(monkeypatch, "import os, sys; open('seen.txt', 'w').write(os.getcwd()); "
                        "sys.exit(3 if 'ANTHROPIC_API_KEY' in os.environ else 0)")
+    refresh = refresher(tmp_path)
+    assert refresh() is None
     workdir = tmp_path / "claude-refresh"
-    assert claude_oauth.refresh_via_cli(workdir) is None
     assert os.path.samefile((workdir / "seen.txt").read_text(), workdir)
     child(monkeypatch, "import sys; sys.exit(3)")
-    assert claude_oauth.refresh_via_cli(workdir) == "claude CLI exited 3"
+    assert refresh() == "claude CLI exited 3"
+    assert [(r["outcome"], r["exit_code"], r["credentials_after"]) for r in log_records(tmp_path)] == [
+        ("exited", 0, "valid"), ("exited", 3, "valid")]
 
 
-def test_refresh_via_cli_reports_missing_hung_and_unstartable_clis(tmp_path, monkeypatch):
+def test_cli_refresher_logs_credential_states_but_never_their_content(tmp_path, monkeypatch):
+    path = write_credentials(tmp_path, expires_in_s=-60)
+    # What Claude Code leaves when the token server refuses the refresh token (invalid_grant).
+    cleared = json.dumps({"claudeAiOauth": {"accessToken": "", "refreshToken": "", "expiresAt": 0}})
+    child(monkeypatch, f"open({str(path)!r}, 'w').write({cleared!r})")
+    assert refresher(tmp_path)() is None
+    record, = log_records(tmp_path)
+    assert (record["credentials_before"], record["credentials_after"], record["credentials_rewritten"]) == (
+        "expired", "signed_out", True)
+    text = (tmp_path / "claude-refresh.jsonl").read_text(encoding="utf-8")
+    assert TOKEN not in text and "refresh-secret" not in text
+
+
+def test_cli_refresher_never_kills_a_slow_cli_and_starts_no_second_one(tmp_path, monkeypatch):
+    write_credentials(tmp_path, expires_in_s=-60)
+    gate, done = tmp_path / "gate", tmp_path / "done"
+    gated_child(monkeypatch, gate, done)
+    launches = count_launches(monkeypatch)
+    refresh = refresher(tmp_path, wait_s=0.3)
+    assert refresh() == "claude CLI still running after 0.3 s; left to finish"
+    assert refresh() == "previous claude CLI still running"
+    assert len(launches) == 1
+    gate.touch()
+    refresh.join(timeout=30)
+    # The CLI ran to completion: it was neither killed nor started twice.
+    assert done.read_text() == "x"
+    assert [(r["outcome"], r.get("exit_code")) for r in log_records(tmp_path)] == [
+        ("left_running", None), ("skipped", None), ("finished_late", 0)]
+    # Once it has exited, the next attempt starts a CLI again.
+    child(monkeypatch, "pass")
+    refresh.wait_s = 60.0
+    assert refresh() is None and len(launches) == 2
+
+
+def test_cli_refresher_leaves_the_cli_running_when_the_service_stops(tmp_path, monkeypatch):
     import threading
-    monkeypatch.setattr(claude_oauth, "cli_command", lambda environ: None)
-    assert claude_oauth.refresh_via_cli(tmp_path) == "claude CLI not found"
-    child(monkeypatch, "import time; time.sleep(5)")
-    assert claude_oauth.refresh_via_cli(tmp_path, timeout=0.5) == "claude CLI timed out"
+    write_credentials(tmp_path, expires_in_s=-60)
+    gate, done = tmp_path / "gate", tmp_path / "done"
+    gated_child(monkeypatch, gate, done)
     stop = threading.Event()
-    stop.set()
-    assert claude_oauth.refresh_via_cli(tmp_path, stop) == "service stopping"
+    # The service stops while the CLI it just started is still busy.
+    launches = count_launches(monkeypatch, after=stop.set)
+    refresh = refresher(tmp_path, stop=stop)
+    assert refresh() == "service stopping"
+    assert refresh() == "previous claude CLI still running"
+    gate.touch()
+    refresh.join(timeout=30)
+    assert done.read_text() == "x"
+    assert log_records(tmp_path)[-1]["outcome"] == "finished_late"
+    # A stopping service starts nothing new.
+    assert refresh() == "service stopping" and len(launches) == 1
+
+
+def test_cli_refresher_reports_missing_and_unstartable_clis(tmp_path, monkeypatch):
+    monkeypatch.setattr(claude_oauth, "cli_command", lambda environ: None)
+    refresh = refresher(tmp_path)
+    assert refresh() == "claude CLI not found"
     monkeypatch.setattr(claude_oauth, "cli_command", lambda environ: [str(tmp_path / "missing.exe")])
-    assert claude_oauth.refresh_via_cli(tmp_path) == "claude CLI failed to start (FileNotFoundError)"
+    assert refresh() == "claude CLI failed to start (FileNotFoundError)"
+    records = log_records(tmp_path)
+    assert [(r["outcome"], r["credentials_before"]) for r in records] == [("not_found", "missing"), ("failed_to_start", "missing")]
+    # An unwritable log never affects the refresh.
+    unlogged = claude_oauth.CliRefresher(tmp_path / "claude-refresh", tmp_path / ".credentials.json", log_path=tmp_path)
+    assert unlogged() == "claude CLI failed to start (FileNotFoundError)"
+
+
+def test_refresh_log_keeps_its_newest_half_past_the_size_cap(tmp_path, monkeypatch):
+    monkeypatch.setattr(claude_oauth, "REFRESH_LOG_MAX_BYTES", 400)
+    monkeypatch.setattr(claude_oauth, "cli_command", lambda environ: None)
+    refresh = refresher(tmp_path)
+    for _ in range(40):
+        refresh()
+    records = log_records(tmp_path)
+    assert (tmp_path / "claude-refresh.jsonl").stat().st_size < 600
+    assert 2 <= len(records) < 40 and all(r["outcome"] == "not_found" for r in records)
+
+
+def test_poller_builds_a_logging_refresher_by_default(tmp_path, monkeypatch):
+    write_credentials(tmp_path, expires_in_s=-60)
+    made = []
+
+    class Recorder:
+        def __init__(self, workdir, credentials, log_path=None, stop=None):
+            made.append((workdir, credentials, log_path, stop))
+
+        def __call__(self):
+            return None
+
+    monkeypatch.setattr(claude_oauth, "CliRefresher", Recorder)
+    stop = Stop(1)
+    run_claude_oauth(stop, lambda rows: None, lambda *args: None, claude_home=tmp_path,
+                     fetch=lambda token: pytest.fail("expired token was sent"),
+                     refresh_dir=tmp_path / "work", refresh_log=tmp_path / "refresh.jsonl")
+    assert made == [(tmp_path / "work", tmp_path / ".credentials.json", tmp_path / "refresh.jsonl", stop)]
 
 
 def test_rejected_token_waits_for_new_credentials(tmp_path):
