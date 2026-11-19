@@ -120,7 +120,7 @@ CSS = """
 .cg-spent{fill:var(--color-live)}
 .cg-band{fill:var(--color-accent);fill-opacity:.2}
 .cg-axis{stroke:var(--color-rule-2)}
-.cg-lbl{fill:var(--color-muted);font-family:var(--font-mono);font-size:var(--text-xs)}
+.cg-lbl{fill:var(--color-muted);font-size:var(--text-xs)}
 """
 
 

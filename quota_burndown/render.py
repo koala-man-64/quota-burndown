@@ -991,7 +991,7 @@ def _palette_css(palette) -> str:
 
 STAMP = """/* Hallmark · shape: app screen · genre: atmospheric · theme: Lumen (deal 1/3, seed local-capacity-dashboard-showing-54c8·7e35cb55·2026-10-30·r0) · redesign: full
  * nav: the kept shell, a top bar of wordmark, underline tabs and the theme toggle · signature: the weekly burndown card, used percentage set large against its pace verdict over a blueprint well · states: stale reading, expired window, no readings, ledger unavailable, refresh failed, text loading, no usage
- * axes: dark/roman-serif/warm · posture: restrained · contrast: pass · lumen: night and day, the day drop keeps a darkened brass because the plan graph copy names amber · fonts: local stacks, nothing is fetched · v2.0.0 */
+ * axes: dark/grotesk/warm · posture: restrained · contrast: pass · lumen: night and day, the day drop keeps a darkened brass because the plan graph copy names amber · fonts: local stacks, nothing is fetched; one sans family for headings, prose and chart text, mono only for code and prompt text · v2.0.0 */
 /* Hallmark · pre-emit critique: P4 H5 E4 S4 R4 V4 · weakest: S and E, a quota page could pass for any dev tool's settings; led with the burndown cards and moved the plan forms to the end */
 /* Hallmark · dismissed 73 · the recent requests panel scrolls at 42rem and the rows read under its footnote are clipped below the panel edge, never painted there, measured in the browser */
 /* Hallmark · dismissed F25 · the daily totals table pins its model column and stays closed inside its details until asked for */
@@ -1001,7 +1001,6 @@ STAMP = """/* Hallmark · shape: app screen · genre: atmospheric · theme: Lume
 TOKENS = """:root{
 --space-3xs:2px;--space-2xs:4px;--space-xs:8px;--space-sm:12px;--space-md:16px;--space-lg:24px;--space-xl:40px;--space-2xl:64px;--space-3xl:96px;
 --text-xs:0.75rem;--text-sm:0.875rem;--text-md:1rem;--text-lg:1.2rem;--text-xl:1.44rem;--text-2xl:1.728rem;--text-3xl:2.074rem;--text-4xl:2.488rem;
---font-display:"Instrument Serif","Sitka Banner","Sitka Display","Iowan Old Style","New York",ui-serif,Georgia,serif;
 --font-body:"Geist","Segoe UI Variable Text","Segoe UI",ui-sans-serif,system-ui,sans-serif;
 --font-mono:"Geist Mono","Cascadia Mono",ui-monospace,"SF Mono",Consolas,monospace;
 --tracking-display:-0.015em;--radius-card:10px;--radius-inner:6px;--radius-mark:2px;--radius-pill:999px;--control:2.25rem;--blueprint:48px;
@@ -1026,7 +1025,7 @@ code{font-family:var(--font-mono);font-size:0.9em}
 button,input,select{font:inherit}
 input,select{min-width:0;max-width:100%}
 h1,h2,h3,h4{margin:0;overflow-wrap:break-word;min-width:0;text-wrap:balance;text-transform:lowercase}
-h1,h2{font-family:var(--font-display);font-weight:400;font-synthesis:none;letter-spacing:var(--tracking-display);line-height:1.05}
+h1,h2{font-weight:600;letter-spacing:var(--tracking-display);line-height:1.15}
 h3{font-size:var(--text-md);font-weight:600;line-height:1.3}
 h4{font-size:var(--text-xs);font-weight:400;line-height:1.4;color:var(--color-muted)}
 .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
@@ -1098,7 +1097,7 @@ footer{width:min(100% - 2 * var(--gutter),var(--container) - 2 * var(--gutter));
 #dashboard-data>.note:first-child{margin:var(--space-lg) 0 var(--space-xl)}
 .history-grid{display:grid;grid-template-columns:minmax(0,1fr);gap:var(--space-xl);align-items:start}
 section.provider{min-width:0}
-section.provider>h2{font-size:var(--text-2xl);margin:0 0 var(--space-sm)}
+section.provider>h2{font-size:var(--text-xl);margin:0 0 var(--space-sm)}
 section.provider>.cards{container:quota-card/inline-size}
 .card{min-width:0;background:var(--color-paper-2);border:1px solid var(--color-rule);border-radius:var(--radius-card);padding:var(--space-lg) var(--space-lg) var(--space-md)}
 .card header{display:flex;justify-content:space-between;align-items:center;gap:var(--space-xs);flex-wrap:wrap}
@@ -1129,10 +1128,14 @@ figure.chart-figure{display:flex;flex-wrap:wrap;column-gap:var(--space-lg);margi
 figure.chart-figure>*{flex:1 1 100%;min-width:0}
 figure.chart-figure>h4{margin-bottom:var(--space-xs)}
 svg.chart{display:block;width:100%;height:auto;touch-action:none;outline:none;border-radius:var(--radius-inner);background-color:var(--color-paper);background-image:linear-gradient(var(--color-blueprint) 1px,transparent 1px),linear-gradient(90deg,var(--color-blueprint) 1px,transparent 1px);background-size:var(--blueprint) var(--blueprint)}
+svg.chart{--u:min(var(--svg-unit,1),1.5)}
+.model-token-chart{--u:min(var(--svg-unit,1),2)}
+.lbl,.reset-lbl,.reset-marker-lbl,.credit-expiry-lbl,.target-lbl{font-size:calc(var(--text-xs) * var(--u,1))}
+.end-lbl{font-size:calc(var(--text-sm) * var(--u,1))}
 svg.chart:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
 .grid{stroke:var(--color-rule);stroke-width:1}
 .axis{stroke:var(--color-rule-2);stroke-width:1}
-.lbl{fill:var(--color-muted);font-family:var(--font-mono);font-size:var(--text-sm)}
+.lbl{fill:var(--color-muted)}
 .future{fill:var(--color-ink);opacity:.03}
 .area{fill:var(--color-ink);opacity:.06}
 .used{fill:none;stroke:var(--color-ink);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
@@ -1141,15 +1144,15 @@ svg.chart:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px
 .proj{stroke:var(--color-ink);stroke-width:1.5;stroke-dasharray:1.5 4;stroke-linecap:round;opacity:.8}
 .proj-reset{stroke:var(--color-live);stroke-width:2;stroke-dasharray:1.5 4;stroke-linecap:round}
 .reset-marker{fill:var(--color-live);stroke:var(--color-paper);stroke-width:2}
-.reset-marker-lbl{fill:var(--color-live);font-size:var(--text-sm);font-weight:600}
+.reset-marker-lbl{fill:var(--color-live);font-weight:600}
 .credit-expiry-tick{stroke:var(--color-rose);stroke-width:1.5}
-.credit-expiry-lbl{fill:var(--color-rose);font-size:var(--text-sm)}
+.credit-expiry-lbl{fill:var(--color-rose)}
 .now{stroke:var(--color-muted);stroke-width:1}
 .reset-tick{stroke:var(--color-rule-2);stroke-width:1.5}
-.reset-lbl{fill:var(--color-muted);font-size:var(--text-sm)}
+.reset-lbl{fill:var(--color-muted)}
 .end-ring{fill:var(--color-paper)}
 .end-dot{fill:var(--color-ink)}
-.end-lbl{fill:var(--color-ink);font-size:var(--text-md);font-weight:600}
+.end-lbl{fill:var(--color-ink);font-weight:600}
 .crosshair{stroke:var(--color-ink-2);stroke-width:1;opacity:0;pointer-events:none}
 .hover-dot{fill:var(--color-ink);stroke:var(--color-paper);stroke-width:2;opacity:0;pointer-events:none}
 .tok-bar{stroke:var(--color-paper);stroke-width:1;opacity:.5}
@@ -1162,11 +1165,11 @@ svg.chart:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px
 .tok-s7{fill:var(--tok-7)}.tok-legend i.tok-s7{background:var(--tok-7)}
 .tok-other{fill:var(--color-muted)}.tok-legend i.tok-other{background:var(--color-muted)}
 .tok-legend{list-style:none;padding:0;margin:var(--space-xs) 0 0;display:flex;flex-wrap:wrap;gap:var(--space-2xs) var(--space-md);font-size:var(--text-xs);color:var(--color-muted);overflow-wrap:anywhere}
-.tok-legend li{display:inline-flex;align-items:center;gap:var(--space-xs);font-family:var(--font-mono)}
+.tok-legend li{display:inline-flex;align-items:center;gap:var(--space-xs)}
 .tok-legend i{flex-shrink:0;width:0.625rem;height:0.625rem;border-radius:var(--radius-mark)}
 .pace-target{stroke:var(--color-accent);stroke-width:2;stroke-dasharray:6 3;stroke-linecap:round;pointer-events:none}
 .target-tick{stroke:var(--color-accent);stroke-width:1.5;stroke-dasharray:3 3;pointer-events:none}
-.target-lbl{fill:var(--color-accent);font-size:var(--text-sm);font-weight:600;pointer-events:none}
+.target-lbl{fill:var(--color-accent);font-weight:600;pointer-events:none}
 .target-dot{fill:var(--color-accent);stroke:var(--color-paper);stroke-width:2;pointer-events:none}
 .token-efficiency{margin:var(--space-sm) 0 0;font-size:var(--text-xs);color:var(--color-muted)}
 figure.chart-figure>.token-efficiency{max-width:none;padding-right:max(0px,calc(100% - 75ch))}
@@ -1180,7 +1183,7 @@ summary{cursor:pointer;text-transform:lowercase}
 summary:hover{color:var(--color-ink)}
 
 section.model-tokens,section.usage,section.efficiency-section,section.credit-plans{margin-top:var(--space-3xl)}
-section.model-tokens>h2,section.usage>h2,section.efficiency-section>h2,section.credit-plans>h2{font-size:var(--text-2xl);margin:0 0 var(--space-sm)}
+section.model-tokens>h2,section.usage>h2,section.efficiency-section>h2,section.credit-plans>h2{font-size:var(--text-xl);margin:0 0 var(--space-sm)}
 section.model-tokens>.note,section.efficiency-section>.note,section.credit-plans>.note{margin:0 0 var(--space-lg)}
 .model-token-grid,section.usage .cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:var(--space-lg);align-items:start}
 @media (max-width:75rem){.model-token-grid,section.usage .cards{grid-template-columns:repeat(auto-fit,minmax(min(100%,24rem),1fr))}}
@@ -1188,7 +1191,6 @@ section.model-tokens>.note,section.efficiency-section>.note,section.credit-plans
 .model-token-card>h3+p{margin-top:var(--space-2xs);font-size:var(--text-lg);font-weight:600}
 .model-token-card>.note{margin:var(--space-2xs) 0 var(--space-sm);font-size:var(--text-xs)}
 .model-token-chart{display:block;width:100%;height:auto;overflow:visible}
-.model-token-chart .lbl{fill:var(--color-muted);font-family:var(--font-mono);font-size:22px}
 .model-token-chart .grid{stroke:var(--color-rule)}
 .model-token-table{margin-top:var(--space-xs);font-size:var(--text-xs);color:var(--color-muted);overflow:auto}
 .model-token-table table{white-space:nowrap;margin-top:var(--space-2xs)}
@@ -1208,7 +1210,6 @@ table.usage tr.inferred td{color:var(--color-muted);font-style:italic}
 .recent h3{padding:var(--space-md) 0 var(--space-xs)}
 .recent table.usage thead{position:sticky;top:0;z-index:var(--z-raised);background:var(--color-paper-2)}
 .recent table.usage th:nth-child(-n+3),.recent table.usage td:nth-child(-n+3){text-align:left}
-.recent table.usage td:nth-child(3){font-family:var(--font-mono);font-size:var(--text-xs)}
 .recent table.usage tr:has(+ tr > td > .request-text) td{border-bottom:0;padding-bottom:0}
 .recent table.usage td:has(> .request-text){padding-top:0}
 .request-text{text-align:left;white-space:normal}
@@ -1288,6 +1289,29 @@ HOVER_SCRIPT = """
   }
   bindCharts();
   document.addEventListener('dashboard:updated', function(){ tip.hidden = true; bindCharts(); });
+})();
+"""
+
+CHART_TEXT_SCRIPT = """
+(function(){
+  // SVG text scales with its viewBox; publish viewBox units per CSS pixel as --svg-unit so the
+  // stylesheet can keep chart labels at the page's own text size at any chart width.
+  function apply(svg, w){
+    var vb = svg.viewBox && svg.viewBox.baseVal;
+    if (vb && vb.width && w) svg.style.setProperty('--svg-unit', (vb.width / w).toFixed(3));
+  }
+  var ro = window.ResizeObserver ? new ResizeObserver(function(entries){
+    entries.forEach(function(entry){ apply(entry.target, entry.contentRect.width); });
+  }) : null;
+  function watch(){
+    if (ro) ro.disconnect();
+    Array.prototype.forEach.call(document.querySelectorAll('svg.chart,svg.model-token-chart'), function(svg){
+      apply(svg, svg.getBoundingClientRect().width);
+      if (ro) ro.observe(svg);
+    });
+  }
+  watch();
+  document.addEventListener('dashboard:updated', watch);
 })();
 """
 
@@ -2046,6 +2070,7 @@ def render_html(
     live_script = f'<script id="live-script">{LIVE_SCRIPT}</script>' if live else ""
     target_script = f'<script id="target-script">{TARGET_SCRIPT}</script>'
     theme_script = f'<script id="theme-script">{THEME_SCRIPT}</script>'
+    chart_text_script = f'<script id="chart-text-script">{CHART_TEXT_SCRIPT}</script>'
     mode = "live dashboard" if live else f"static fallback generated {updated}"
     return "".join((
         "<!doctype html>\n<html lang=\"en\"><head><meta charset=\"utf-8\">",
@@ -2064,7 +2089,7 @@ def render_html(
         # Plans change rarely and their forms keep unsaved edits, so they sit after the live data.
         credit_ui.html(credit_plans, now, live), "</main>",
         f"<footer>Above the dashed pace line = spending faster than a straight line to the reset (over pace); below it = under pace. Hover or focus a chart and use the arrow keys to read exact readings. quota-burndown {esc(__version__)}</footer>",
-        hover, live_script, target_script, theme_script,
+        chart_text_script, hover, live_script, target_script, theme_script,
         '<script id="credit-plan-script">' + credit_ui.script(credit_plans) + '</script>', "</body></html>\n",
     ))
 
