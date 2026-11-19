@@ -154,3 +154,11 @@ def test_page_uses_one_sans_family_and_screen_sized_chart_text(store):
     # Chart labels are sized in screen pixels through the --svg-unit the chart-text script publishes.
     assert ".lbl,.reset-lbl,.reset-marker-lbl,.credit-expiry-lbl,.target-lbl{font-size:calc(var(--text-xs) * var(--u,1))}" in css
     assert '<script id="chart-text-script">' in page and "--svg-unit" in page
+
+
+def test_chart_strokes_are_thin_screen_pixels(store):
+    css = render.render_html(store, now=NOW, live=True)
+    # Strokes ignore the viewBox scale, so widths are screen pixels at any chart width.
+    assert "svg.chart :is(line,path,.tok-bar){vector-effect:non-scaling-stroke}" in css
+    assert ".used{fill:none;stroke:var(--color-ink);stroke-width:1.5;" in css
+    assert ".pace{stroke:var(--color-muted);stroke-width:1;" in css

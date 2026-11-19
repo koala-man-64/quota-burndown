@@ -195,7 +195,7 @@ def chart_svg(data: ChartData, chart_id: str, title: str) -> str:
     for ts, used, label in data.reset_markers:
         if data.span_start <= ts <= data.span_end:
             cx, cy = _x_of(data, ts), _y_of(used)
-            parts.append(f'<circle class="reset-marker" cx="{cx:.1f}" cy="{cy:.1f}" r="4.5"><title>{esc(label)}</title></circle>')
+            parts.append(f'<circle class="reset-marker" cx="{cx:.1f}" cy="{cy:.1f}" r="3.5"><title>{esc(label)}</title></circle>')
             anchor = "end" if cx > CHART_W * 0.75 else "start"
             dx = -8 if anchor == "end" else 8
             parts.append(f'<text class="reset-marker-lbl" x="{cx + dx:.1f}" y="{cy - 6:.1f}" text-anchor="{anchor}">{esc(label)}</text>')
@@ -219,15 +219,15 @@ def chart_svg(data: ChartData, chart_id: str, title: str) -> str:
     end = data.end_point
     if end is not None:
         x, y = _x_of(data, end.ts), _y_of(end.used)
-        parts.append(f'<circle class="end-ring" cx="{x:.1f}" cy="{y:.1f}" r="6"/>')
-        parts.append(f'<circle class="end-dot" cx="{x:.1f}" cy="{y:.1f}" r="4"/>')
+        parts.append(f'<circle class="end-ring" cx="{x:.1f}" cy="{y:.1f}" r="4.5"/>')
+        parts.append(f'<circle class="end-dot" cx="{x:.1f}" cy="{y:.1f}" r="3"/>')
         anchor = "end" if x > CHART_W * 0.85 else "start"
         dx = -10 if anchor == "end" else 10
         parts.append(f'<text class="end-lbl" x="{x + dx:.1f}" y="{y - 8:.1f}" text-anchor="{anchor}">{end.used:.0f}%</text>')
 
     parts.append(f'<line class="crosshair" x1="{PAD_L}" y1="{PAD_T}" x2="{PAD_L}" y2="{plot_bottom:.1f}"/>')
     parts.append(f'<line class="crosshair crosshair-y" x1="{PAD_L}" y1="{plot_bottom:.1f}" x2="{CHART_W - PAD_R}" y2="{plot_bottom:.1f}"/>')
-    parts.append(f'<circle class="hover-dot" cx="{PAD_L}" cy="{plot_bottom:.1f}" r="5"/>')
+    parts.append(f'<circle class="hover-dot" cx="{PAD_L}" cy="{plot_bottom:.1f}" r="3.5"/>')
     label = f"Percent of the {esc(title)} window used, {esc(data.span_label)}"
     return (
         f'<svg class="chart" viewBox="0 0 {CHART_W} {CHART_H}" role="img" tabindex="0" aria-label="{label}" '
@@ -1133,22 +1133,23 @@ svg.chart{--u:min(var(--svg-unit,1),1.5)}
 .lbl,.reset-lbl,.reset-marker-lbl,.credit-expiry-lbl,.target-lbl{font-size:calc(var(--text-xs) * var(--u,1))}
 .end-lbl{font-size:calc(var(--text-sm) * var(--u,1))}
 svg.chart:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
+svg.chart :is(line,path,.tok-bar){vector-effect:non-scaling-stroke}
 .grid{stroke:var(--color-rule);stroke-width:1}
 .axis{stroke:var(--color-rule-2);stroke-width:1}
 .lbl{fill:var(--color-muted)}
 .future{fill:var(--color-ink);opacity:.03}
 .area{fill:var(--color-ink);opacity:.06}
-.used{fill:none;stroke:var(--color-ink);stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
-.pace{stroke:var(--color-muted);stroke-width:1.5;stroke-dasharray:6 5;stroke-linecap:round}
-.pace-reset{stroke:var(--color-live);stroke-width:1.5;stroke-dasharray:8 5;stroke-linecap:round;opacity:.6}
-.proj{stroke:var(--color-ink);stroke-width:1.5;stroke-dasharray:1.5 4;stroke-linecap:round;opacity:.8}
-.proj-reset{stroke:var(--color-live);stroke-width:2;stroke-dasharray:1.5 4;stroke-linecap:round}
+.used{fill:none;stroke:var(--color-ink);stroke-width:1.5;stroke-linejoin:round;stroke-linecap:round}
+.pace{stroke:var(--color-muted);stroke-width:1;stroke-dasharray:6 5;stroke-linecap:round}
+.pace-reset{stroke:var(--color-live);stroke-width:1;stroke-dasharray:8 5;stroke-linecap:round;opacity:.6}
+.proj{stroke:var(--color-ink);stroke-width:1.25;stroke-dasharray:1.5 4;stroke-linecap:round;opacity:.8}
+.proj-reset{stroke:var(--color-live);stroke-width:1.25;stroke-dasharray:1.5 4;stroke-linecap:round}
 .reset-marker{fill:var(--color-live);stroke:var(--color-paper);stroke-width:2}
 .reset-marker-lbl{fill:var(--color-live);font-weight:600}
-.credit-expiry-tick{stroke:var(--color-rose);stroke-width:1.5}
+.credit-expiry-tick{stroke:var(--color-rose);stroke-width:1}
 .credit-expiry-lbl{fill:var(--color-rose)}
 .now{stroke:var(--color-muted);stroke-width:1}
-.reset-tick{stroke:var(--color-rule-2);stroke-width:1.5}
+.reset-tick{stroke:var(--color-rule-2);stroke-width:1}
 .reset-lbl{fill:var(--color-muted)}
 .end-ring{fill:var(--color-paper)}
 .end-dot{fill:var(--color-ink)}
@@ -1167,8 +1168,8 @@ svg.chart:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px
 .tok-legend{list-style:none;padding:0;margin:var(--space-xs) 0 0;display:flex;flex-wrap:wrap;gap:var(--space-2xs) var(--space-md);font-size:var(--text-xs);color:var(--color-muted);overflow-wrap:anywhere}
 .tok-legend li{display:inline-flex;align-items:center;gap:var(--space-xs)}
 .tok-legend i{flex-shrink:0;width:0.625rem;height:0.625rem;border-radius:var(--radius-mark)}
-.pace-target{stroke:var(--color-accent);stroke-width:2;stroke-dasharray:6 3;stroke-linecap:round;pointer-events:none}
-.target-tick{stroke:var(--color-accent);stroke-width:1.5;stroke-dasharray:3 3;pointer-events:none}
+.pace-target{stroke:var(--color-accent);stroke-width:1.25;stroke-dasharray:6 3;stroke-linecap:round;pointer-events:none}
+.target-tick{stroke:var(--color-accent);stroke-width:1;stroke-dasharray:3 3;pointer-events:none}
 .target-lbl{fill:var(--color-accent);font-weight:600;pointer-events:none}
 .target-dot{fill:var(--color-accent);stroke:var(--color-paper);stroke-width:2;pointer-events:none}
 .token-efficiency{margin:var(--space-sm) 0 0;font-size:var(--text-xs);color:var(--color-muted)}
