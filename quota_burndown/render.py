@@ -19,9 +19,9 @@ from .usage_report import TOKEN_SLOTS, token_slots
 from .util import atomic_write_text, fmt_local, fmt_minutes, iso, now_utc, parse_iso, to_local
 
 STALE_MIN = 20
-PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex", "codex-spark": "Codex Spark", "antigravity": "Antigravity"}
+PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex", "codex-spark": "Codex Spark"}
 WINDOW_TITLES = {"5h": "5-hour session", "7d": "7-day (all models)"}
-FAMILY_TITLES = {"gpt": "GPT", "spark": "Spark", "fable": "Fable", "opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku", "gemini": "Gemini"}
+FAMILY_TITLES = {"gpt": "GPT", "spark": "Spark", "fable": "Fable", "opus": "Opus", "sonnet": "Sonnet", "haiku": "Haiku"}
 STATUS_TEXT = {
     "over": "over pace",
     "under": "under pace",
@@ -34,7 +34,7 @@ STATUS_TEXT = {
 # Verdicts that extrapolate the latest reading to now; a stale reading cannot support them.
 PROJECTED_STATUSES = ("over", "under", "on-pace", "early")
 # Collectors that feed each provider's quota cards, most specific first.
-QUOTA_COLLECTORS = {"claude": ("claude_oauth", "claude"), "codex": ("codex",), "antigravity": ("antigravity",)}
+QUOTA_COLLECTORS = {"claude": ("claude_oauth", "claude"), "codex": ("codex",)}
 HEALTHY_STATES = ("healthy", "watching", "starting", "unsupported")
 CHART_W, CHART_H = 800, 320
 PAD_L, PAD_R, PAD_T, PAD_B = 48, 56, 30, 30
@@ -548,10 +548,6 @@ def history_group(bd: Burndown) -> str:
 
 USAGE_ROWS = (("prompts", "prompts"), ("requests", "requests"), ("input", "input"), ("cache_read", "cache read"), ("cache_write", "cache write"), ("output", "output"), ("total", "total"))
 USAGE_PERIOD_TITLES = {"today": "today", "7d": "7 days", "30d": "30 days"}
-ANTIGRAVITY_NOTE = (
-    "Antigravity writes no token counts. ~input is an unlabeled context counter read from its conversation "
-    "database and is kept out of every total; output tokens are unknown; Google exposes no local limit signal."
-)
 USAGE_FOOTNOTE = "Today is the local calendar day; 7 and 30 days are rolling windows. Tokens are what each tool recorded locally, not a bill."
 
 
@@ -589,9 +585,8 @@ def usage_card_html(provider: str, periods: dict[str, Totals], top: list[tuple[s
         '<h4>Top model × effort, 7 days</h4><table class="usage"><thead><tr><th>model @ effort</th><th>reqs</th><th>tokens</th></tr></thead>'
         f'<tbody>{"".join(top_rows)}</tbody></table>'
     ) if top_rows else ""
-    note = f'<div class="note">{esc(ANTIGRAVITY_NOTE)}</div>' if provider == "antigravity" else ""
     badge = "tokens inferred" if not exact else "exact counts"
-    return f'<article class="card usage-card"><header><h3>{esc(title)}</h3><span class="badge">{esc(badge)}</span></header>{table}{top_html}{note}</article>'
+    return f'<article class="card usage-card"><header><h3>{esc(title)}</h3><span class="badge">{esc(badge)}</span></header>{table}{top_html}</article>'
 
 
 def recent_table_html(rows: list[sqlite3.Row], *, live: bool = False) -> str:
@@ -754,7 +749,7 @@ def efficiency_section_html(usage_db: Path, now: datetime) -> str:
     )
     return (
         '<section class="efficiency-section"><h2>Efficiency drilldowns</h2>'
-        '<div class="note">Evidence-linked local ledger aggregates. Antigravity activity has unknown exact token capacity and counts.</div>'
+        '<div class="note">Evidence-linked local ledger aggregates.</div>'
         f'<ul id="efficiency-insights" class="insights">{insight_html}</ul>'
         f'<div id="efficiency-session-panel">{efficiency_table_html(data["by_session"], "By session")}</div>'
         f'<div id="efficiency-model-panel">{efficiency_table_html(data["by_model_effort"], "By model × effort")}</div>'
@@ -930,7 +925,7 @@ def capacity_matrix_html(capacity: dict | None, live: bool = False) -> str:
     def provider_state(name):
         value = provider_states.get(name, "unknown")
         return value.get("state", "unknown") if isinstance(value, dict) else value
-    provider_text = ", ".join(f"{name}: {provider_state(name)}" for name in ("codex", "claude", "antigravity"))
+    provider_text = ", ".join(f"{name}: {provider_state(name)}" for name in ("codex", "claude"))
     return (
         '<section id="capacity" class="capacity" aria-live="polite"><header><h2>Capacity</h2>'
         f'<span id="capacity-state" class="badge">{esc(mode)} · rev {esc(capacity.get("revision", "?"))}</span></header>'
@@ -1391,7 +1386,7 @@ CAPACITY_SCRIPT = """
     var observation=document.getElementById('capacity-observation-state');
     if(observation){
       var states=snapshot.provider_states || {}, health=snapshot.collector_health || {};
-      observation.textContent='Pools are shared allowances. Models show membership only. Unreported in-flight usage: unknown. Provider observations: ' + ['codex','claude','antigravity'].map(function(p){return p + ': ' + text(typeof states[p] === 'object' ? states[p].state : states[p]);}).join(', ') + '. Collector health: ' + Object.keys(health).map(function(p){return p + ': ' + text(health[p].state);}).join(', ');
+      observation.textContent='Pools are shared allowances. Models show membership only. Unreported in-flight usage: unknown. Provider observations: ' + ['codex','claude'].map(function(p){return p + ': ' + text(typeof states[p] === 'object' ? states[p].state : states[p]);}).join(', ') + '. Collector health: ' + Object.keys(health).map(function(p){return p + ': ' + text(health[p].state);}).join(', ');
     }
     Array.prototype.forEach.call(section.querySelectorAll('[data-reserve]'),function(b){b.classList.toggle('on', Number(b.getAttribute('data-reserve')) === Number((snapshot.policy || {}).reserve_pct));});
     ageStarted = Date.now(); tickAges();
@@ -1999,9 +1994,10 @@ def chart_usage(usage_db: Path | None, now: datetime, burndowns: list[Burndown])
     since = now - timedelta(minutes=2 * max(bd.window_min for bd in burndowns) + 1440)
     conn = ledger.connect(usage_db)
     try:
+        placeholders = ", ".join("?" for _ in ledger.PROVIDERS)
         rows = conn.execute(
-            "SELECT ts, model, total_tokens FROM events WHERE kind = ? AND total_tokens IS NOT NULL AND ts >= ?",
-            (ledger.REQUEST, iso(since)),
+            f"SELECT ts, model, total_tokens FROM events WHERE kind = ? AND provider IN ({placeholders}) AND total_tokens IS NOT NULL AND ts >= ?",
+            (ledger.REQUEST, *ledger.PROVIDERS, iso(since)),
         ).fetchall()
     finally:
         conn.close()

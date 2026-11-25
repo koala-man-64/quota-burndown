@@ -1,7 +1,6 @@
 import json
 from types import SimpleNamespace
 
-from test_usage_antigravity import make_home as make_antigravity_home
 from test_usage_claude import assistant, make_home as make_claude_home
 from test_usage_codex import desktop_rollout
 
@@ -11,8 +10,7 @@ from quota_burndown import ledger, usage
 def homes(tmp_path):
     claude_home, main, sub, wf = make_claude_home(tmp_path)
     desktop_rollout(tmp_path)
-    antigravity_home, db = make_antigravity_home(tmp_path)
-    return {"claude": claude_home, "codex": tmp_path / "codex", "antigravity": antigravity_home}, main
+    return {"claude": claude_home, "codex": tmp_path / "codex"}, main
 
 
 def test_collect_parses_changed_files_only(tmp_path, paths):
@@ -20,9 +18,9 @@ def test_collect_parses_changed_files_only(tmp_path, paths):
     conn = ledger.connect(paths.usage_db)
     stats, warnings = usage.collect(conn, homes=h)
     assert warnings == []
+    assert set(stats) == {"claude", "codex"}
     assert stats["claude"] == {"files_seen": 3, "files_parsed": 3, "events_written": 4 + 2 + 1, "files_deferred": 0}
     assert stats["codex"]["files_parsed"] == 1 and stats["codex"]["events_written"] == 5
-    assert stats["antigravity"]["files_parsed"] == 1 and stats["antigravity"]["events_written"] == 4
     total = ledger.count(conn)
 
     stats, warnings = usage.collect(conn, homes=h)
@@ -51,15 +49,24 @@ def test_collect_budget_defers_and_reports(tmp_path, paths, monkeypatch):
     conn.close()
 
 
-def test_collect_turns_unreadable_sources_into_warnings(tmp_path, paths):
+def test_collect_turns_unreadable_sources_into_warnings(tmp_path, paths, monkeypatch):
     h, main = homes(tmp_path)
-    broken = h["antigravity"] / "conversations" / "broken.db"
-    broken.write_text("this is not a sqlite database", encoding="utf-8")
+    broken = h["claude"] / "projects" / "C--proj" / "broken.jsonl"
+    broken.write_text("unreadable", encoding="utf-8")
+    mod = usage.provider_module("claude")
+    real_parse = mod.parse_file
+
+    def fail_broken(path, warnings=None):
+        if path == broken:
+            raise OSError("simulated read error")
+        return real_parse(path, warnings)
+
+    monkeypatch.setattr(mod, "parse_file", fail_broken)
     conn = ledger.connect(paths.usage_db)
-    stats, warnings = usage.collect(conn, providers=["antigravity"], homes=h)
-    assert stats["antigravity"]["files_parsed"] == 1
-    assert len(warnings) == 1 and warnings[0].startswith("antigravity: broken.db")
-    assert ledger.file_changed(conn, broken, *[x for p, x, _ in usage.provider_module("antigravity").discover(h["antigravity"], None) if p == broken][:1], 0.0) is True
+    stats, warnings = usage.collect(conn, providers=["claude"], homes=h)
+    assert stats["claude"]["files_parsed"] == 3
+    assert len(warnings) == 1 and warnings[0].startswith("claude: broken.jsonl")
+    assert ledger.file_changed(conn, broken, *[x for p, x, _ in mod.discover(h["claude"], None) if p == broken][:1], 0.0) is True
     conn.close()
 
 

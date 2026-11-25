@@ -165,19 +165,21 @@ def test_history_grid_has_one_cell_per_weekly_chart(store):
         Sample(NOW, "claude", "7d", 27.0, weekly_reset, 10080, "desktop"),
         Sample(NOW, "codex", "7d:codex", 28.0, weekly_reset, 10080, "app-server"),
         Sample(NOW, "codex", "7d:spark", 50.0, NOW + timedelta(days=4), 10080, "app-server"),
+        # Historical Antigravity rows remaining in samples.jsonl are ignored.
         Sample(NOW, "antigravity", "7d:gemini", 35.0, weekly_reset, 10080, "ledger"),
     ])
 
     html = render.render_html(store, now=NOW)
 
     cells = re.findall(r'<section class="provider">.*?</section>', html, re.S)
-    assert [re.search(r"<h2>(.*?) history</h2>", cell).group(1) for cell in cells] == ["Claude", "Codex", "Codex Spark", "Antigravity"]
+    assert [re.search(r"<h2>(.*?) history</h2>", cell).group(1) for cell in cells] == ["Claude", "Codex", "Codex Spark"]
     assert all(cell.count("<article") == 1 for cell in cells)
     titles = [re.search(r"<h3>(.*?)</h3>", cell).group(1) for cell in cells]
-    assert titles == ["7-day (all models)", "7-day (Codex)", "7-day (Spark)", "7-day (Gemini)"]
+    assert titles == ["7-day (all models)", "7-day (Codex)", "7-day (Spark)"]
+    assert "Antigravity" not in html
     assert 'class="card unavailable"' not in html
-    assert html.count('<figure class="chart-figure"') == 4
-    assert html.count('class="chart-data" data-for="c') == 4
+    assert html.count('<figure class="chart-figure"') == 3
+    assert html.count('class="chart-data" data-for="c') == 3
     # History cards stack in one column, and every card keeps the same stacked layout.
     assert ".history-grid{display:grid;grid-template-columns:minmax(0,1fr);" in html
     assert "nth-child(odd){grid-column:1/-1}" not in html and "quota-card (min-width:" not in html
@@ -348,9 +350,9 @@ def test_render_usage_section(store, paths):
     ])
     conn.close()
     html = render.render_html(store, now=NOW, usage_db=paths.usage_db)
-    assert "Token usage" in html and html.count('class="card usage-card') == 3
-    assert "claude-fable-5-1 @ xhigh" in html and "~29K" in html and "no usage in 30 days" in html
-    assert "Recent requests" in html and "unlabeled context counter" in html and "tokens inferred" in html
+    assert "Token usage" in html and html.count('class="card usage-card') == 2
+    assert "claude-fable-5-1 @ xhigh" in html and "no usage in 30 days" in html
+    assert "Recent requests" in html and "Antigravity" not in html and "unlabeled context counter" not in html
     assert "src=" not in html
     assert "Token usage" not in render.render_html(store, now=NOW)
 
@@ -423,40 +425,29 @@ def test_history_and_daily_charts_draw_a_model_in_the_same_color(store, paths):
     assert 'style="background:' not in daily
 
 
-def test_render_antigravity_weekly_chart(store):
-    from quota_burndown.providers.antigravity import weekly_cycle_bounds
-    start, reset = weekly_cycle_bounds(NOW)
-    store.append([
-        Sample(start, "antigravity", "7d:gemini", 0.0, reset, 10080, "ledger"),
-        Sample(NOW, "antigravity", "7d:gemini", 35.0, reset, 10080, "ledger"),
-    ])
-    html = render.render_html(store, now=NOW)
-    assert "<h2>Antigravity history</h2>" in html
-    assert "<h3>7-day (Gemini)</h3>" in html
-    assert "35%" in html
-    assert html.count('<figure class="chart-figure"') >= 1
-
-
 def test_cli_usage_round_trip(paths, monkeypatch, tmp_path, capsys):
-    from test_usage_antigravity import make_home
+    import pytest
+    from test_usage_claude import make_home
 
-    home, db = make_home(tmp_path)
-    monkeypatch.setenv("QUOTA_BURNDOWN_ANTIGRAVITY_HOME", str(home))
-    assert cli.main(["--home", str(paths.home), "collect", "--provider", "antigravity", "--quiet"]) == 0
+    home, _, _, _ = make_home(tmp_path)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home))
+    monkeypatch.setenv("QUOTA_BURNDOWN_CLAUDE_DESKTOP_HISTORY", str(tmp_path / "missing-desktop.json"))
+    assert cli.main(["--home", str(paths.home), "collect", "--provider", "claude", "--usage-since-days", "3650", "--quiet"]) == 0
     args = ["--home", str(paths.home), "usage", "--days", "3650", "--by", "provider,model_effort", "--json", str(tmp_path / "u.json"), "--csv", str(tmp_path / "u.csv")]
     assert cli.main(args) == 0
     out = capsys.readouterr().out
-    assert "antigravity gemini-3.8-flash @ high" in out and "wrote 4 rows" in out
+    assert "claude claude-fable-5-1 @ xhigh" in out and "wrote 7 rows" in out
     data = json.loads((tmp_path / "u.json").read_text(encoding="utf-8"))
-    assert len(data["rows"]) == 4 and (tmp_path / "u.csv").exists()
+    assert len(data["rows"]) == 7 and (tmp_path / "u.csv").exists()
     assert cli.main(["--home", str(paths.home), "status"]) == 0 and "page:" in capsys.readouterr().out
     assert cli.main(["--home", str(paths.home), "where"]) == 0 and "usage db:" in capsys.readouterr().out
-    assert cli.main(["--home", str(paths.home), "backfill", "--usage", "--provider", "antigravity", "--rescan"]) == 0
+    assert cli.main(["--home", str(paths.home), "backfill", "--usage", "--provider", "claude", "--rescan"]) == 0
     out = capsys.readouterr().out
-    assert "forgot 1 scan records" in out and '"files_parsed": 1' in out and paths.html.exists()
-    assert cli.main(["--home", str(paths.home), "collect", "--provider", "antigravity", "--no-usage", "--quiet"]) == 0
-    import pytest
+    assert "forgot 3 scan records" in out and '"files_parsed": 3' in out and paths.html.exists()
+    assert cli.main(["--home", str(paths.home), "collect", "--provider", "claude", "--no-usage", "--quiet"]) == 0
 
+    with pytest.raises(SystemExit):
+        cli.main(["--home", str(paths.home), "collect", "--provider", "antigravity"])
     with pytest.raises(SystemExit):
         cli.main(["--home", str(paths.home), "usage", "--by", "bogus"])
 

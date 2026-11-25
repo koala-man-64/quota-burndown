@@ -9,7 +9,7 @@ import hashlib
 import json
 from pathlib import Path
 
-from .usage import antigravity, claude, codex
+from .usage import claude, codex
 from .util import iso, parse_iso
 
 MAX_SOURCE_BYTES = 64 * 1024 * 1024
@@ -160,44 +160,16 @@ def _claude(row, path: Path) -> dict:
     return _result(selected_prompt, '\n\n'.join(parts))
 
 
-def _antigravity(row, path: Path) -> dict:
-    transcript = antigravity.transcript_path(path.parent.parent, path.stem)
-    steps = []
-    for _, entry in _entries(transcript):
-        if type(entry.get('step_index')) is int and parse_iso(entry.get('created_at')):
-            steps.append(entry)
-    steps.sort(key=lambda step: step['step_index'])
-    planners = [s for s in steps if s.get('type') == 'PLANNER_RESPONSE']
-    # The existing provider associates generations by order, only when counts agree.
-    import sqlite3
-    conn = sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True, timeout=2)
-    try:
-        indexes = [r[0] for r in conn.execute('SELECT idx FROM gen_metadata ORDER BY idx LIMIT 100001')]
-    finally:
-        conn.close()
-    if len(indexes) != len(planners) or len(indexes) > 100000:
-        raise TextUnavailable('Generation and transcript counts differ; text cannot be matched safely.')
-    matches = [i for i, idx in enumerate(indexes) if f'{path.stem}:gen:{idx}' == row['event_key']]
-    if len(matches) != 1 or path.stem != row['session_id']:
-        raise TextUnavailable('The recorded request could not be matched in its source transcript.')
-    selected = planners[matches[0]]
-    if iso(parse_iso(selected['created_at'])) != row['ts']:
-        raise TextUnavailable('Transcript timestamp does not match the recorded request.')
-    prompts = [s for s in steps if s.get('type') == 'USER_INPUT' and s['step_index'] < selected['step_index']]
-    return _result(str(prompts[-1].get('content') or '') if prompts else '', str(selected.get('content') or ''))
-
-
 def read_request(row) -> dict:
-    import sqlite3
     try:
         source = row['source_file']
         if not source:
             raise TextUnavailable('No source transcript was recorded for this request.')
-        parser = {'codex': _codex, 'claude': _claude, 'antigravity': _antigravity}.get(row['provider'])
+        parser = {'codex': _codex, 'claude': _claude}.get(row['provider'])
         if parser is None:
             raise TextUnavailable('Text viewing is unavailable for this provider.')
         return parser(row, Path(source))
     except TextUnavailable as exc:
         return {'status': 'unavailable', 'note': str(exc)}
-    except (OSError, sqlite3.Error):
+    except OSError:
         return {'status': 'unavailable', 'note': 'Source transcript is missing, unreadable, or currently unavailable.'}

@@ -49,7 +49,7 @@ def test_serve_replaces_live_process_and_reuses_port(tmp_path, legacy):
     home = tmp_path / "quota data"
     home.mkdir()
     env = os.environ.copy()
-    for key in ("CODEX_HOME", "CLAUDE_CONFIG_DIR", "QUOTA_BURNDOWN_ANTIGRAVITY_HOME"):
+    for key in ("CODEX_HOME", "CLAUDE_CONFIG_DIR"):
         env[key] = str(tmp_path / key)
     processes = []
     log_path = tmp_path / "service.log"

@@ -44,8 +44,7 @@ def test_daily_models_totals_coverage_and_model_switches(paths, monkeypatch):
     assert codex["daily_tokens"] == [20, 0, 0, 0, 0, 0, 300]
     assert (codex["total_tokens"], codex["recorded_requests"], codex["excluded_requests"]) == (320, 5, 1)
     assert groups["claude"]["total_tokens"] == 55
-    assert groups["antigravity"]["recorded_requests"] == 0
-    assert groups["antigravity"]["excluded_requests"] == 1
+    assert "antigravity" not in groups
     old_color = models["gpt-6-astra"]["color"]
     ledger.upsert(conn, [request("12", "a-new-model", 1)])
     refreshed = usage_report.daily_model_payload(conn, NOW)
@@ -116,9 +115,9 @@ def test_empty_and_reported_zero_are_distinct(paths):
     conn = ledger.connect(paths.usage_db)
     empty = usage_report.daily_model_payload(conn, NOW)
     assert all(group["recorded_requests"] == 0 for group in empty["providers"])
-    assert render.daily_models_html(empty).count('Recorded token totals unavailable.') == 3
+    assert render.daily_models_html(empty).count('Recorded token totals unavailable.') == 2
     ledger.upsert(conn, [request("zero", total=0)])
     content = render.daily_models_html(usage_report.daily_model_payload(conn, NOW))
-    assert content.count('Recorded token totals unavailable.') == 2
+    assert content.count('Recorded token totals unavailable.') == 1
     assert '<svg class="model-token-chart"' in content
     conn.close()

@@ -11,12 +11,12 @@ from pathlib import Path
 from . import __version__, install, ledger, render, statusline, usage, usage_report
 from .config import DEFAULT_PORT, get_paths
 from .model import Burndown, current
-from .providers import antigravity, claude_desktop, codex
+from .providers import claude_desktop, codex
 from .store import Store
 from .util import fmt_local, fmt_minutes, iso, now_utc
 
 LOG_MAX_BYTES = 512_000
-PROVIDER_CHOICES = ("all", "claude", "codex", "antigravity")
+PROVIDER_CHOICES = ("all", "claude", "codex")
 USAGE_BUDGET_S = {"claude": 10.0}  # a Claude-only collect is what the on-demand skill runs; keep it quick
 DEFAULT_USAGE_BUDGET_S = 60.0
 
@@ -77,11 +77,6 @@ def _run_collect(
             appended["usage"] = stats
         except (sqlite3.Error, RuntimeError) as exc:
             warnings.append(f"usage: ledger unavailable ({exc.__class__.__name__}: {exc})")
-    if provider in ("all", "antigravity"):
-        samples, ag_warnings, stats = antigravity.collect(paths.antigravity_state, paths.usage_db, since_days=since_days, full=full, now=now)
-        warnings.extend(ag_warnings)
-        appended["antigravity"] = store.append(samples)
-        appended["antigravity_files"] = stats
     if do_render:
         render.write_html(store, paths.html, now=now, warnings=warnings, usage_db=paths.usage_db)
     _log(paths, f"collect provider={provider} appended={json.dumps(appended)} warnings={len(warnings)}" + (" " + " | ".join(warnings) if warnings else ""))
@@ -338,7 +333,7 @@ def cmd_prune(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="quota-burndown", description="Quota burndown and token usage ledger for Claude Code, Codex and Antigravity.")
+    parser = argparse.ArgumentParser(prog="quota-burndown", description="Quota burndown and token usage ledger for Claude Code and Codex.")
     parser.add_argument("--version", action="version", version=f"quota-burndown {__version__}")
     parser.add_argument("--home", help="data directory (default: ~/.quota-burndown or $QUOTA_BURNDOWN_HOME)")
     sub = parser.add_subparsers(dest="command", required=True)

@@ -14,13 +14,13 @@ from typing import Callable, Sequence
 
 from .. import ledger
 
-PROVIDERS = ("claude", "codex", "antigravity")
+PROVIDERS = ("claude", "codex")
 
 
 def provider_module(name: str):
-    from . import antigravity, claude, codex  # local import keeps package import light and acyclic
+    from . import claude, codex  # local import keeps package import light and acyclic
 
-    return {"claude": claude, "codex": codex, "antigravity": antigravity}[name]
+    return {"claude": claude, "codex": codex}[name]
 
 
 def collect(

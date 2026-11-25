@@ -141,7 +141,7 @@ def render_text(
         f"  exact tokens {grand.total:,}: input {grand.input:,} | cache read {grand.cache_read:,} | cache write {grand.cache_write:,} | output {grand.output:,} (reasoning {grand.reasoning:,})",
     ]
     if grand.inferred_requests:
-        head.append(f"  inferred (Antigravity, not in the totals above): {grand.inferred_requests:,} requests, ~{grand.inferred_input:,} input tokens")
+        head.append(f"  inferred (not in the totals above): {grand.inferred_requests:,} requests, ~{grand.inferred_input:,} input tokens")
     blocks = ["\n".join(head)]
     for dimension in dimensions:
         blocks.append(table(TITLES[dimension], ledger.rollup(rows, KEYS[dimension]), dimension, raw, top))
@@ -179,7 +179,7 @@ def payload(conn: sqlite3.Connection, now: datetime | None = None, days: int = 7
             {"key": key, **t.to_dict()} for key, t in sorted_totals(ledger.rollup(rows, KEYS["model_effort"]), "model_effort")
         ],
         "recent": [row_dict(r) for r in ledger.recent_requests(conn, recent)],
-        "note": "Antigravity token counts are inferred from an unlabeled context counter and are kept out of exact totals; Google exposes no local limit signal.",
+        "note": "Exact token counts recorded locally by Claude Code and Codex.",
     }
 
 
@@ -298,11 +298,12 @@ def model_slots(conn: sqlite3.Connection, now: datetime) -> dict[str, dict[str, 
     """One color slot per provider model for every chart on the page, so the weekly history
     charts and the daily bars draw a model in the same color."""
     totals: dict[str, dict[str, int]] = {}
+    placeholders = ", ".join("?" for _ in ledger.PROVIDERS)
     rows = conn.execute(
         "SELECT provider, model, SUM(CASE WHEN total_tokens IS NOT NULL AND input_tokens_inferred IS NULL"
-        " THEN total_tokens ELSE 0 END) FROM events WHERE kind = ? AND ts >= ? AND ts <= ?"
+        f" THEN total_tokens ELSE 0 END) FROM events WHERE kind = ? AND provider IN ({placeholders}) AND ts >= ? AND ts <= ?"
         " GROUP BY provider, model",
-        (ledger.REQUEST, iso(now - SLOT_LOOKBACK), iso(now)),
+        (ledger.REQUEST, *ledger.PROVIDERS, iso(now - SLOT_LOOKBACK), iso(now)),
     ).fetchall()
     for provider, model, tokens in rows:
         models = totals.setdefault(provider, {})
@@ -370,5 +371,5 @@ def efficiency_payload(conn: sqlite3.Connection, now: datetime | None = None, da
         "by_model_effort": efficiency_rows(rows, "model_effort"),
         "daily_models": daily_model_payload(conn, now),
         "insights": insights,
-        "note": "Uncached input is normalized for presentation only. Antigravity exact token fields remain unknown.",
+        "note": "Uncached input is normalized for presentation only.",
     }

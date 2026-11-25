@@ -10,7 +10,7 @@ ON_PACE_BAND = 2.0          # percentage points either side of pace that still c
 TOO_EARLY_FRACTION = 0.03   # projections need at least this fraction of the window elapsed
 RESET_TOLERANCE_S = 180     # readings whose reset times differ by less than this describe the same window
 HIDE_EXPIRED_AFTER_MIN = 1440  # drop windows that ended more than a day ago from the current view
-PROVIDER_ORDER = {"claude": 0, "codex": 1, "antigravity": 2}
+PROVIDER_ORDER = {"claude": 0, "codex": 1}
 SOURCE_RANK = {
     "api": 4,
     "statusline": 4,
@@ -19,7 +19,6 @@ SOURCE_RANK = {
     "rollout": 3,
     "desktop": 2,
     "desktop-history": 1,
-    "ledger": 0,
 }
 
 
@@ -95,16 +94,11 @@ def canonical_sample(sample: Sample) -> Sample | None:
     ``7d:gpt-5.6`` and ``7d:gpt-6``), even though they report the same limit. Preserve the
     append-only store and normalize those readings at the model boundary.
     """
+    if sample.provider not in PROVIDER_ORDER:
+        return None
     if sample.provider == "claude":
         aliases = {"300m": ("5h", 300), "300m:claude": ("5h", 300),
                    "10080m": ("7d", 10080), "10080m:claude": ("7d", 10080)}
-        alias = aliases.get(sample.window.lower())
-        if alias and sample.window_min == alias[1]:
-            return replace(sample, window=alias[0])
-        return sample
-    if sample.provider == "antigravity":
-        aliases = {"300m": ("5h:gemini", 300), "300m:gemini": ("5h:gemini", 300),
-                   "10080m": ("7d:gemini", 10080), "10080m:gemini": ("7d:gemini", 10080)}
         alias = aliases.get(sample.window.lower())
         if alias and sample.window_min == alias[1]:
             return replace(sample, window=alias[0])
@@ -143,7 +137,7 @@ def _is_spark_idle_placeholder(sample: Sample) -> bool:
 
 
 def canonical_samples(samples: list[Sample], *, preserve_resets: bool = True) -> list[Sample]:
-    """Merge Claude and Antigravity alias observations without rewriting storage.
+    """Merge Claude alias observations without rewriting storage.
 
     At equal timestamps prefer direct readings, then canonical keys. This keeps an
     alias from adding a second, potentially conflicting point to the same timeline.
@@ -156,8 +150,7 @@ def canonical_samples(samples: list[Sample], *, preserve_resets: bool = True) ->
         sample = canonical_sample(raw)
         if sample is None:
             continue
-        if (sample.provider == "claude" and sample.window in ("5h", "7d")) or \
-           (sample.provider == "antigravity" and sample.window in ("5h:gemini", "7d:gemini")):
+        if sample.provider == "claude" and sample.window in ("5h", "7d"):
             key = sample.key, sample.ts, sample.resets_at if preserve_resets else None
             priority = SOURCE_RANK.get(raw.source, 0), raw.window == sample.window
             prior = merged.get(key)
@@ -272,13 +265,7 @@ def current(samples: list[Sample], latest: dict[str, Sample], now: datetime) -> 
     canonical_latest: dict[str, Sample] = {}
     for sample in canonical_samples(list(latest.values()), preserve_resets=False):
         prior = canonical_latest.get(sample.key)
-        if prior is None:
-            canonical_latest[sample.key] = sample
-        elif sample.source == "ledger" and prior.source != "ledger":
-            continue
-        elif prior.source == "ledger" and sample.source != "ledger":
-            canonical_latest[sample.key] = sample
-        elif sample.ts >= prior.ts:
+        if prior is None or sample.ts >= prior.ts:
             canonical_latest[sample.key] = sample
     latest = canonical_latest
     grouped = group_instances(samples)
@@ -294,10 +281,7 @@ def current(samples: list[Sample], latest: dict[str, Sample], now: datetime) -> 
             inst = WindowInstance(key, last.provider, last.window, last.window_min, last.resets_at, [last])
         elif inst.samples[-1].ts < last.ts:
             inst.samples.append(last)
-        elif (
-            (last.provider == "claude" and last.window in ("5h", "7d"))
-            or (last.provider == "antigravity" and last.window in ("5h:gemini", "7d:gemini"))
-        ) and inst.samples[-1].ts == last.ts:
+        elif last.provider == "claude" and last.window in ("5h", "7d") and inst.samples[-1].ts == last.ts:
             # Nearby reset boundaries can cluster into one instance. Keep the
             # selected latest reading authoritative when their timestamps tie.
             inst.samples = [s for s in inst.samples if s.ts != last.ts] + [last]

@@ -4,10 +4,6 @@ One SQLite table of events, two kinds of row: a `request` (one model call, with 
 token counts the tool recorded) and a `prompt` (one human turn, no tokens). Rows are keyed
 by a natural key from the source data so re-parsing a file is idempotent, and a scan_state
 table remembers each source file's size and mtime so unchanged files are skipped.
-
-Antigravity records no labeled token counts; its rows carry `input_tokens_inferred` (an
-unlabeled context counter) and leave the exact columns NULL. Rollups keep that bucket
-apart from the exact totals.
 """
 from __future__ import annotations
 
@@ -19,8 +15,8 @@ from typing import Callable, Iterable
 
 from .util import iso, now_utc, parse_iso, to_local
 
-PROVIDERS = ("claude", "codex", "antigravity")
-PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex", "antigravity": "Antigravity"}
+PROVIDERS = ("claude", "codex")
+PROVIDER_TITLES = {"claude": "Claude", "codex": "Codex"}
 REQUEST = "request"
 PROMPT = "prompt"
 
@@ -175,6 +171,9 @@ def rows(
     if provider:
         sql += " AND provider = ?"
         args.append(provider)
+    else:
+        sql += f" AND provider IN ({', '.join('?' for _ in PROVIDERS)})"
+        args.extend(PROVIDERS)
     if kind:
         sql += " AND kind = ?"
         args.append(kind)
@@ -186,9 +185,16 @@ DEFAULT_RECENT = 50
 
 
 def recent_requests(conn: sqlite3.Connection, limit: int | None = DEFAULT_RECENT) -> list[sqlite3.Row]:
+    placeholders = ", ".join("?" for _ in PROVIDERS)
     if limit is None:
-        return conn.execute("SELECT * FROM events WHERE kind = ? ORDER BY ts DESC", (REQUEST,)).fetchall()
-    return conn.execute("SELECT * FROM events WHERE kind = ? ORDER BY ts DESC LIMIT ?", (REQUEST, limit)).fetchall()
+        return conn.execute(
+            f"SELECT * FROM events WHERE kind = ? AND provider IN ({placeholders}) ORDER BY ts DESC",
+            (REQUEST, *PROVIDERS),
+        ).fetchall()
+    return conn.execute(
+        f"SELECT * FROM events WHERE kind = ? AND provider IN ({placeholders}) ORDER BY ts DESC LIMIT ?",
+        (REQUEST, *PROVIDERS, limit),
+    ).fetchall()
 
 
 def count(conn: sqlite3.Connection) -> int:

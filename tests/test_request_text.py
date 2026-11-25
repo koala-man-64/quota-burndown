@@ -7,9 +7,8 @@ import pytest
 
 from quota_burndown import ledger, render, request_text
 from quota_burndown.service import CapacityService, make_server
-from quota_burndown.usage import antigravity, claude, codex
+from quota_burndown.usage import claude, codex
 from quota_burndown.util import iso, now_utc
-from test_usage_antigravity import make_home
 from test_usage_codex import session_meta, token_count, turn_context, user_item, vec, write
 
 
@@ -96,15 +95,10 @@ def test_claude_streams_and_tool_results(tmp_path):
     assert request_text.read_request(rows[2])['request'] == 'later prompt'
 
 
-@pytest.mark.parametrize('gens,expected', [((1, 2), 'available'), ((1, 2, 3), 'unavailable')])
-def test_antigravity_requires_matching_generations(tmp_path, gens, expected):
-    _, path = make_home(tmp_path, gens=gens)
-    events = [e for e in antigravity.parse_file(path) if e.kind == ledger.REQUEST]
-    result = request_text.read_request(row(events[1]))
-    assert result['status'] == expected
-    if expected == 'available':
-        assert result['request'] == '<USER_REQUEST>more</USER_REQUEST>'
-        assert result['response'] == 'done'
+def test_removed_provider_is_unavailable(tmp_path):
+    event = ledger.Event('antigravity', 'antigravity', ledger.REQUEST, 'a', now_utc(), source_file=str(tmp_path / 'conv.db'))
+    result = request_text.read_request(row(event))
+    assert result['status'] == 'unavailable' and 'unavailable for this provider' in result['note']
 
 
 def test_missing_source_and_limits(tmp_path, monkeypatch):

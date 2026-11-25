@@ -4,11 +4,11 @@ from quota_burndown.capacity import CapacityState, provider_groups
 from test_capacity import NOW, reading
 
 
-def test_empty_state_has_eight_unknown_slots_without_fake_pools(tmp_path):
+def test_empty_state_has_six_unknown_slots_without_fake_pools(tmp_path):
     snapshot = CapacityState(tmp_path, clock=lambda: NOW).read()
     groups = snapshot["provider_groups"]
-    assert [g["provider"] for g in groups] == ["codex", "antigravity", "claude"]
-    assert [len(g["limits"]) for g in groups] == [3, 2, 3]
+    assert [g["provider"] for g in groups] == ["codex", "claude"]
+    assert [len(g["limits"]) for g in groups] == [3, 3]
     for group in groups:
         for limit in group["limits"]:
             assert limit["display_only"] and limit["pool_id"] is None
@@ -16,7 +16,33 @@ def test_empty_state_has_eight_unknown_slots_without_fake_pools(tmp_path):
             assert window["used_pct"] is None and window["remaining_pct"] is None
             assert window["observed_at"] is None and window["resets_at"] is None
             assert window["freshness"] == "unknown"
-    assert len(snapshot["pools"]) == 1  # pre-existing unsupported Antigravity marker only
+    assert snapshot["pools"] == []
+
+
+def test_legacy_antigravity_persisted_state_is_ignored(tmp_path):
+    import json
+    (tmp_path / "capacity-state.json").write_text(json.dumps({
+        "active_accounts": {"antigravity": "local", "codex": "acct"},
+        "windows": [{
+            "history": [{
+                "provider": "antigravity", "account_scope": "local", "limit_id": "gemini",
+                "window": "10080m", "window_min": 10080, "used_pct": 39.0,
+                "resets_at": "2026-09-12T12:00:00Z", "observed_at": "2026-09-05T11:59:00Z",
+                "received_at": "2026-09-05T11:59:00Z", "source": "app-server",
+            }],
+            "models": [], "baseline": None,
+        }],
+    }), encoding="utf-8")
+    (tmp_path / "reset_credits.json").write_text(json.dumps({
+        "antigravity:local:gemini": [{"id": "c1", "expires_at": "2026-09-12T12:00:00Z"}],
+    }), encoding="utf-8")
+    state = CapacityState(tmp_path, clock=lambda: NOW)
+    snapshot = state.read()
+    assert snapshot["pools"] == []
+    assert set(snapshot["provider_states"]) == {"codex", "claude"}
+    assert set(snapshot["collector_health"]) == {"codex", "claude"}
+    assert "antigravity" not in state.active_accounts
+    assert state.reset_credits == {}
 
 
 def test_grouped_slots_reference_shared_pools_and_live_readings(tmp_path):
@@ -29,7 +55,7 @@ def test_grouped_slots_reference_shared_pools_and_live_readings(tmp_path):
         reading(provider="claude", limit_id="claude", window="10080m", window_min=10080, used_pct=25),
     ])
     snapshot = state.publish()
-    codex, antigravity, claude = snapshot["provider_groups"]
+    codex, claude = snapshot["provider_groups"]
     assert [limit["window"]["used_pct"] for limit in codex["limits"]] == [37, 0, 100]
     assert codex["limits"][1]["pool_id"] == codex["limits"][2]["pool_id"]
     assert codex["limits"][1]["constraining_window"] == "10080m"
@@ -39,7 +65,6 @@ def test_grouped_slots_reference_shared_pools_and_live_readings(tmp_path):
     assert claude["limits"][0]["pool_id"] == claude["limits"][1]["pool_id"]
     assert claude["limits"][2]["pool_id"] is None
     assert "Fable" in claude["limits"][2]["availability_reason"]
-    assert all(limit["window"]["used_pct"] is None for limit in antigravity["limits"])
     assert len([p for p in snapshot["pools"] if p["provider"] == "codex"]) == 2
 
 

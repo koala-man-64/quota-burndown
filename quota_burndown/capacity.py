@@ -83,7 +83,7 @@ class Observation:
 def valid_observation(item: Observation, now: datetime) -> bool:
     try:
         return bool(
-            item.provider in ("codex", "claude", "antigravity")
+            item.provider in ("codex", "claude")
             and item.account_scope and item.limit_id and item.window
             and type(item.window_min) is int and item.window_min > 0
             and item.observed_at and item.received_at
@@ -138,10 +138,6 @@ def provider_groups(pools: list[dict]) -> list[dict]:
             ("spark-five-hour", "GPT-5.3-Codex-Spark · 5-hour", "codex_bengalfox", 300),
             ("spark-weekly", "GPT-5.3-Codex-Spark · weekly", "codex_bengalfox", 10080),
         )),
-        ("antigravity", "Antigravity / Gemini", (
-            ("gemini-five-hour", "Gemini · 5-hour", "gemini", 300),
-            ("gemini-weekly", "Gemini · weekly", "gemini", 10080),
-        )),
         ("claude", "Claude", (
             ("current-session", "Current session · 5-hour", "claude", 300),
             ("all-models-weekly", "All models · weekly", "claude", 10080),
@@ -166,9 +162,7 @@ def provider_groups(pools: list[dict]) -> list[dict]:
             reason = None
             if unavailable:
                 reason = "No reading for this limit from the configured provider sources."
-                if provider == "antigravity":
-                    reason = "Configured Antigravity sources report activity, not Gemini quota limits."
-                elif slot == "fable-weekly":
+                if slot == "fable-weekly":
                     reason = FABLE_WEEKLY_UNAVAILABLE
             elif pool and pool.get("allowance_state") in ("exhausted", "reserve_reached") and pool.get("constraining_window") != window.get("window"):
                 constraint = next((item for item in pool.get("windows", []) if item.get("window") == pool.get("constraining_window")), None)
@@ -286,8 +280,7 @@ class CapacityState:
         self.models: dict[str, set[str]] = {}
         self.active_accounts: dict[str, str] = {}
         self.accepted: list[Observation] = []
-        self.health = {p: {"state": "starting", "last_error": None} for p in ("codex", "claude", "antigravity")}
-        self.health["antigravity"] = {"state": "unsupported", "last_error": None, "detail": "token activity only; quota not reported"}
+        self.health = {p: {"state": "starting", "last_error": None} for p in ("codex", "claude")}
         self.revision = 0
         self.snapshot: dict = {}
         self.reserve_pct = 10
@@ -296,7 +289,7 @@ class CapacityState:
         saved_credits = read_json(home / "reset_credits.json", {})
         if isinstance(saved_credits, dict):
             for pk, cr_list in saved_credits.items():
-                if isinstance(cr_list, list):
+                if isinstance(cr_list, list) and str(pk).split(":", 1)[0] in ("codex", "claude"):
                     parsed_cr = []
                     for c in cr_list:
                         item = dict(c)
@@ -307,7 +300,9 @@ class CapacityState:
                     self.reset_credits[pk] = tuple(parsed_cr)
         saved = read_json(home / "capacity-state.json", {})
         if isinstance(saved, dict):
-            self.active_accounts = saved.get("active_accounts", {})
+            raw_accounts = saved.get("active_accounts", {})
+            if isinstance(raw_accounts, dict):
+                self.active_accounts = {k: v for k, v in raw_accounts.items() if k in ("codex", "claude")}
         for entry in saved.get("windows", []) if isinstance(saved, dict) else []:
             try:
                 items = [Observation.from_dict(v) for v in entry["history"]]
@@ -436,12 +431,6 @@ class CapacityState:
                 serialized_credits.append(c_dict)
             if serialized_credits:
                 pool["reset_credits"] = serialized_credits
-        if not any(p["provider"] == "antigravity" for p in pools.values()):
-            pools["antigravity:local:unknown"] = {
-                "id": "antigravity:local:unknown", "provider": "antigravity", "account_scope": "local",
-                "limit_id": "unknown", "label": "Quota not reported", "models": [],
-                "mapping_confidence": "unknown", "windows": [],
-            }
         for pool in pools.values():
             windows = pool["windows"]
             states = {w["allowance_state"] for w in windows}
@@ -463,7 +452,7 @@ class CapacityState:
                 "provider_groups": provider_groups(list(pools.values())),
                 "service_state": "running", "restored_from_disk": self.restored,
                 "provider_states": {p: "observed" if any(v["provider"] == p and v["windows"] for v in pools.values()) else "unknown"
-                                    for p in ("codex", "claude", "antigravity")},
+                                    for p in ("codex", "claude")},
             }
             def signature(value):
                 result = copy.deepcopy(value)
