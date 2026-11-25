@@ -150,3 +150,23 @@ def test_recent_requests_default_and_explicit_limits(paths):
     assert len(ledger.recent_requests(conn, limit=None)) == 60
     conn.close()
 
+
+def test_supported_provider_filter_stays_on_ts_index(paths):
+    conn = ledger.connect(paths.usage_db)
+    placeholders = ", ".join("?" for _ in ledger.PROVIDERS)
+    recent_plan = " ".join(
+        r[3] for r in conn.execute(
+            f"EXPLAIN QUERY PLAN SELECT * FROM events WHERE kind = ? AND +provider IN ({placeholders}) ORDER BY ts DESC LIMIT ?",
+            (ledger.REQUEST, *ledger.PROVIDERS, 50),
+        ).fetchall()
+    )
+    rows_plan = " ".join(
+        r[3] for r in conn.execute(
+            f"EXPLAIN QUERY PLAN SELECT * FROM events WHERE 1 = 1 AND ts >= ? AND +provider IN ({placeholders}) ORDER BY ts, provider, event_key",
+            ("2026-09-01T00:00:00Z", *ledger.PROVIDERS),
+        ).fetchall()
+    )
+    conn.close()
+    assert "USING INDEX events_ts" in recent_plan and "TEMP B-TREE" not in recent_plan
+    assert "USING INDEX events_ts" in rows_plan
+
