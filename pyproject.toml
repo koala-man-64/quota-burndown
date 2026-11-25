@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "quota-burndown"
 version = "0.2.1"
-description = "Claude Code, Codex and Antigravity in one place: quota burndown per rate-limit window plus a per-request token usage ledger."
+description = "Claude Code and Codex in one place: quota burndown per rate-limit window plus a per-request token usage ledger."
 requires-python = ">=3.10"
 dependencies = []
 license = { text = "MIT" }

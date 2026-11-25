@@ -1,6 +1,6 @@
 # quota-burndown
 
-A local capacity service and live dashboard for Codex and Claude, with a token activity ledger for Antigravity. Python 3.10+, standard library only. The service reports observations and guidance; an orchestrator owns scheduling.
+A local capacity service and live dashboard for Codex and Claude. Python 3.10+, standard library only. The service reports observations and guidance; an orchestrator owns scheduling.
 
 ## Start and install
 
@@ -27,7 +27,6 @@ If Task Scheduler denies registration, installation uses a per-user Startup shor
 | --- | --- | --- |
 | Codex | Persistent signed-in `codex app-server`: `account/read`, `account/rateLimits/read`, `account/rateLimits/updated`; bounded tails of today's/yesterday's UTC rollouts add model memberships. | One quota request in flight; reads every 15 seconds with consumers, 60 seconds idle, with deadlines and reconnect backoff. No model tasks or inference calls. |
 | Claude | Account usage polled every 5 minutes from `api.anthropic.com/api/oauth/usage` (the endpoint behind Claude Code's `/usage`), using Claude Code's sign-in; covers desktop Code-tab work, which never runs the status line. Supported status-line `rate_limits.five_hour` and `seven_day` via a bounded quota-only handoff; desktop history is the fallback. | First-seen changes are timestamped once. Identical quota/redraws, context changes and restarts do not renew freshness. Desktop timestamps are preserved, inferred resets labeled. CLI 2.1.251 is the tested installation target; `claude install 2.1.251` works when the stable update channel is older. |
-| Antigravity | Local ledger activity. | Quota allowance, remaining capacity and resets stay unknown. Inferred token activity stays separate from exact accounting. |
 
 Direct/event observations have a **60-second** freshness deadline; polled Claude usage has **10 minutes** (two poll intervals); desktop history has **20 minutes**. Windows expose TTL, observation time, receipt time, reset provenance and observation-time provenance. `source_age_s` is age at snapshot generation; use `observed_at` and `valid_until` to age it locally. Native read completion is labeled separately from unknown upstream reporting delay. Expired windows become unknown until another reading arrives.
 
@@ -61,7 +60,7 @@ Paid capacity appears beside measured quota charts as an explicitly labeled quot
 
 Schema version 1 includes `instance_id`, monotonic per-instance `revision`, `generated_at`, `collector_health`, `provider_states`, `policy`, `pools`, and `unreported_in_flight_usage=unknown`. Replace state on reconnect; a new instance starts a new revision sequence. Disconnected disk reads retain source freshness independently of connectivity and clear forecasts.
 
-The additive `provider_groups` view presents the requested limit slots under Codex, Antigravity / Gemini, and Claude. Codex shows general weekly and Spark five-hour/weekly; Claude shows current-session five-hour, all-models weekly, and Fable weekly; Antigravity shows Gemini five-hour/weekly. Each observed slot references a real `pool_id` and window. Unsupported slots have null readings/timestamps and `display_only=true`; they create no independent allowance in `pools`. Additional provider-reported windows remain visible. Screenshots define labels and grouping, never current percentages. Configured Claude sources do not expose Fable weekly; configured Antigravity sources do not expose Gemini quota.
+The additive `provider_groups` view presents the requested limit slots under Codex and Claude. Codex shows general weekly and Spark five-hour/weekly; Claude shows current-session five-hour, all-models weekly, and Fable weekly. Each observed slot references a real `pool_id` and window. Unsupported slots have null readings/timestamps and `display_only=true`; they create no independent allowance in `pools`. Additional provider-reported windows remain visible. Screenshots define labels and grouping, never current percentages. Configured Claude sources do not expose Fable weekly.
 
 A pool is keyed by provider, account scope and limit ID. Model names are memberships, never independent allowances. `account_scope_confidence`, `limit_id_provenance` and `mapping_confidence` distinguish reported identifiers from adapter grouping and missing mappings. Every window constrains the pool: exhausted weekly allowance blocks unused five-hour allowance. Complete native readings reconcile omitted windows against persisted history; omitted windows stay unknown. Account switches retire the previous active account view.
 
@@ -73,7 +72,7 @@ For routing, check connectivity, collector health, account/mapping confidence, s
 
 ## Dashboard and persistence
 
-The dashboard renders from the cached snapshot and reloads a complete page snapshot every 30 seconds. The target-date bar and the chart key come first, followed by the weekly historic charts with one chart per cell: Claude all models, Codex, Codex Spark, and Antigravity Gemini. Recorded tokens by model, token usage, recent requests (a scrolling panel) and the model/effort and session efficiency drilldowns follow, and the paid-credit plans come last. A model keeps one color across the historic charts and the daily bars. Five-hour allowances are not shown on the dashboard; read them from `/v1/capacity` or the status line. Live updates retain scroll, focus and expanded details. The reserve policy defaults to 10%, is shared through `capacity-policy.json`, and is set with `POST /v1/policy`; the dashboard has no reserve control. Advice links to local session evidence; it never sends notifications or changes models.
+The dashboard renders from the cached snapshot and reloads a complete page snapshot every 30 seconds. The target-date bar and the chart key come first, followed by the weekly historic charts with one chart per cell: Claude all models, Codex, and Codex Spark. Recorded tokens by model, token usage, recent requests (a scrolling panel) and the model/effort and session efficiency drilldowns follow, and the paid-credit plans come last. A model keeps one color across the historic charts and the daily bars. Five-hour allowances are not shown on the dashboard; read them from `/v1/capacity` or the status line. Live updates retain scroll, focus and expanded details. The reserve policy defaults to 10%, is shared through `capacity-policy.json`, and is set with `POST /v1/policy`; the dashboard has no reserve control. Advice links to local session evidence; it never sends notifications or changes models.
 
 Each weekly historical chart has a fixed two-cycle, 14-day x-axis. Active charts end at the next reset; idle, expired, or unknown-reset charts end at the current time. The range control is removed, so older saved preferences cannot override this domain. Clipping affects presentation only; stored history remains intact.
 
@@ -91,7 +90,7 @@ The Claude usage poller is the one exception. On each poll it reads the OAuth ac
 
 In the live dashboard, expand **View raw text** beneath a Recent requests row to load its recorded user prompt and response. All rows in the current dashboard snapshot are accessible; reload the page if a request has left that snapshot. Text is fetched on demand from local provider transcripts and is never added to the ledger, static HTML, or normal usage exports. The viewer preserves plain text and line breaks and excludes tool payloads and hidden reasoning. It does not reconstruct the full API request or conversation history. Missing sources, ambiguous matches, and read/display limits are reported explicitly; incomplete text is labeled partial. Static fallback pages do not offer the viewer.
 
-Request and prompt accounting lives in `usage.sqlite`. Re-scans are idempotent and raw provider accounting is preserved. Claude messages with the same API message ID collapse into one request; Codex cumulative token counts become request deltas. Antigravity's unlabeled context counter remains inferred and outside exact totals. Dashboard uncached input subtracts cache-inclusive Codex input once; reasoning is a share of output.
+Request and prompt accounting lives in `usage.sqlite`. Re-scans are idempotent and raw provider accounting is preserved. Claude messages with the same API message ID collapse into one request; Codex cumulative token counts become request deltas. Dashboard uncached input subtracts cache-inclusive Codex input once; reasoning is a share of output.
 
 ```powershell
 py -B quota-burndown.py usage --days 7

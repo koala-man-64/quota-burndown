@@ -85,7 +85,7 @@ def test_scan_state_round_trip(paths, tmp_path):
     conn.close()
 
 
-def test_rows_filters_and_rollup_keeps_inferred_apart(paths):
+def test_rows_filters_out_legacy_providers_and_rollup_keeps_inferred_apart(paths):
     conn = ledger.connect(paths.usage_db)
     events = [
         prompt("u1", 0),
@@ -105,24 +105,24 @@ def test_rows_filters_and_rollup_keeps_inferred_apart(paths):
     ]
     ledger.upsert(conn, events)
 
-    assert len(ledger.rows(conn)) == 8
-    assert len(ledger.rows(conn, since=T0 + timedelta(minutes=60))) == 5
+    assert len(ledger.rows(conn)) == 6
+    assert len(ledger.rows(conn, since=T0 + timedelta(minutes=60))) == 3
     assert len(ledger.rows(conn, until=T0 + timedelta(minutes=60))) == 3
     assert [r["event_key"] for r in ledger.rows(conn, provider="codex", kind=ledger.REQUEST)] == ["c1"]
-    assert [r["event_key"] for r in ledger.recent_requests(conn, 2)] == ["g1", "c1"]
+    assert [r["event_key"] for r in ledger.recent_requests(conn, 2)] == ["c1", "m2"]
 
     by_provider = ledger.rollup(ledger.rows(conn), lambda r: r["provider"])
+    assert "antigravity" not in by_provider
     claude = by_provider["claude"]
     assert (claude.prompts, claude.agent_prompts, claude.requests, claude.input, claude.cache_read, claude.cache_write) == (1, 1, 2, 10, 200, 40)
     assert (claude.output, claude.reasoning, claude.total) == (30, 6, 280)
     codex = by_provider["codex"]
     assert (codex.prompts, codex.requests, codex.total) == (1, 1, 1040)
-    anti = by_provider["antigravity"]
-    assert (anti.prompts, anti.requests, anti.inferred_requests, anti.inferred_input, anti.total) == (1, 1, 1, 28806, 0)
-    assert claude.has_exact and not anti.has_exact
+    inferred = ledger.rollup(ledger.rows(conn, provider="antigravity"), lambda r: r["provider"])["antigravity"]
+    assert (inferred.prompts, inferred.requests, inferred.inferred_requests, inferred.inferred_input, inferred.total) == (1, 1, 1, 28806, 0)
+    assert claude.has_exact and not inferred.has_exact
     by_model = ledger.rollup(ledger.rows(conn, kind=ledger.REQUEST), lambda r: f"{r['model']}@{r['effort']}")
     assert by_model["claude-fable-5-1@high"].requests == 1
-    assert by_model["gemini-3.8-flash@high"].to_dict()["inferred_input"] == 28806
 
     first = ledger.rows(conn)[0]
     assert ledger.day_utc(first) == "2026-09-03"

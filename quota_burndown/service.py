@@ -164,7 +164,7 @@ class CapacityService:
         # Build pages/usage independently. Never perform this work in HTTP handlers.
         self._spawn("capacity-ledger", self._ledger)
         if self.collectors:
-            from .integrations import AdapterContext, run_antigravity, run_claude_oauth, run_codex, run_files
+            from .integrations import AdapterContext, run_claude_oauth, run_codex, run_files
             context = AdapterContext(publish_credits=self.publish_credits)
             self._spawn("capacity-codex", lambda: run_codex(self.stop_event, self.publish, self.health, self.active, context))
             self._spawn("capacity-files", lambda: run_files(self.stop_event, self.publish, self.health, self.paths, context))
@@ -172,7 +172,6 @@ class CapacityService:
                                                                        publish_credits=self.publish_credits,
                                                                        refresh_dir=Path(self.paths.home) / "claude-refresh",
                                                                        refresh_log=Path(self.paths.home) / "claude-refresh.jsonl"))
-            self._spawn("capacity-antigravity", lambda: run_antigravity(self.stop_event, self.publish, self.health, self.active))
         return self
 
     def close(self):
@@ -297,7 +296,8 @@ class CapacityService:
 
     def _cache_legacy(self):
         from .cli import _bd_json
-        latest = self.store.latest()
+        from .model import PROVIDER_ORDER
+        latest = {k: v for k, v in self.store.latest().items() if v.provider in PROVIDER_ORDER}
         self._legacy_latest = json.dumps({k: v.to_dict() for k, v in latest.items()}).encode()
         self._legacy_status = json.dumps([_bd_json(b) for b in current([], latest, now_utc())]).encode()
 

@@ -37,11 +37,6 @@ def grouped_snapshot():
              "account_scope": None, "models": ["Spark"], "mapping_confidence": "unknown",
              "constraining_window": None, "window": unknown, "availability_reason": "not reported"},
         ]},
-        {"provider": "antigravity", "label": "Antigravity", "limits": [
-            {"id": "gemini-5h", "label": "Gemini 5-hour", "pool_id": None,
-             "account_scope": None, "models": ["Gemini"], "mapping_confidence": "unknown",
-             "constraining_window": None, "window": unknown, "availability_reason": "quota unsupported"},
-        ]},
         {"provider": "claude", "label": "Claude", "limits": [
             {"id": "fable-weekly", "label": "Fable weekly", "pool_id": None,
              "account_scope": None, "models": ["Fable"], "mapping_confidence": "unknown",
@@ -56,10 +51,10 @@ def grouped_snapshot():
 
 def test_capacity_groups_render_known_slots_and_unknown_slots_without_fake_values():
     html = render.capacity_matrix_html(grouped_snapshot(), live=True)
-    assert html.index(">Codex<") < html.index(">Antigravity<") < html.index(">Claude<")
+    assert html.index(">Codex<") < html.index(">Claude<")
     assert "General weekly" in html and "70%" in html and "30%" in html and "20%" in html
     assert "whole: 0.24 pp/hour; last hour: 1.50 pp/hour" in html
-    assert "Gemini 5-hour" in html and "Fable weekly" in html
+    assert "Fable weekly" in html
     assert "quota unsupported" in html and "unreported" in html
     assert "Other observed windows" in html and "· 5h<" in html and "80%" in html
 
@@ -82,7 +77,7 @@ def test_live_page_uses_sse_without_refresh_and_static_page_is_dated(store):
 
 def test_live_page_omits_capacity_markup_even_with_exhausted_snapshot(store):
     data = snapshot()
-    data["provider_states"] = {"codex": {"state": "observed"}, "claude": {"state": "unknown"}, "antigravity": {"state": "unknown"}}
+    data["provider_states"] = {"codex": {"state": "observed"}, "claude": {"state": "unknown"}}
     data["pools"][0]["windows"][0]["remaining_pct"] = 0
     data["pools"][0]["windows"][0]["allowance_state"] = "exhausted"
     html = render.render_html(store, now=NOW, capacity=data, live=True)
@@ -123,10 +118,9 @@ def test_capacity_matrix_renders_all_requested_slots_from_capacity_state(tmp_pat
                   NOW + timedelta(days=7), NOW - timedelta(seconds=12), NOW, "app-server")])
     html = render.capacity_matrix_html(state.publish(), live=True)
     for label in ("General weekly", "GPT-5.3-Codex-Spark · 5-hour", "GPT-5.3-Codex-Spark · weekly",
-                  "Gemini · 5-hour", "Gemini · weekly", "Current session · 5-hour",
-                  "All models · weekly", "Fable · weekly"):
+                  "Current session · 5-hour", "All models · weekly", "Fable · weekly"):
         assert label in html
-    assert "Configured Antigravity sources report activity" in html
+    assert "Antigravity" not in html and "Gemini" not in html
     assert "Supported Claude status-line and desktop history sources do not report Fable" in html
     assert "data-freshness-deadline=" in html and "reset: reported; observation: reported" in html
 

@@ -7,7 +7,7 @@ from quota_burndown.ledger import Event
 NOW = datetime(2026, 9, 5, 12, tzinfo=timezone.utc)
 
 
-def test_efficiency_normalizes_codex_cache_and_preserves_unknown_antigravity(paths):
+def test_efficiency_normalizes_codex_cache_and_ignores_legacy_antigravity(paths):
     conn = ledger.connect(paths.usage_db)
     ledger.upsert(conn, [
         Event("codex", "desktop", ledger.REQUEST, "one", NOW - timedelta(minutes=2), session_id="s<1>", model="gpt<x>", effort="high", input_tokens=100, cache_read_tokens=60, cache_write_tokens=10, output_tokens=20, reasoning_tokens=10, total_tokens=120),
@@ -20,8 +20,8 @@ def test_efficiency_normalizes_codex_cache_and_preserves_unknown_antigravity(pat
     assert (codex["uncached_input"], codex["cached_input"], codex["output"]) == (70, 80, 50)
     assert codex["median_tokens_per_request"] == 105
     assert codex["reasoning_share_of_output_pct"] == 30.0
-    unknown = next(row for row in data["by_model_effort"] if row["provider"] == "antigravity")
-    assert unknown["exact"] is False and unknown["uncached_input"] is None and unknown["median_tokens_per_request"] is None
+    assert all(row["provider"] != "antigravity" for row in data["by_model_effort"])
+    assert all(row["provider"] != "antigravity" for row in data["by_session"])
 
 
 def test_efficiency_keeps_all_missing_exact_values_unknown(paths):
