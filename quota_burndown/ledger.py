@@ -172,7 +172,9 @@ def rows(
         sql += " AND provider = ?"
         args.append(provider)
     else:
-        sql += f" AND provider IN ({', '.join('?' for _ in PROVIDERS)})"
+        # Unary `+` keeps SQLite on the `events_ts` index instead of scanning every
+        # historical row per provider into a temp B-tree just to sort by `ts`.
+        sql += f" AND +provider IN ({', '.join('?' for _ in PROVIDERS)})"
         args.extend(PROVIDERS)
     if kind:
         sql += " AND kind = ?"
@@ -188,11 +190,11 @@ def recent_requests(conn: sqlite3.Connection, limit: int | None = DEFAULT_RECENT
     placeholders = ", ".join("?" for _ in PROVIDERS)
     if limit is None:
         return conn.execute(
-            f"SELECT * FROM events WHERE kind = ? AND provider IN ({placeholders}) ORDER BY ts DESC",
+            f"SELECT * FROM events WHERE kind = ? AND +provider IN ({placeholders}) ORDER BY ts DESC",
             (REQUEST, *PROVIDERS),
         ).fetchall()
     return conn.execute(
-        f"SELECT * FROM events WHERE kind = ? AND provider IN ({placeholders}) ORDER BY ts DESC LIMIT ?",
+        f"SELECT * FROM events WHERE kind = ? AND +provider IN ({placeholders}) ORDER BY ts DESC LIMIT ?",
         (REQUEST, *PROVIDERS, limit),
     ).fetchall()
 
